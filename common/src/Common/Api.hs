@@ -1,4 +1,7 @@
 module Common.Api where
 
 commonStuff :: String
-commonStuff = "Here is a string defined in Common.Api"
+commonStuff = "Hydra Head Registry"
+
+
+data ApiMsg
