@@ -1,25 +1,29 @@
 {-# LANGUAGE CPP #-}
+{-# OPTIONS_GHC -Wno-type-defaults #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE RecursiveDo #-}
 
 module Frontend where
 
-import Control.Lens ((^.))
-import Control.Monad
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Language.Javascript.JSaddle (liftJSM, js, js1, jsg)
 
 import Obelisk.Frontend
-import Obelisk.Configs
+import Data.Foldable (forM_)
 import Obelisk.Route
 import Obelisk.Generated.Static
+import Language.Javascript.JSaddle (MonadJSM, jsg, js, js1, liftJSM, fromJSValUnchecked)
 
+import Obelisk.Configs
 import Reflex.Dom.Core
 
 import Common.Api
 import Common.Route
+default (T.Text)
 
 
 -- This runs in a monad that can be run on the client or the server.
@@ -28,31 +32,36 @@ import Common.Route
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = do
-      el "title" $ text "Obelisk Minimal Example"
+      el "title" $ text "Hydra Head Registry"
+      elAttr "meta" ("name"=:"viewport" <> "content"=:"width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no") blank
       elAttr "script" ("type" =: "application/javascript" <> "src" =: $(static "lib.js")) blank
       elAttr "link" ("href" =: $(static "main.css") <> "type" =: "text/css" <> "rel" =: "stylesheet") blank
   , _frontend_body = do
-      el "h1" $ text "Welcome to Obelisk!"
+      el "h1" $ text "Hydra Head Registry"
       el "p" $ text $ T.pack commonStuff
+      prerender_ (text "Loading Live Documentation") $ do
+      pb <- getPostBuild
+      let
+          allHeads = "common/heads"
+          path = "config/" <> allHeads
+      getConfig allHeads >>= \case
+        Nothing -> text $ "No config file found in " <> path
+        Just bytes -> case T.decodeUtf8' bytes of
+          Left ue -> text $ "Couldn't decode " <> path <> " : " <> T.pack (show ue)
+          Right heads -> do
+          let headUrls = T.lines heads
+          forM_ headUrls $ \headUrl -> do
+            let wsurl = "ws://" <> headUrl  
 
-      -- `prerender` and `prerender_` let you choose a widget to run on the server
-      -- during prerendering and a different widget to run on the client with
-      -- JavaScript. The following will generate a `blank` widget on the server and
-      -- print "Hello, World!" on the client.
-      prerender_ blank $ liftJSM $ void
-        $ jsg ("window" :: T.Text)
-        ^. js ("skeleton_lib" :: T.Text)
-        ^. js1 ("log" :: T.Text) ("Hello, World!" :: T.Text)
+            rec
+              t <- inputElement def
+              b <- button "Send"
+              text $ "Sending to " <> wsurl
+              let newMessage = fmap ((:[]) . T.encodeUtf8) $ tag (current $ value t) $ leftmost [b, keypress Enter t]
+            ws <- webSocket wsurl $ def & webSocketConfig_send .~ newMessage 
+            receivedMessages <- foldDyn (\m ms -> ms ++ [m]) [] $ _webSocket_recv ws
+            el "p" $ text "Responses from :"
+            _ <- el "ul" $ simpleList receivedMessages $ \m -> el "li" $ dynText =<< mapDynM (pure . T.decodeUtf8) m
 
-      elAttr "img" ("src" =: $(static "obelisk.jpg")) blank
-      el "div" $ do
-        let
-          cfg = "common/example"
-          path = "config/" <> cfg
-        getConfig cfg >>= \case
-          Nothing -> text $ "No config file found in " <> path
-          Just bytes -> case T.decodeUtf8' bytes of
-            Left ue -> text $ "Couldn't decode " <> path <> " : " <> T.pack (show ue)
-            Right s -> text s
-      return ()
+            return ()
   }

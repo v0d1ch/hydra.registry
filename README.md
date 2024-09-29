@@ -1,1 +1,1 @@
-# hydra.registry
+# Hydra Head Registry

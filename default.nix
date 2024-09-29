@@ -16,8 +16,8 @@
 }:
 with obelisk;
 project ./. ({ ... }: {
-  android.applicationId = "systems.obsidian.obelisk.examples.minimal";
-  android.displayName = "Obelisk Minimal Example";
-  ios.bundleIdentifier = "systems.obsidian.obelisk.examples.minimal";
-  ios.bundleName = "Obelisk Minimal Example";
+  android.applicationId = "systems.devnull.hydra.registry";
+  android.displayName = "Hydra Head Registry";
+  ios.bundleIdentifier = "systems.devnull.hydra.registry";
+  ios.bundleName = "Hydra Head Registry";
 })
