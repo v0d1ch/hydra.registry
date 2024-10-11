@@ -15,7 +15,12 @@
   }
 }:
 with obelisk;
-project ./. ({ ... }: {
+project ./. ({pkgs,  hackGet, ... }: {
+  packages = let 
+    lensAesonSrc = hackGet ./dep/lens-aeson;
+  in {
+    lens-aeson = lensAesonSrc + "/lens-aeson";
+  };
   android.applicationId = "systems.devnull.hydra.registry";
   android.displayName = "Hydra Head Registry";
   ios.bundleIdentifier = "systems.devnull.hydra.registry";

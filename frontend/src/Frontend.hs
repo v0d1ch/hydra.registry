@@ -17,7 +17,11 @@ import Obelisk.Route
 import Reflex.Dom.Core
 
 import Control.Monad.Fix (MonadFix)
+import qualified Data.Aeson as Aeson
+import Data.Aeson.Lens (key, _String)
+import Data.ByteString.Lazy (toStrict)
 import Data.Foldable (forM_)
+import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 
@@ -55,28 +59,27 @@ frontend =
                   rec t <- inputElement def
                       b <- button "Send"
                       let newMessage = fmap ((: [])) $ tag (current $ value t) $ leftmost [b, keypress Enter t]
-                  ws :: RawWebSocket t (Maybe ApiMsg) <-
+                  ws :: RawWebSocket t (Maybe Aeson.Value) <-
                     jsonWebSocket headUrl $
                       def
                         & webSocketConfig_send .~ newMessage
-                  displayHeads ws
+                  displayHead ws
     }
 
-displayHeads ::
+displayHead ::
   ( DomBuilder t m
   , PostBuild t m
   , MonadHold t m
   , MonadFix m
   ) =>
-  RawWebSocket t (Maybe ApiMsg) ->
+  RawWebSocket t (Maybe Aeson.Value) ->
   m ()
-displayHeads ws = do
+displayHead ws = do
   receivedMessages <- foldDyn (\m ms -> ms ++ [m]) [] $ _webSocket_recv ws
+  let headIds = traceDynWith show $ catMaybes <$> receivedMessages
   _ <- elClass "div" "container" $
     elClass "table" "hydra-stats" $
       el "ul" $
-        simpleList receivedMessages $
-          \m -> el "li" $ dynText =<< mapDynM (\a -> maybe (pure "No data") (pure . _apiMsg_headId) a) m
+        simpleList headIds $
+          \m -> el "li" $ dynText =<< mapDynM (\v -> pure $ T.decodeUtf8 $ toStrict $ Aeson.encode v) m -- v & key "headId" . _String
   return ()
-
-
