@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -16,7 +17,6 @@ import Obelisk.Route
 import Reflex.Dom.Core
 
 import Control.Monad.Fix (MonadFix)
-import Data.ByteString (ByteString)
 import Data.Foldable (forM_)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -54,8 +54,11 @@ frontend =
                 forM_ headUrls $ \headUrl -> do
                   rec t <- inputElement def
                       b <- button "Send"
-                      let newMessage = fmap ((: []) . T.encodeUtf8) $ tag (current $ value t) $ leftmost [b, keypress Enter t]
-                  ws <- webSocket headUrl $ def & webSocketConfig_send .~ newMessage
+                      let newMessage = fmap ((: [])) $ tag (current $ value t) $ leftmost [b, keypress Enter t]
+                  ws :: RawWebSocket t (Maybe ApiMsg) <-
+                    jsonWebSocket headUrl $
+                      def
+                        & webSocketConfig_send .~ newMessage
                   displayHeads ws
     }
 
@@ -65,13 +68,15 @@ displayHeads ::
   , MonadHold t m
   , MonadFix m
   ) =>
-  RawWebSocket t ByteString ->
+  RawWebSocket t (Maybe ApiMsg) ->
   m ()
 displayHeads ws = do
   receivedMessages <- foldDyn (\m ms -> ms ++ [m]) [] $ _webSocket_recv ws
-  _ <- el "div" $
-    el "ul" $
-      simpleList receivedMessages $
-        \m -> el "li" $ dynText =<< mapDynM (pure . T.decodeUtf8) m
-
+  _ <- elClass "div" "container" $
+    elClass "table" "hydra-stats" $
+      el "ul" $
+        simpleList receivedMessages $
+          \m -> el "li" $ dynText =<< mapDynM (\a -> maybe (pure "No data") (pure . _apiMsg_headId) a) m
   return ()
+
+
