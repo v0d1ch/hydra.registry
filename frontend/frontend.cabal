@@ -8,10 +8,11 @@ library
   build-depends: base
                , bytestring
                , aeson
+               , mtl
                , lens-aeson
+               , microlens
                , common
                , jsaddle
-               , lens
                , obelisk-executable-config-lookup
                , obelisk-frontend
                , obelisk-generated-static

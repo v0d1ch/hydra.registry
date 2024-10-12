@@ -19,7 +19,7 @@ project ./. ({pkgs,  hackGet, ... }: {
   packages = let 
     lensAesonSrc = hackGet ./dep/lens-aeson;
   in {
-    lens-aeson = lensAesonSrc + "/lens-aeson";
+    lens-aeson = lensAesonSrc ;
   };
   android.applicationId = "systems.devnull.hydra.registry";
   android.displayName = "Hydra Head Registry";
