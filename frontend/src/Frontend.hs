@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -17,13 +18,15 @@ import Obelisk.Route
 import Reflex.Dom.Core
 
 import Control.Monad.Fix (MonadFix)
+import Control.Monad.State (MonadState, execState, get, put, runState)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Lens (key, _String)
-import Data.ByteString.Lazy (toStrict)
+import Data.ByteString.Lazy (ByteString, toStrict)
 import Data.Foldable (forM_)
 import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Lens.Micro ((^?))
 
 import Common.Api
 import Common.Route
@@ -81,5 +84,14 @@ displayHead ws = do
     elClass "table" "hydra-stats" $
       el "ul" $
         simpleList headIds $
-          \m -> el "li" $ dynText =<< mapDynM (\v -> pure $ T.decodeUtf8 $ toStrict $ Aeson.encode v) m -- v & key "headId" . _String
+          \m -> el "li" $ dynText =<< mapDynM (\v -> pure $ parseHeadId $ Aeson.encode v) m
   return ()
+
+parseHeadId :: ByteString -> T.Text
+parseHeadId v = do
+  flip execState "Missing headId" $
+    case v ^? key "headId" . _String of
+      Nothing -> get
+      Just headId -> do
+        put headId
+        get
