@@ -11,6 +11,7 @@
 
 module Frontend where
 
+import Language.Javascript.JSaddle (MonadJSM, fromJSValUnchecked, js, js1, jsg, liftJSM)
 import Obelisk.Configs
 import Obelisk.Frontend
 import Obelisk.Generated.Static
@@ -67,15 +68,18 @@ frontend =
               Right heads -> do
                 let headUrls = T.lines heads
                 forM_ headUrls $ \headUrl -> do
-                  rec t <- inputElement def
-                      b <- button "Send"
-                      let newMessage = fmap ((: [])) $ tag (current $ value t) $ leftmost [b, keypress Enter t]
-                  ws :: RawWebSocket t (Maybe Aeson.Value) <-
-                    jsonWebSocket headUrl $
-                      def
-                        & webSocketConfig_send .~ newMessage
-                  displayHead ws
+                  messages <- readWsMessages headUrl
+                  displayHead messages
     }
+
+-- createWs :: (MonadHold t m, MonadJSM m, MonadJSM (Performable m), Reflex t, PostBuild t m, TriggerEvent t m, PerformEvent t m) => T.Text -> m (RawWebSocket t (Maybe Aeson.Value))
+readWsMessages headUrl =
+  prerender (return never) $ do
+    ws <-
+      jsonWebSocket headUrl $
+        def
+          & webSocketConfig_send .~ (never :: Event t [T.Text])
+    pure (_webSocket_recv ws)
 
 displayHead ::
   ( DomBuilder t m
@@ -83,10 +87,9 @@ displayHead ::
   , MonadHold t m
   , MonadFix m
   ) =>
-  RawWebSocket t (Maybe Aeson.Value) ->
+  Dynamic t (Event t (Maybe Aeson.Value)) ->
   m ()
-displayHead ws = do
-  _receivedMessages <- foldDyn (\m ms -> ms ++ [m]) [] $ _webSocket_recv ws
+displayHead messages = do
   headId <-
     foldDyn
       ( \v d ->
@@ -95,7 +98,7 @@ displayHead ws = do
             Just headId -> headId
       )
       mempty
-      (_webSocket_recv ws)
+      messages
   headStatus <-
     foldDyn
       ( \v d ->
@@ -104,7 +107,7 @@ displayHead ws = do
             Just headSt -> headSt
       )
       mempty
-      (_webSocket_recv ws)
+      messages
   _ <-
     elClass "div" "container" $ do
       elClass "table" "table-auto" $ do
