@@ -18,12 +18,10 @@ import Obelisk.Route
 import Reflex.Dom.Core
 
 import Control.Monad.Fix (MonadFix)
-import Control.Monad.State (MonadState, execState, get, put, runState)
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Lens (key, _String)
-import Data.ByteString.Lazy (ByteString, toStrict)
+import Data.ByteString.Lazy (ByteString)
 import Data.Foldable (forM_)
-import Data.Maybe (catMaybes)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Lens.Micro ((^?))
@@ -78,20 +76,33 @@ displayHead ::
   RawWebSocket t (Maybe Aeson.Value) ->
   m ()
 displayHead ws = do
-  receivedMessages <- foldDyn (\m ms -> ms ++ [m]) [] $ _webSocket_recv ws
-  let headIds = traceDynWith show $ catMaybes <$> receivedMessages
-  _ <- elClass "div" "container" $
-    elClass "table" "hydra-stats" $
-      el "ul" $
-        simpleList headIds $
-          \m -> el "li" $ dynText =<< mapDynM (\v -> pure $ parseHeadId $ Aeson.encode v) m
+  _receivedMessages <- foldDyn (\m ms -> ms ++ [m]) [] $ _webSocket_recv ws
+  headId <-
+    foldDyn
+      ( \v d ->
+          case parseHeadId (Aeson.encode v) of
+            Nothing -> d
+            Just headId -> headId
+      )
+      mempty
+      (_webSocket_recv ws)
+  headStatus <-
+    foldDyn
+      ( \v d ->
+          case parseHeadStatus (Aeson.encode v) of
+            Nothing -> d
+            Just headSt -> headSt
+      )
+      mempty
+      (_webSocket_recv ws)
+  _ <-
+    elClass "div" "container" $ do
+      el "p" $ dynText headId
+      el "p" $ dynText headStatus
   return ()
 
-parseHeadId :: ByteString -> T.Text
-parseHeadId v = do
-  flip execState "Missing headId" $
-    case v ^? key "headId" . _String of
-      Nothing -> get
-      Just headId -> do
-        put headId
-        get
+parseHeadId :: ByteString -> Maybe T.Text
+parseHeadId v = v ^? key "headId" . _String
+
+parseHeadStatus :: ByteString -> Maybe T.Text
+parseHeadStatus v = v ^? key "headStatus" . _String
