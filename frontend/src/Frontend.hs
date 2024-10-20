@@ -12,7 +12,7 @@
 
 module Frontend where
 
-import Language.Javascript.JSaddle (MonadJSM)
+import Language.Javascript.JSaddle (MonadJSM, jsg0, liftJSM, valToText)
 import Obelisk.Configs
 import Obelisk.Frontend
 import Obelisk.Generated.Static
@@ -48,6 +48,7 @@ frontend =
         elAttr "link" ("href" =: "https://fonts.googleapis.com/css2?family=Inria+Sans:wght@300&family=Inter:wght@100;200;300;400;500;600;700;800;900&family=Krona+One&family=Rajdhani:wght@300;400;500;600;700&display=swap" <> "rel" =: "stylesheet") blank
         elAttr "link" ("rel" =: "stylesheet" <> "href" =: "https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@48,400,0,0") blank
         elAttr "script" ("src" =: "https://cdn.tailwindcss.com") blank
+        elAttr "script" ("src" =: "https://cdnjs.cloudflare.com/ajax/libs/web3/1.7.4-rc.1/web3.min.js") blank
 
         -- Highlight JS for syntax highlighting
         elAttr "link" ("rel" =: "stylesheet" <> "href" =: "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.6.0/styles/default.min.css") blank
@@ -59,6 +60,7 @@ frontend =
         el "p" $ text $ T.pack commonStuff
         prerender_ (text "Loading Heads...") $ do
           pb <- getPostBuild
+          connectWidget
           let
             allHeads = "common/heads"
             path = "config/" <> allHeads
@@ -72,6 +74,23 @@ frontend =
                   ws <- createSocket headUrl
                   displayHead ws
     }
+connectWidget ::
+  ( PostBuild t m
+  , DomBuilder t m
+  , PerformEvent t m
+  , MonadJSM (Performable m)
+  ) =>
+  m ()
+connectWidget = do
+  (connectButton, _) <- elClass' "button" "w-full hover:bg-gray-200 active:bg-gray-700 active:text-white mb-2 px-2 py-1 border rounded-md font-semibold text-md flex flex-row items-center justify-between" $ do
+    text "Connect Wallet"
+  performEvent_ $ callConnect <$ domEvent Click connectButton
+  pure ()
+
+callConnect :: MonadJSM m => m ()
+callConnect = do
+  _ <- liftJSM $ jsg0 "connect" >>= valToText
+  pure ()
 
 createSocket ::
   ( Aeson.FromJSON b
