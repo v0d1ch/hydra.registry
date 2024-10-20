@@ -7,10 +7,12 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-type-defaults #-}
 
 module Frontend where
 
+import Language.Javascript.JSaddle (MonadJSM)
 import Obelisk.Configs
 import Obelisk.Frontend
 import Obelisk.Generated.Static
@@ -67,15 +69,22 @@ frontend =
               Right heads -> do
                 let headUrls = T.lines heads
                 forM_ headUrls $ \headUrl -> do
-                  rec t <- inputElement def
-                      b <- button "Send"
-                      let newMessage = fmap ((: [])) $ tag (current $ value t) $ leftmost [b, keypress Enter t]
-                  ws :: RawWebSocket t (Maybe Aeson.Value) <-
-                    jsonWebSocket headUrl $
-                      def
-                        & webSocketConfig_send .~ newMessage
+                  ws <- createSocket headUrl
                   displayHead ws
     }
+
+createSocket ::
+  ( Aeson.FromJSON b
+  , MonadJSM m
+  , MonadJSM (Performable m)
+  , PostBuild t m
+  , TriggerEvent t m
+  , PerformEvent t m
+  , MonadHold t m
+  ) =>
+  T.Text ->
+  m (RawWebSocket t (Maybe b))
+createSocket headUrl = jsonWebSocket @Aeson.Value headUrl $ def
 
 displayHead ::
   ( DomBuilder t m
