@@ -4,11 +4,13 @@ import Api.Types
 import Api.Validation (validateAddress)
 import Cache (Cache, insertCache, lookupCache)
 import Control.Concurrent.STM
+import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
 import Data.Functor.Identity (Identity)
+import Data.Int (Int32)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -35,6 +37,7 @@ type API =
     :<|> "addresses" :> Capture "address" Text :> "utxos"
           :> QueryParam "count" Int :> QueryParam "page" Int :> QueryParam "order" Text
           :> Get '[JSON] [UtxoResponse]
+    :<|> "api" :> "txs" :> "utxoForAddresses" :> ReqBody '[JSON] YoroiUtxoRequest :> Post '[JSON] [YoroiUtxoResponse]
     :<|> "admin" :> "heads" :> Capture "headId" Text :> Delete '[JSON] NoContent
     :<|> "metrics" :> Get '[PlainText] Text
 
@@ -62,6 +65,7 @@ server env =
     :<|> handleAddressBalance env.pool
     :<|> handleHeadUtxos env.pool
     :<|> handleAddressUtxos env.pool env.addressCache
+    :<|> handleYoroiUtxos env.pool
     :<|> handleAdminDeleteHead env.pool
     :<|> handleMetrics env.metrics
 
@@ -205,6 +209,53 @@ handleAddressUtxos pool cache addr mCount mPage _mOrder = do
   fetchUtxos count page = do
     utxos <- liftIO $ Db.getUtxosByAddressFlat pool addr count page
     pure $ map (\u -> utxoToResponse u.utxoHeadId u) utxos
+
+-- | POST /api/txs/utxoForAddresses (Yoroi-compatible)
+handleYoroiUtxos :: Pool -> YoroiUtxoRequest -> Handler [YoroiUtxoResponse]
+handleYoroiUtxos pool req = do
+  let addrs = req.addresses
+  when (null addrs) $
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "addresses must not be empty"}
+  when (length addrs > 50) $
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "max 50 addresses"}
+  -- Validate all addresses
+  mapM_
+    ( \addr -> case validateAddress addr of
+        Left err -> throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
+        Right _ -> pure ()
+    )
+    addrs
+  let page = maybe 1 (max 1) req.page
+      pageSize = min 100 $ maybe 100 (max 1) req.pageSize
+  results <- liftIO $ Db.getUtxosByAddressesWithSnapshot pool addrs pageSize page
+  pure $ map (uncurry utxoToYoroiResponse) results
+
+-- | Convert a DB UTxO to Yoroi-compatible response format
+utxoToYoroiResponse :: Utxo Identity -> Int32 -> YoroiUtxoResponse
+utxoToYoroiResponse u snapNum =
+  YoroiUtxoResponse
+    { utxo_id = u.utxoTxHash <> ":" <> T.pack (show u.utxoOutputIndex)
+    , tx_hash = u.utxoTxHash
+    , tx_index = fromIntegral u.utxoOutputIndex
+    , block_num = fromIntegral snapNum
+    , receiver = u.utxoAddress
+    , amount = T.pack $ show u.utxoLovelace
+    , dataHash = u.utxoDatumHash
+    , assets = nativeTokenAssets
+    }
+ where
+  nativeTokenAssets = case u.utxoAssets of
+    Aeson.Object obj ->
+      [ YoroiAsset
+          { assetId = Key.toText policyKey <> "." <> Key.toText assetKey
+          , policyId = Key.toText policyKey
+          , name = Key.toText assetKey
+          , amount = T.pack $ show (round n :: Integer)
+          }
+      | (policyKey, Aeson.Object assets) <- KM.toList obj
+      , (assetKey, Aeson.Number n) <- KM.toList assets
+      ]
+    _ -> []
 
 -- | DELETE /admin/heads/:headId
 handleAdminDeleteHead :: Pool -> Text -> Handler NoContent

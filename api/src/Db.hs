@@ -45,6 +45,7 @@ initDb pool =
       \  host TEXT NOT NULL,\
       \  port INTEGER NOT NULL,\
       \  status TEXT NOT NULL DEFAULT 'idle',\
+      \  snapshot_number INTEGER NOT NULL DEFAULT 0,\
       \  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
       \  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
       \  last_message_at TIMESTAMPTZ\
@@ -82,6 +83,7 @@ upsertHead pool hid hostAddr portNum status' = do
                       , headHost = lit hostAddr
                       , headPort = lit (fromIntegral @Int @Int32 portNum)
                       , headStatus = lit status'
+                      , snapshotNumber = lit 0
                       , createdAt = lit now
                       , updatedAt = lit now
                       , lastMessageAt = lit (Just now)
@@ -115,6 +117,26 @@ updateHeadStatus pool hid newStatus = do
                   { headStatus = lit newStatus
                   , updatedAt = lit now
                   , lastMessageAt = lit (Just now)
+                  }
+            , updateWhere = \_ row -> row.headId ==. lit hid
+            , returning = NoReturning
+            }
+
+-- | Update snapshot number for a head
+updateSnapshotNumber :: Pool -> Text -> Int -> IO ()
+updateSnapshotNumber pool hid snapNum = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = headSchema
+            , from = pure ()
+            , set = \_ row ->
+                row
+                  { snapshotNumber = lit (fromIntegral @Int @Int32 snapNum)
+                  , updatedAt = lit now
                   }
             , updateWhere = \_ row -> row.headId ==. lit hid
             , returning = NoReturning
@@ -297,6 +319,21 @@ getUtxosByAddressFlat pool addr pageSize page =
               u <- Rel8.each utxoSchema
               Rel8.where_ (u.utxoAddress ==. lit addr)
               pure u
+
+-- | Get UTxOs for addresses with snapshot number (for Yoroi-compatible endpoint)
+getUtxosByAddressesWithSnapshot :: Pool -> [Text] -> Int -> Int -> IO [(Utxo Identity, Int32)]
+getUtxosByAddressesWithSnapshot pool addrs pageSize page =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $
+          Rel8.limit (fromIntegral pageSize) $
+            Rel8.offset (fromIntegral $ (page - 1) * pageSize) $ do
+              u <- Rel8.each utxoSchema
+              h <- Rel8.each headSchema
+              Rel8.where_ (u.utxoHeadId ==. h.headId)
+              Rel8.where_ (Rel8.in_ u.utxoAddress (map lit addrs))
+              pure (u, h.snapshotNumber)
 
 -- | Delete all UTxOs for a head
 deleteUtxosForHead :: Pool -> Text -> IO ()

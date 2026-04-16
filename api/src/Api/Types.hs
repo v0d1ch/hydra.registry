@@ -102,6 +102,39 @@ data RootResponse = RootResponse
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+-- | Yoroi-compatible request for UTxOs by addresses
+data YoroiUtxoRequest = YoroiUtxoRequest
+  { addresses :: [Text]
+  , page :: Maybe Int
+  , pageSize :: Maybe Int
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Yoroi-compatible asset in UTxO response
+data YoroiAsset = YoroiAsset
+  { assetId :: Text
+  , policyId :: Text
+  , name :: Text
+  , amount :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Yoroi-compatible UTxO response
+data YoroiUtxoResponse = YoroiUtxoResponse
+  { utxo_id :: Text
+  , tx_hash :: Text
+  , tx_index :: Int
+  , block_num :: Int
+  , receiver :: Text
+  , amount :: Text
+  , dataHash :: Maybe Text
+  , assets :: [YoroiAsset]
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
 -- | Error response
 data ErrorResponse = ErrorResponse
   { errorMsg :: Text
