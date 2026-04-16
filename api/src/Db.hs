@@ -285,16 +285,18 @@ getUtxosByAddressAndHead pool hid addr =
           Rel8.where_ (u.utxoAddress ==. lit addr)
           pure u
 
--- | Get UTxOs for an address across all heads, grouped by head
-getUtxosByAddress :: Pool -> Text -> IO [(Head Identity, [Utxo Identity])]
-getUtxosByAddress pool addr = do
-  heads <- getAllHeads pool
-  results <- mapM getForHead heads
-  pure [(h, us) | (h, us) <- results, not (Prelude.null us)]
- where
-  getForHead h = do
-    us <- getUtxosByAddressAndHead pool h.headId addr
-    pure (h, us)
+-- | Get UTxOs for an address across all heads, flat list with pagination
+getUtxosByAddressFlat :: Pool -> Text -> Int -> Int -> IO [Utxo Identity]
+getUtxosByAddressFlat pool addr pageSize page =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $
+          Rel8.limit (fromIntegral pageSize) $
+            Rel8.offset (fromIntegral $ (page - 1) * pageSize) $ do
+              u <- Rel8.each utxoSchema
+              Rel8.where_ (u.utxoAddress ==. lit addr)
+              pure u
 
 -- | Delete all UTxOs for a head
 deleteUtxosForHead :: Pool -> Text -> IO ()

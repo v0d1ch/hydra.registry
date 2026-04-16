@@ -32,7 +32,9 @@ type API =
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Get '[JSON] [Text]
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Capture "address" Text :> "balance" :> Get '[JSON] BalanceResponse
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Capture "address" Text :> "utxos" :> Get '[JSON] [UtxoResponse]
-    :<|> "addresses" :> Capture "address" Text :> "utxos" :> Get '[JSON] [HeadUtxoResponse]
+    :<|> "addresses" :> Capture "address" Text :> "utxos"
+          :> QueryParam "count" Int :> QueryParam "page" Int :> QueryParam "order" Text
+          :> Get '[JSON] [UtxoResponse]
     :<|> "admin" :> "heads" :> Capture "headId" Text :> Delete '[JSON] NoContent
     :<|> "metrics" :> Get '[PlainText] Text
 
@@ -45,7 +47,7 @@ data AppEnv = AppEnv
   , eventQueue :: TQueue HydraEvent
   , logger :: Logger
   , metrics :: Metrics
-  , addressCache :: Cache [HeadUtxoResponse]
+  , addressCache :: Cache [UtxoResponse]
   }
 
 -- | Create the Servant server
@@ -176,31 +178,33 @@ handleHeadUtxos pool hid addr = do
       throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Head not found"}
     Just _ -> do
       utxos <- liftIO $ Db.getUtxosByAddressAndHead pool hid addr
-      pure $ map utxoToResponse utxos
+      pure $ map (utxoToResponse hid) utxos
 
--- | GET /addresses/:address/utxos (with caching)
-handleAddressUtxos :: Pool -> Cache [HeadUtxoResponse] -> Text -> Handler [HeadUtxoResponse]
-handleAddressUtxos pool cache addr = do
+-- | GET /addresses/:address/utxos (Blockfrost-compatible flat response with pagination)
+handleAddressUtxos :: Pool -> Cache [UtxoResponse] -> Text -> Maybe Int -> Maybe Int -> Maybe Text -> Handler [UtxoResponse]
+handleAddressUtxos pool cache addr mCount mPage _mOrder = do
   case validateAddress addr of
     Left err ->
       throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
     Right _ -> pure ()
-  -- Check cache first
-  cached <- liftIO $ lookupCache cache addr
-  case cached of
-    Just result -> pure result
-    Nothing -> do
-      results <- liftIO $ Db.getUtxosByAddress pool addr
-      let response = map toHeadUtxoResponse results
-      liftIO $ insertCache cache addr response
-      pure response
+  let count = min 100 $ maybe 100 (max 1) mCount
+      page = maybe 1 (max 1) mPage
+  -- Check cache only for default (first page)
+  let useCache = page == 1 && count == 100
+  if useCache
+    then do
+      cached <- liftIO $ lookupCache cache addr
+      case cached of
+        Just result -> pure result
+        Nothing -> do
+          response <- fetchUtxos count page
+          liftIO $ insertCache cache addr response
+          pure response
+    else fetchUtxos count page
  where
-  toHeadUtxoResponse (h, utxos) =
-    HeadUtxoResponse
-      { head_id = h.headId
-      , head_status = h.headStatus
-      , utxos = map utxoToResponse utxos
-      }
+  fetchUtxos count page = do
+    utxos <- liftIO $ Db.getUtxosByAddressFlat pool addr count page
+    pure $ map (\u -> utxoToResponse u.utxoHeadId u) utxos
 
 -- | DELETE /admin/heads/:headId
 handleAdminDeleteHead :: Pool -> Text -> Handler NoContent
@@ -218,8 +222,8 @@ handleMetrics :: Metrics -> Handler Text
 handleMetrics = liftIO . renderMetrics
 
 -- | Convert a DB UTxO row to the Blockfrost-compatible response format
-utxoToResponse :: Utxo Identity -> UtxoResponse
-utxoToResponse u =
+utxoToResponse :: Text -> Utxo Identity -> UtxoResponse
+utxoToResponse hid u =
   UtxoResponse
     { address = u.utxoAddress
     , tx_hash = u.utxoTxHash
@@ -228,6 +232,7 @@ utxoToResponse u =
     , data_hash = u.utxoDatumHash
     , inline_datum = u.utxoInlineDatum
     , reference_script_hash = u.utxoReferenceScriptHash
+    , head_id = hid
     }
  where
   lovelaceAmount =
