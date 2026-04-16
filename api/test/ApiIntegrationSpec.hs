@@ -91,5 +91,6 @@ makeTestApp = do
             , logger = logger
             , metrics = metrics
             , addressCache = addrCache
+            , staticDir = "./website/dist"
             }
     pure $ serve api (server env)

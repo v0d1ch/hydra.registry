@@ -21,25 +21,42 @@ import Hydra.Client (HydraEvent (..))
 import Indexer qualified
 import Logging (Logger)
 import Metrics (Metrics, renderMetrics)
+import Network.Wai (Middleware)
+import Network.Wai.Middleware.Cors
+  ( CorsResourcePolicy (..)
+  , cors
+  , simpleHeaders
+  , simpleMethods
+  )
 import Servant
 
--- | Full API type
-type API =
-  -- GET / — root endpoint with version and docs link
-  Get '[JSON] RootResponse
-    :<|> "health" :> Get '[JSON] HealthResponse
+-- | Our own endpoints that live under /api/v1/
+type ApiV1Routes =
+  "health" :> Get '[JSON] HealthResponse
     :<|> "heads" :> "register" :> ReqBody '[JSON] RegisterHead :> Post '[JSON] RegisterHeadResponse
     :<|> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> Get '[JSON] [HeadInfo]
     :<|> "heads" :> Capture "headId" Text :> Get '[JSON] HeadDetailResponse
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Get '[JSON] [Text]
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Capture "address" Text :> "balance" :> Get '[JSON] BalanceResponse
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Capture "address" Text :> "utxos" :> Get '[JSON] [UtxoResponse]
+    :<|> "admin" :> "heads" :> Capture "headId" Text :> Delete '[JSON] NoContent
+    :<|> "metrics" :> Get '[PlainText] Text
+    :<|> "stats" :> Get '[JSON] StatsResponse
+
+-- | Full API type
+type API =
+  -- GET / — root endpoint with version and docs link
+  Get '[JSON] RootResponse
+    -- /api/v1/* — our API endpoints
+    :<|> "api" :> "v1" :> ApiV1Routes
+    -- /addresses/:address/utxos — Blockfrost-compatible (wallet compat, root level)
     :<|> "addresses" :> Capture "address" Text :> "utxos"
           :> QueryParam "count" Int :> QueryParam "page" Int :> QueryParam "order" Text
           :> Get '[JSON] [UtxoResponse]
+    -- /api/txs/utxoForAddresses — Yoroi-compatible (wallet compat, current path)
     :<|> "api" :> "txs" :> "utxoForAddresses" :> ReqBody '[JSON] YoroiUtxoRequest :> Post '[JSON] [YoroiUtxoResponse]
-    :<|> "admin" :> "heads" :> Capture "headId" Text :> Delete '[JSON] NoContent
-    :<|> "metrics" :> Get '[PlainText] Text
+    -- Static file serving (catch-all for website)
+    :<|> Raw
 
 api :: Proxy API
 api = Proxy
@@ -51,23 +68,47 @@ data AppEnv = AppEnv
   , logger :: Logger
   , metrics :: Metrics
   , addressCache :: Cache [UtxoResponse]
+  , staticDir :: FilePath
   }
 
 -- | Create the Servant server
 server :: AppEnv -> Server API
 server env =
   handleRoot
-    :<|> handleHealth env.pool
+    :<|> apiV1Server env
+    :<|> handleAddressUtxos env.pool env.addressCache
+    :<|> handleYoroiUtxos env.pool
+    :<|> serveDirectoryWebApp env.staticDir
+
+-- | Server for /api/v1/* routes
+apiV1Server :: AppEnv -> Server ApiV1Routes
+apiV1Server env =
+  handleHealth env.pool
     :<|> handleRegister env.logger env.pool env.eventQueue
     :<|> handleListHeads env.pool
     :<|> handleHeadDetail env.pool
     :<|> handleHeadAddresses env.pool
     :<|> handleAddressBalance env.pool
     :<|> handleHeadUtxos env.pool
-    :<|> handleAddressUtxos env.pool env.addressCache
-    :<|> handleYoroiUtxos env.pool
     :<|> handleAdminDeleteHead env.pool
     :<|> handleMetrics env.metrics
+    :<|> handleStats env.pool
+
+-- | CORS middleware that allows the frontend to talk to the API
+corsMiddleware :: Middleware
+corsMiddleware = cors $ const $ Just policy
+ where
+  policy =
+    CorsResourcePolicy
+      { corsOrigins = Nothing -- allow all origins
+      , corsMethods = simpleMethods <> ["DELETE", "PUT", "PATCH"]
+      , corsRequestHeaders = simpleHeaders <> ["Content-Type", "Authorization"]
+      , corsExposedHeaders = Nothing
+      , corsMaxAge = Just 86400 -- cache preflight for 24h
+      , corsVaryOrigin = True
+      , corsRequireOrigin = False
+      , corsIgnoreFailures = False
+      }
 
 -- | GET /
 handleRoot :: Handler RootResponse
@@ -78,7 +119,7 @@ handleRoot =
       , description = "Hydra Registry API — query L2 UTxO state across Hydra heads"
       }
 
--- | GET /health
+-- | GET /api/v1/health
 handleHealth :: Pool -> Handler HealthResponse
 handleHealth pool = do
   heads <- liftIO $ Db.getAllHeads pool
@@ -90,7 +131,7 @@ handleHealth pool = do
       , dbConnected = dbOk
       }
 
--- | POST /heads/register
+-- | POST /api/v1/heads/register
 handleRegister :: Logger -> Pool -> TQueue HydraEvent -> RegisterHead -> Handler RegisterHeadResponse
 handleRegister logger pool eventQueue req = do
   result <- liftIO $ Indexer.registerHead logger pool eventQueue req.host req.port
@@ -102,7 +143,7 @@ handleRegister logger pool eventQueue req = do
     Right _ ->
       throwError $ err500{errBody = Aeson.encode $ ErrorResponse "Unexpected response"}
 
--- | GET /heads (with optional pagination)
+-- | GET /api/v1/heads (with optional pagination)
 handleListHeads :: Pool -> Maybe Int -> Maybe Int -> Handler [HeadInfo]
 handleListHeads pool mCount mPage = do
   let count = min 100 $ maybe 100 (max 1) mCount
@@ -118,7 +159,7 @@ handleListHeads pool mCount mPage = do
       , status = h.headStatus
       }
 
--- | GET /heads/:headId
+-- | GET /api/v1/heads/:headId
 handleHeadDetail :: Pool -> Text -> Handler HeadDetailResponse
 handleHeadDetail pool hid = do
   mHead <- liftIO $ Db.getHead pool hid
@@ -138,7 +179,7 @@ handleHeadDetail pool hid = do
           , lastSeenAt = h.lastMessageAt
           }
 
--- | GET /heads/:headId/addresses
+-- | GET /api/v1/heads/:headId/addresses
 handleHeadAddresses :: Pool -> Text -> Handler [Text]
 handleHeadAddresses pool hid = do
   mHead <- liftIO $ Db.getHead pool hid
@@ -148,7 +189,7 @@ handleHeadAddresses pool hid = do
     Just _ ->
       liftIO $ Db.getAddressesForHead pool hid
 
--- | GET /heads/:headId/addresses/:address/balance
+-- | GET /api/v1/heads/:headId/addresses/:address/balance
 handleAddressBalance :: Pool -> Text -> Text -> Handler BalanceResponse
 handleAddressBalance pool hid addr = do
   case validateAddress addr of
@@ -169,7 +210,7 @@ handleAddressBalance pool hid addr = do
           , tokens = assetMapToAmounts assetMap
           }
 
--- | GET /heads/:headId/addresses/:address/utxos
+-- | GET /api/v1/heads/:headId/addresses/:address/utxos
 handleHeadUtxos :: Pool -> Text -> Text -> Handler [UtxoResponse]
 handleHeadUtxos pool hid addr = do
   case validateAddress addr of
@@ -257,7 +298,7 @@ utxoToYoroiResponse u snapNum =
       ]
     _ -> []
 
--- | DELETE /admin/heads/:headId
+-- | DELETE /api/v1/admin/heads/:headId
 handleAdminDeleteHead :: Pool -> Text -> Handler NoContent
 handleAdminDeleteHead pool hid = do
   mHead <- liftIO $ Db.getHead pool hid
@@ -268,9 +309,20 @@ handleAdminDeleteHead pool hid = do
       liftIO $ Db.deleteHead pool hid
       pure NoContent
 
--- | GET /metrics
+-- | GET /api/v1/metrics
 handleMetrics :: Metrics -> Handler Text
 handleMetrics = liftIO . renderMetrics
+
+-- | GET /api/v1/stats
+handleStats :: Pool -> Handler StatsResponse
+handleStats pool = do
+  (hCount, uCount, byStatus) <- liftIO $ Db.getStats pool
+  pure
+    StatsResponse
+      { headCount = hCount
+      , totalUtxos = uCount
+      , headsByStatus = byStatus
+      }
 
 -- | Convert a DB UTxO row to the Blockfrost-compatible response format
 utxoToResponse :: Text -> Utxo Identity -> UtxoResponse

@@ -364,6 +364,20 @@ deleteHead pool hid = do
             , returning = NoReturning
             }
 
+-- | Get stats: total heads, total utxos, heads by status
+getStats :: Pool -> IO (Int, Int, Map.Map Text Int)
+getStats pool = do
+  heads <- getAllHeads pool
+  utxos <- runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $
+          Rel8.each utxoSchema
+  let totalHeads = length heads
+      totalUtxos = length utxos
+      statusCounts = Map.fromListWith (+) [(h.headStatus, 1 :: Int) | h <- heads]
+  pure (totalHeads, totalUtxos, statusCounts)
+
 -- | Check database connectivity
 checkDbConnectivity :: Pool -> IO Bool
 checkDbConnectivity pool = do
