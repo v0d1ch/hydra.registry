@@ -1,6 +1,6 @@
 module Main where
 
-import Api (AppEnv (..), api, server)
+import Api (AppEnv (..), api, corsMiddleware, server)
 import Cache (newCache)
 import Config (AppConfig (..), loadConfig)
 import Control.Concurrent (forkIO, threadDelay)
@@ -17,7 +17,6 @@ import Logging
 import Metrics (metricsMiddleware, newMetrics)
 import Middleware.RateLimit (cleanupRateLimiter, newRateLimiter, rateLimitMiddleware)
 import Network.Wai.Handler.Warp qualified as Warp
-import Network.Wai.Middleware.Cors (simpleCors)
 import Network.Wai.Middleware.RequestLogger (logStdout)
 import Servant (serve)
 import System.Posix.Signals (Handler (..), installHandler, sigINT, sigTERM)
@@ -71,12 +70,13 @@ main = do
           , logger = logger
           , metrics = metrics
           , addressCache = addrCache
+          , staticDir = config.staticDir
           }
 
   -- Build middleware stack
   let middleware =
         logStdout
-          . simpleCors
+          . corsMiddleware
           . rateLimitMiddleware rateLimiter
           . metricsMiddleware metrics
 

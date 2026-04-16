@@ -80,7 +80,6 @@ executable hydra-registry-api
     , servant-server
     , stm
     , unix
-    , wai-cors
     , wai-extra
     , warp
 

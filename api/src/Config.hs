@@ -11,6 +11,7 @@ data AppConfig = AppConfig
   , httpPort :: Int
   , rateLimitPerMin :: Int
   , healthTimeoutSeconds :: Int
+  , staticDir :: FilePath
   }
   deriving stock (Show, Eq)
 
@@ -21,6 +22,7 @@ defaultConfig =
     , httpPort = 8080
     , rateLimitPerMin = 100
     , healthTimeoutSeconds = 120
+    , staticDir = "./website/dist"
     }
 
 loadConfig :: IO AppConfig
@@ -29,12 +31,14 @@ loadConfig = do
   port <- lookupEnvRead "HYDRA_HTTP_PORT" defaultConfig.httpPort
   rateLimit <- lookupEnvRead "HYDRA_RATE_LIMIT" defaultConfig.rateLimitPerMin
   healthTimeout <- lookupEnvRead "HYDRA_HEALTH_TIMEOUT" defaultConfig.healthTimeoutSeconds
+  staticDirPath <- lookupEnvString "HYDRA_STATIC_DIR" defaultConfig.staticDir
   pure
     AppConfig
       { dbConnStr = dbConn
       , httpPort = port
       , rateLimitPerMin = rateLimit
       , healthTimeoutSeconds = healthTimeout
+      , staticDir = staticDirPath
       }
 
 lookupEnvText :: String -> Text -> IO Text
@@ -46,3 +50,8 @@ lookupEnvRead :: (Read a) => String -> a -> IO a
 lookupEnvRead key def = do
   mVal <- lookupEnv key
   pure $ fromMaybe def (mVal >>= readMaybe)
+
+lookupEnvString :: String -> String -> IO String
+lookupEnvString key def = do
+  mVal <- lookupEnv key
+  pure $ fromMaybe def mVal

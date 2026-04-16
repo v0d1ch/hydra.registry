@@ -1,6 +1,7 @@
 module Api.Types where
 
 import Data.Aeson
+import Data.Map.Strict (Map)
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import GHC.Generics (Generic)
@@ -131,6 +132,15 @@ data YoroiUtxoResponse = YoroiUtxoResponse
   , amount :: Text
   , dataHash :: Maybe Text
   , assets :: [YoroiAsset]
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Stats response
+data StatsResponse = StatsResponse
+  { headCount :: Int
+  , totalUtxos :: Int
+  , headsByStatus :: Map Text Int
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
