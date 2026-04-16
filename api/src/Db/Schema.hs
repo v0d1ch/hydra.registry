@@ -14,6 +14,7 @@ data Head f = Head
   , headHost :: Column f Text
   , headPort :: Column f Int32
   , headStatus :: Column f Text
+  , snapshotNumber :: Column f Int32
   , createdAt :: Column f UTCTime
   , updatedAt :: Column f UTCTime
   , lastMessageAt :: Column f (Maybe UTCTime)
@@ -34,6 +35,7 @@ headSchema =
           , headHost = "host"
           , headPort = "port"
           , headStatus = "status"
+          , snapshotNumber = "snapshot_number"
           , createdAt = "created_at"
           , updatedAt = "updated_at"
           , lastMessageAt = "last_message_at"

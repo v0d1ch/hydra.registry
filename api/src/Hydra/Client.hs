@@ -36,6 +36,7 @@ data HydraEvent
       }
   | HeadSnapshotConfirmed
       { snapHeadId :: Text
+      , snapNumber :: Int
       , snapUtxos :: [HydraUtxoEntry]
       }
   | HeadClosed {closedHeadId :: Text}
@@ -67,12 +68,17 @@ parseHydraMessage = \case
         hid <- case KM.lookup "headId" obj of
           Just (String s) -> Just s
           _ -> Nothing
-        let utxoEntries = case KM.lookup "snapshot" obj of
-              Just (Object snap) -> case KM.lookup "utxo" snap of
-                Just v -> parseUtxoMap v
-                _ -> []
-              _ -> []
-        Just $ HeadSnapshotConfirmed hid utxoEntries
+        let (snapNum, utxoEntries) = case KM.lookup "snapshot" obj of
+              Just (Object snap) ->
+                let num = case KM.lookup "number" snap of
+                      Just (Number n) -> round n
+                      _ -> 0
+                    utxos = case KM.lookup "utxo" snap of
+                      Just v -> parseUtxoMap v
+                      _ -> []
+                 in (num, utxos)
+              _ -> (0, [])
+        Just $ HeadSnapshotConfirmed hid snapNum utxoEntries
       "HeadIsClosed" -> do
         hid <- case KM.lookup "headId" obj of
           Just (String s) -> Just s

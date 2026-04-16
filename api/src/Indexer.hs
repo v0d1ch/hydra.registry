@@ -30,9 +30,10 @@ processEvent logger pool = \case
     Db.updateHeadStatus pool greeterHeadId greeterHeadStatus
     Db.replaceUtxos pool greeterHeadId greeterUtxos
     Db.updateLastMessageAt pool greeterHeadId
-  HeadSnapshotConfirmed{snapHeadId, snapUtxos} -> do
-    logInfo logger "Snapshot confirmed" [("headId", toJSON snapHeadId), ("utxoCount", toJSON (length snapUtxos))]
+  HeadSnapshotConfirmed{snapHeadId, snapNumber, snapUtxos} -> do
+    logInfo logger "Snapshot confirmed" [("headId", toJSON snapHeadId), ("snapshot", toJSON snapNumber), ("utxoCount", toJSON (length snapUtxos))]
     Db.updateHeadStatus pool snapHeadId "Open"
+    Db.updateSnapshotNumber pool snapHeadId snapNumber
     Db.replaceUtxos pool snapHeadId snapUtxos
     Db.updateLastMessageAt pool snapHeadId
   HeadClosed{closedHeadId} -> do
