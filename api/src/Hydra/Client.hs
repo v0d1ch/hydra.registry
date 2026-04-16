@@ -11,6 +11,7 @@ import Data.Aeson.KeyMap qualified as KM
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import Logging (Logger, logError, logInfo, logWarn)
 import Network.WebSockets qualified as WS
 
 -- | Parsed UTxO entry from Hydra
@@ -42,8 +43,8 @@ data HydraEvent
       { finalizedHeadId :: Text
       , finalizedUtxos :: [HydraUtxoEntry]
       }
-  | ConnectionLost
-  deriving stock (Show)
+  | ConnectionLost {lostHeadId :: Text}
+  deriving stock (Eq, Show)
 
 -- | Parse a Hydra WebSocket message into an event
 parseHydraMessage :: Value -> Maybe HydraEvent
@@ -156,23 +157,30 @@ readMaybe' s = case reads s of
   _ -> Nothing
 
 -- | Validate a Hydra node by connecting and parsing the Greetings message
-validateHydraNode :: Text -> Int -> IO (Either Text HydraEvent)
-validateHydraNode hostAddr portNum = do
+validateHydraNode :: Logger -> Text -> Int -> IO (Either Text HydraEvent)
+validateHydraNode logger hostAddr portNum = do
   result <- try @SomeException $ do
     WS.runClient (T.unpack hostAddr) portNum "/" $ \conn -> do
       msg <- WS.receiveData conn
       case decode msg of
         Nothing -> pure $ Left "Failed to parse message from Hydra node"
         Just val -> case parseHydraMessage val of
-          Just evt@HeadGreetings{} -> pure $ Right evt
+          Just evt@HeadGreetings{greeterHeadId}
+            | T.null greeterHeadId ->
+                pure $ Left "Head is in Idle state (no head ID)"
+            | otherwise ->
+                pure $ Right evt
           _ -> pure $ Left "First message was not a Greetings message"
   case result of
-    Left err -> pure $ Left $ "Connection failed: " <> T.pack (show err)
+    Left err -> do
+      logError logger "Connection to Hydra node failed" [("error", toJSON (show err))]
+      pure $ Left $ "Connection failed: " <> T.pack (show err)
     Right r -> pure r
 
--- | Connect to a Hydra node and continuously listen for events
-connectToHead :: Text -> Int -> TQueue HydraEvent -> IO ()
-connectToHead hostAddr portNum eventQueue = void $ async $ reconnectLoop 1
+-- | Connect to a Hydra node and continuously listen for events.
+-- Each head connection runs in its own thread with independent error handling.
+connectToHead :: Logger -> Text -> Text -> Int -> TQueue HydraEvent -> IO ()
+connectToHead logger headId hostAddr portNum eventQueue = void $ async $ reconnectLoop 1
  where
   maxDelay :: Int
   maxDelay = 300
@@ -180,15 +188,24 @@ connectToHead hostAddr portNum eventQueue = void $ async $ reconnectLoop 1
   reconnectLoop :: Int -> IO ()
   reconnectLoop delay = do
     listenResult <- try @SomeException $ do
-      WS.runClient (T.unpack hostAddr) portNum "/" $ \conn ->
+      WS.runClient (T.unpack hostAddr) portNum "/" $ \conn -> do
+        logInfo logger "Connected to Hydra head" [("headId", toJSON headId), ("host", toJSON hostAddr)]
         forever $ do
           msg <- WS.receiveData conn
           case decode msg >>= parseHydraMessage of
             Just evt -> atomically $ writeTQueue eventQueue evt
             Nothing -> pure ()
     case listenResult of
-      Left _err -> do
-        atomically $ writeTQueue eventQueue ConnectionLost
+      Left err -> do
+        logWarn
+          logger
+          "WebSocket connection lost, reconnecting..."
+          [ ("headId", toJSON headId)
+          , ("host", toJSON hostAddr)
+          , ("delay_seconds", toJSON delay)
+          , ("error", toJSON (show err))
+          ]
+        atomically $ writeTQueue eventQueue (ConnectionLost headId)
         threadDelay (delay * 1_000_000)
         reconnectLoop (min (delay * 2) maxDelay)
       Right () ->

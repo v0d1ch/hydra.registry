@@ -2,6 +2,7 @@ module Api.Types where
 
 import Data.Aeson
 import Data.Text (Text)
+import Data.Time (UTCTime)
 import GHC.Generics (Generic)
 
 -- | Registration request
@@ -26,6 +27,19 @@ data HeadInfo = HeadInfo
   , host :: Text
   , port :: Int
   , status :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Detailed head info (single head endpoint)
+data HeadDetailResponse = HeadDetailResponse
+  { headId :: Text
+  , host :: Text
+  , port :: Int
+  , status :: Text
+  , utxoCount :: Int
+  , registeredAt :: UTCTime
+  , lastSeenAt :: Maybe UTCTime
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -60,10 +74,29 @@ data HeadUtxoResponse = HeadUtxoResponse
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+-- | Aggregated balance response
+data BalanceResponse = BalanceResponse
+  { address :: Text
+  , headId :: Text
+  , lovelace :: Text
+  , tokens :: [Amount]
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
 -- | Health check response
 data HealthResponse = HealthResponse
   { status :: Text
   , headCount :: Int
+  , dbConnected :: Bool
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Root endpoint response
+data RootResponse = RootResponse
+  { apiVersion :: Text
+  , description :: Text
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

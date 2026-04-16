@@ -1,6 +1,7 @@
 module Db.Schema where
 
 import Data.Aeson (Value)
+import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
 import Data.Text (Text)
 import Data.Time (UTCTime)
@@ -15,9 +16,13 @@ data Head f = Head
   , headStatus :: Column f Text
   , createdAt :: Column f UTCTime
   , updatedAt :: Column f UTCTime
+  , lastMessageAt :: Column f (Maybe UTCTime)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
+
+deriving stock instance Show (Head Identity)
+deriving stock instance Eq (Head Identity)
 
 headSchema :: TableSchema (Head Name)
 headSchema =
@@ -31,6 +36,7 @@ headSchema =
           , headStatus = "status"
           , createdAt = "created_at"
           , updatedAt = "updated_at"
+          , lastMessageAt = "last_message_at"
           }
     }
 

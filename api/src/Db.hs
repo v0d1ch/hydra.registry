@@ -1,6 +1,8 @@
 module Db where
 
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KM
 import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
 import Data.Map.Strict qualified as Map
@@ -44,12 +46,13 @@ initDb pool =
       \  port INTEGER NOT NULL,\
       \  status TEXT NOT NULL DEFAULT 'idle',\
       \  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
-      \  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\
+      \  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
+      \  last_message_at TIMESTAMPTZ\
       \);\
       \CREATE TABLE IF NOT EXISTS utxos (\
       \  tx_hash TEXT NOT NULL,\
       \  output_index INTEGER NOT NULL,\
-      \  head_id TEXT NOT NULL REFERENCES heads(head_id),\
+      \  head_id TEXT NOT NULL REFERENCES heads(head_id) ON DELETE CASCADE,\
       \  address TEXT NOT NULL,\
       \  lovelace BIGINT NOT NULL DEFAULT 0,\
       \  assets JSONB NOT NULL DEFAULT '{}',\
@@ -81,6 +84,7 @@ upsertHead pool hid hostAddr portNum status' = do
                       , headStatus = lit status'
                       , createdAt = lit now
                       , updatedAt = lit now
+                      , lastMessageAt = lit (Just now)
                       }
                   ]
             , onConflict =
@@ -89,7 +93,7 @@ upsertHead pool hid hostAddr portNum status' = do
                     { index = (.headId)
                     , predicate = Nothing
                     , set = \new _old ->
-                        new{updatedAt = lit now}
+                        new{updatedAt = lit now, lastMessageAt = lit (Just now)}
                     , updateWhere = \_ _ -> lit True
                     }
             , returning = NoReturning
@@ -110,7 +114,24 @@ updateHeadStatus pool hid newStatus = do
                 row
                   { headStatus = lit newStatus
                   , updatedAt = lit now
+                  , lastMessageAt = lit (Just now)
                   }
+            , updateWhere = \_ row -> row.headId ==. lit hid
+            , returning = NoReturning
+            }
+
+-- | Update last message timestamp for a head (health tracking)
+updateLastMessageAt :: Pool -> Text -> IO ()
+updateLastMessageAt pool hid = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = headSchema
+            , from = pure ()
+            , set = \_ row -> row{lastMessageAt = lit (Just now)}
             , updateWhere = \_ row -> row.headId ==. lit hid
             , returning = NoReturning
             }
@@ -123,6 +144,17 @@ getAllHeads pool =
       Rel8.run $
         Rel8.select $
           Rel8.each headSchema
+
+-- | Get all registered heads with pagination
+getAllHeadsPaginated :: Pool -> Int -> Int -> IO [Head Identity]
+getAllHeadsPaginated pool pageSize page =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $
+          Rel8.limit (fromIntegral pageSize) $
+            Rel8.offset (fromIntegral $ (page - 1) * pageSize) $
+              Rel8.each headSchema
 
 -- | Get a specific head by ID
 getHead :: Pool -> Text -> IO (Maybe (Head Identity))
@@ -138,6 +170,61 @@ getHead pool hid =
     pure $ case rows of
       [] -> Nothing
       (x : _) -> Just x
+
+-- | Count UTxOs for a specific head
+countUtxosForHead :: Pool -> Text -> IO Int
+countUtxosForHead pool hid = do
+  utxos <- runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          u <- Rel8.each utxoSchema
+          Rel8.where_ (u.utxoHeadId ==. lit hid)
+          pure u
+  pure $ length utxos
+
+-- | Get distinct addresses for a head
+getAddressesForHead :: Pool -> Text -> IO [Text]
+getAddressesForHead pool hid = do
+  utxos <- runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          u <- Rel8.each utxoSchema
+          Rel8.where_ (u.utxoHeadId ==. lit hid)
+          pure u.utxoAddress
+  pure $ deduplicate utxos
+ where
+  deduplicate = Map.keys . Map.fromList . map (\a -> (a, ()))
+
+-- | Get aggregated balance for an address in a head
+getBalanceForAddressInHead :: Pool -> Text -> Text -> IO (Int64, Map.Map Text (Map.Map Text Integer))
+getBalanceForAddressInHead pool hid addr = do
+  utxos <- getUtxosByAddressAndHead pool hid addr
+  let totalLovelace = Prelude.sum $ map (.utxoLovelace) utxos
+      mergedAssets = mergeAllAssets $ map (.utxoAssets) utxos
+  pure (totalLovelace, mergedAssets)
+ where
+  mergeAllAssets :: [Aeson.Value] -> Map.Map Text (Map.Map Text Integer)
+  mergeAllAssets = foldr mergeOne Map.empty
+
+  mergeOne :: Aeson.Value -> Map.Map Text (Map.Map Text Integer) -> Map.Map Text (Map.Map Text Integer)
+  mergeOne (Aeson.Object obj) acc =
+    foldr
+      ( \(k, v) m -> case v of
+          Aeson.Object assets ->
+            let policyId = Key.toText k
+                assetMap =
+                  Map.fromList
+                    [ (Key.toText ak, round n)
+                    | (ak, Aeson.Number n) <- KM.toList assets
+                    ]
+             in Map.insertWith (Map.unionWith (+)) policyId assetMap m
+          _ -> m
+      )
+      acc
+      (KM.toList obj)
+  mergeOne _ acc = acc
 
 -- | Replace all UTxOs for a head with new snapshot data
 replaceUtxos :: Pool -> Text -> [HydraUtxoEntry] -> IO ()
@@ -222,3 +309,26 @@ deleteUtxosForHead pool hid =
             , deleteWhere = \_ row -> row.utxoHeadId ==. lit hid
             , returning = NoReturning
             }
+
+-- | Delete a head and its UTxOs (admin deregistration)
+deleteHead :: Pool -> Text -> IO ()
+deleteHead pool hid = do
+  -- UTxOs are deleted by ON DELETE CASCADE
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.delete
+          Delete
+            { from = headSchema
+            , using = pure ()
+            , deleteWhere = \_ row -> row.headId ==. lit hid
+            , returning = NoReturning
+            }
+
+-- | Check database connectivity
+checkDbConnectivity :: Pool -> IO Bool
+checkDbConnectivity pool = do
+  result <- Pool.use pool $ Session.sql "SELECT 1"
+  pure $ case result of
+    Left _ -> False
+    Right _ -> True
