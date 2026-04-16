@@ -1,0 +1,60 @@
+cabal-version: 3.0
+name:          hydra-registry-api
+version:       0.1.0.0
+synopsis:      REST API for querying Hydra L2 UTxO state
+license:       Apache-2.0
+author:        Sasa Bogicevic
+build-type:    Simple
+
+executable hydra-registry-api
+  hs-source-dirs: src
+  main-is: Main.hs
+  default-language: GHC2021
+  default-extensions:
+    DeriveAnyClass
+    DeriveGeneric
+    DerivingStrategies
+    DerivingVia
+    DataKinds
+    DuplicateRecordFields
+    LambdaCase
+    NoFieldSelectors
+    OverloadedRecordDot
+    OverloadedStrings
+    TypeApplications
+  ghc-options:
+    -Wall
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+  build-depends:
+    , base >= 4.20 && < 5
+    , aeson
+    , async
+    , bytestring
+    , containers
+    , hasql
+    , hasql-pool
+    , http-types
+    , mtl
+    , network-uri
+    , rel8
+    , servant
+    , servant-server
+    , stm
+    , text
+    , time
+    , uuid
+    , wai
+    , wai-cors
+    , wai-extra
+    , warp
+    , websockets
+    , wuss
+  other-modules:
+    Api
+    Api.Types
+    Db
+    Db.Schema
+    Hydra.Client
+    Indexer
