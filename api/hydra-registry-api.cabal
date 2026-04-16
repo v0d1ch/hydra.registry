@@ -6,9 +6,7 @@ license:       Apache-2.0
 author:        Sasa Bogicevic
 build-type:    Simple
 
-executable hydra-registry-api
-  hs-source-dirs: src
-  main-is: Main.hs
+common shared
   default-language: GHC2021
   default-extensions:
     DeriveAnyClass
@@ -24,9 +22,23 @@ executable hydra-registry-api
     TypeApplications
   ghc-options:
     -Wall
-    -threaded
-    -rtsopts
-    "-with-rtsopts=-N"
+
+library
+  import: shared
+  hs-source-dirs: src
+  exposed-modules:
+    Api
+    Api.Types
+    Api.Validation
+    Cache
+    Config
+    Db
+    Db.Schema
+    Hydra.Client
+    Indexer
+    Logging
+    Metrics
+    Middleware.RateLimit
   build-depends:
     , base >= 4.20 && < 5
     , aeson
@@ -51,10 +63,59 @@ executable hydra-registry-api
     , warp
     , websockets
     , wuss
+
+executable hydra-registry-api
+  import: shared
+  hs-source-dirs: app
+  main-is: Main.hs
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+  build-depends:
+    , base >= 4.20 && < 5
+    , aeson
+    , async
+    , hydra-registry-api
+    , servant-server
+    , stm
+    , unix
+    , wai-cors
+    , wai-extra
+    , warp
+
+test-suite hydra-registry-api-test
+  import: shared
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Spec.hs
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+  build-depends:
+    , base >= 4.20 && < 5
+    , aeson
+    , bytestring
+    , containers
+    , hasql-pool
+    , hspec
+    , hspec-wai
+    , http-types
+    , hydra-registry-api
+    , QuickCheck
+    , servant-server
+    , stm
+    , text
+    , time
+    , hasql
+    , wai
   other-modules:
-    Api
-    Api.Types
-    Db
-    Db.Schema
-    Hydra.Client
-    Indexer
+    ApiIntegrationSpec
+    ApiTypesSpec
+    ConfigSpec
+    DbIntegrationSpec
+    HydraClientSpec
+    RateLimitSpec
+    TestUtils
+    ValidationSpec
