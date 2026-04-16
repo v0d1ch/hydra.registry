@@ -52,7 +52,7 @@ data Amount = Amount
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
--- | Blockfrost-compatible UTxO response
+-- | Blockfrost-compatible UTxO response (with extra head_id field)
 data UtxoResponse = UtxoResponse
   { address :: Text
   , tx_hash :: Text
@@ -61,6 +61,7 @@ data UtxoResponse = UtxoResponse
   , data_hash :: Maybe Text
   , inline_datum :: Maybe Value
   , reference_script_hash :: Maybe Text
+  , head_id :: Text
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

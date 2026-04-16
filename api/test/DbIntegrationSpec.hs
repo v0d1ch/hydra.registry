@@ -97,13 +97,13 @@ spec = describe "Db (integration)" $ around withTestPool $ do
       utxos <- Db.getUtxosByAddressAndHead pool "head-1" "addr1qxtest"
       length utxos `shouldBe` 0
 
-  describe "getUtxosByAddress" $ do
-    it "groups UTxOs by head" $ \pool -> do
+  describe "getUtxosByAddressFlat" $ do
+    it "returns UTxOs from all heads" $ \pool -> do
       Db.upsertHead pool "head-1" "localhost" 4001 "Open"
       Db.upsertHead pool "head-2" "localhost" 4002 "Open"
       Db.replaceUtxos pool "head-1" [sampleUtxoEntry]
       Db.replaceUtxos pool "head-2" [sampleUtxoEntry{txHash = "other-tx"}]
-      results <- Db.getUtxosByAddress pool "addr1qxtest"
+      results <- Db.getUtxosByAddressFlat pool "addr1qxtest" 100 1
       length results `shouldBe` 2
 
   describe "deleteUtxosForHead" $ do

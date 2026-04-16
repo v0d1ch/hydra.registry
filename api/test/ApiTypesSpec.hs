@@ -101,7 +101,7 @@ spec = describe "Api.Types" $ do
               , utxoReferenceScriptHash = Nothing
               , utxoUpdatedAt = now
               }
-      let resp = utxoToResponse utxo
+      let resp = utxoToResponse utxo.utxoHeadId utxo
       resp.address `shouldBe` "addr1qxtest"
       resp.tx_hash `shouldBe` "txhash123"
       resp.output_index `shouldBe` 0
@@ -128,7 +128,7 @@ spec = describe "Api.Types" $ do
               , utxoReferenceScriptHash = Nothing
               , utxoUpdatedAt = now
               }
-      let resp = utxoToResponse utxo
+      let resp = utxoToResponse utxo.utxoHeadId utxo
       length resp.amount `shouldBe` 2
       resp.data_hash `shouldBe` Just "datumhash123"
       let tokenAmounts = filter (\a -> a.unit /= "lovelace") resp.amount
