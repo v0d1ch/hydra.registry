@@ -42,6 +42,54 @@ headSchema =
           }
     }
 
+-- | Explorer heads discovered from hydra-explorer (on-chain data)
+data ExplorerHead f = ExplorerHead
+  { explorerHeadId :: Column f Text
+  , explorerNetwork :: Column f Text
+  , explorerNetworkMagic :: Column f Int32
+  , explorerVersion :: Column f Text
+  , explorerStatus :: Column f Text
+  , explorerContestationPeriod :: Column f (Maybe Int32)
+  , explorerContestations :: Column f (Maybe Int32)
+  , explorerSnapshotNumber :: Column f (Maybe Int32)
+  , explorerContestationDeadline :: Column f (Maybe Text)
+  , explorerPoint :: Column f (Maybe Value)
+  , explorerBlockNo :: Column f (Maybe Int64)
+  , explorerMembers :: Column f (Maybe Value)
+  , explorerSeedTxIn :: Column f (Maybe Text)
+  , explorerFirstSeenAt :: Column f UTCTime
+  , explorerLastUpdatedAt :: Column f UTCTime
+  }
+  deriving stock (Generic)
+  deriving anyclass (Rel8able)
+
+deriving stock instance Show (ExplorerHead Identity)
+deriving stock instance Eq (ExplorerHead Identity)
+
+explorerHeadSchema :: TableSchema (ExplorerHead Name)
+explorerHeadSchema =
+  TableSchema
+    { name = "explorer_heads"
+    , columns =
+        ExplorerHead
+          { explorerHeadId = "head_id"
+          , explorerNetwork = "network"
+          , explorerNetworkMagic = "network_magic"
+          , explorerVersion = "version"
+          , explorerStatus = "status"
+          , explorerContestationPeriod = "contestation_period"
+          , explorerContestations = "contestations"
+          , explorerSnapshotNumber = "snapshot_number"
+          , explorerContestationDeadline = "contestation_deadline"
+          , explorerPoint = "point"
+          , explorerBlockNo = "block_no"
+          , explorerMembers = "members"
+          , explorerSeedTxIn = "seed_tx_in"
+          , explorerFirstSeenAt = "first_seen_at"
+          , explorerLastUpdatedAt = "last_updated_at"
+          }
+    }
+
 -- | UTxO entries indexed from Hydra heads
 data Utxo f = Utxo
   { utxoTxHash :: Column f Text

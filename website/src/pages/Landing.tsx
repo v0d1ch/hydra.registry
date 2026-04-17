@@ -269,6 +269,7 @@ export default function Landing() {
         {stats ? (
           <div className="stats-grid">
             <AnimatedCounter target={stats.headCount} label="Registered Heads" />
+            <AnimatedCounter target={stats.explorerHeadCount} label="On-chain Heads" />
             <AnimatedCounter target={stats.totalUtxos} label="UTxOs Indexed" />
             <AnimatedCounter
               target={Object.values(stats.headsByStatus).reduce((a, b) => a + b, 0)}

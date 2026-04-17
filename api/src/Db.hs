@@ -64,7 +64,26 @@ initDb pool =
       \  PRIMARY KEY (tx_hash, output_index, head_id)\
       \);\
       \CREATE INDEX IF NOT EXISTS idx_utxos_address ON utxos (address);\
-      \CREATE INDEX IF NOT EXISTS idx_utxos_head_id ON utxos (head_id);"
+      \CREATE INDEX IF NOT EXISTS idx_utxos_head_id ON utxos (head_id);\
+      \CREATE TABLE IF NOT EXISTS explorer_heads (\
+      \  head_id TEXT PRIMARY KEY,\
+      \  network TEXT NOT NULL,\
+      \  network_magic INTEGER NOT NULL,\
+      \  version TEXT NOT NULL,\
+      \  status TEXT NOT NULL,\
+      \  contestation_period INTEGER,\
+      \  contestations INTEGER,\
+      \  snapshot_number INTEGER,\
+      \  contestation_deadline TEXT,\
+      \  point JSONB,\
+      \  block_no BIGINT,\
+      \  members JSONB,\
+      \  seed_tx_in TEXT,\
+      \  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
+      \  last_updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\
+      \);\
+      \CREATE INDEX IF NOT EXISTS idx_explorer_heads_status ON explorer_heads (status);\
+      \CREATE INDEX IF NOT EXISTS idx_explorer_heads_network ON explorer_heads (network);"
 
 -- | Insert a new head or update on conflict
 upsertHead :: Pool -> Text -> Text -> Int -> Text -> IO ()
@@ -385,3 +404,112 @@ checkDbConnectivity pool = do
   pure $ case result of
     Left _ -> False
     Right _ -> True
+
+-- ─── Explorer heads ───
+
+-- | Upsert an explorer head entry
+upsertExplorerHead ::
+  Pool ->
+  Text ->
+  Text ->
+  Int ->
+  Text ->
+  Text ->
+  Maybe Int ->
+  Maybe Int ->
+  Maybe Int ->
+  Maybe Text ->
+  Maybe Aeson.Value ->
+  Maybe Int ->
+  Maybe Aeson.Value ->
+  Maybe Text ->
+  IO ()
+upsertExplorerHead pool hid network networkMagic version status'
+  contestationPeriod contestations snapNum contestationDeadline
+  point blockNo members seedTxIn = do
+    now <- getCurrentTime
+    runSession pool $
+      Session.statement () $
+        Rel8.run_ $
+          Rel8.insert
+            Insert
+              { into = explorerHeadSchema
+              , rows =
+                  Rel8.values
+                    [ ExplorerHead
+                        { explorerHeadId = lit hid
+                        , explorerNetwork = lit network
+                        , explorerNetworkMagic = lit (fromIntegral @Int @Int32 networkMagic)
+                        , explorerVersion = lit version
+                        , explorerStatus = lit status'
+                        , explorerContestationPeriod = lit (fromIntegral @Int @Int32 <$> contestationPeriod)
+                        , explorerContestations = lit (fromIntegral @Int @Int32 <$> contestations)
+                        , explorerSnapshotNumber = lit (fromIntegral @Int @Int32 <$> snapNum)
+                        , explorerContestationDeadline = lit contestationDeadline
+                        , explorerPoint = lit point
+                        , explorerBlockNo = lit (fromIntegral @Int @Int64 <$> blockNo)
+                        , explorerMembers = lit members
+                        , explorerSeedTxIn = lit seedTxIn
+                        , explorerFirstSeenAt = lit now
+                        , explorerLastUpdatedAt = lit now
+                        }
+                    ]
+              , onConflict =
+                  DoUpdate
+                    Upsert
+                      { index = (.explorerHeadId)
+                      , predicate = Nothing
+                      , set = \new _old ->
+                          new{explorerFirstSeenAt = _old.explorerFirstSeenAt, explorerLastUpdatedAt = lit now}
+                      , updateWhere = \_ _ -> lit True
+                      }
+              , returning = NoReturning
+              }
+
+-- | Get all explorer heads
+getAllExplorerHeads :: Pool -> IO [ExplorerHead Identity]
+getAllExplorerHeads pool =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $
+          Rel8.each explorerHeadSchema
+
+-- | Get all explorer heads with pagination and optional filters
+getExplorerHeadsPaginated :: Pool -> Int -> Int -> Maybe Text -> Maybe Text -> IO [ExplorerHead Identity]
+getExplorerHeadsPaginated pool pageSize page mStatus mNetwork =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $
+          Rel8.limit (fromIntegral pageSize) $
+            Rel8.offset (fromIntegral $ (page - 1) * pageSize) $ do
+              eh <- Rel8.each explorerHeadSchema
+              case mStatus of
+                Just s -> Rel8.where_ (eh.explorerStatus ==. lit s)
+                Nothing -> pure ()
+              case mNetwork of
+                Just n -> Rel8.where_ (eh.explorerNetwork ==. lit n)
+                Nothing -> pure ()
+              pure eh
+
+-- | Get a specific explorer head by ID
+getExplorerHead :: Pool -> Text -> IO (Maybe (ExplorerHead Identity))
+getExplorerHead pool hid =
+  runSession pool $ do
+    rows <-
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            eh <- Rel8.each explorerHeadSchema
+            Rel8.where_ (eh.explorerHeadId ==. lit hid)
+            pure eh
+    pure $ case rows of
+      [] -> Nothing
+      (x : _) -> Just x
+
+-- | Count total explorer heads
+countExplorerHeads :: Pool -> IO Int
+countExplorerHeads pool = do
+  heads <- getAllExplorerHeads pool
+  pure $ length heads

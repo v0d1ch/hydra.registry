@@ -11,6 +11,7 @@ import Control.Exception (finally)
 import Control.Monad (forever, void)
 import Data.Aeson (toJSON)
 import Db qualified
+import Explorer.Sidecar qualified as Sidecar
 import Hydra.Client (HydraEvent)
 import Indexer qualified
 import Logging
@@ -43,6 +44,15 @@ main = do
   -- Reconnect to registered heads
   Indexer.reconnectAllHeads logger pool eventQueue
   logInfo logger "Reconnected to registered heads" []
+
+  -- Start explorer sidecar (polls hydra-explorer every N seconds)
+  let sidecarConfig =
+        Sidecar.SidecarConfig
+          { explorerUrl = config.explorerUrl
+          , pollIntervalSeconds = config.explorerPollIntervalSeconds
+          }
+  sidecarAsync <- async $ Sidecar.startSidecar logger pool sidecarConfig
+  logInfo logger "Explorer sidecar started" [("url", toJSON config.explorerUrl), ("interval_s", toJSON config.explorerPollIntervalSeconds)]
 
   -- Rate limiter with periodic cleanup
   rateLimiter <- newRateLimiter config.rateLimitPerMin
@@ -94,6 +104,7 @@ main = do
     `finally` do
       logInfo logger "Shutting down..." []
       cancel indexerAsync
+      cancel sidecarAsync
       cancel cleanupAsync
       logInfo logger "Shutdown complete" []
 

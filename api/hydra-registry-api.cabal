@@ -34,6 +34,8 @@ library
     Config
     Db
     Db.Schema
+    Explorer.Client
+    Explorer.Sidecar
     Hydra.Client
     Indexer
     Logging
@@ -47,6 +49,8 @@ library
     , containers
     , hasql
     , hasql-pool
+    , http-client
+    , http-client-tls
     , http-types
     , mtl
     , network-uri
@@ -114,6 +118,7 @@ test-suite hydra-registry-api-test
     ApiTypesSpec
     ConfigSpec
     DbIntegrationSpec
+    ExplorerClientSpec
     HydraClientSpec
     RateLimitSpec
     TestUtils

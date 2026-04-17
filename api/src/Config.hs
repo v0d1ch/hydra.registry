@@ -12,6 +12,8 @@ data AppConfig = AppConfig
   , rateLimitPerMin :: Int
   , healthTimeoutSeconds :: Int
   , staticDir :: FilePath
+  , explorerUrl :: Text
+  , explorerPollIntervalSeconds :: Int
   }
   deriving stock (Show, Eq)
 
@@ -23,6 +25,8 @@ defaultConfig =
     , rateLimitPerMin = 100
     , healthTimeoutSeconds = 120
     , staticDir = "./website/dist"
+    , explorerUrl = "https://explorer.hydra.family"
+    , explorerPollIntervalSeconds = 120
     }
 
 loadConfig :: IO AppConfig
@@ -32,6 +36,8 @@ loadConfig = do
   rateLimit <- lookupEnvRead "HYDRA_RATE_LIMIT" defaultConfig.rateLimitPerMin
   healthTimeout <- lookupEnvRead "HYDRA_HEALTH_TIMEOUT" defaultConfig.healthTimeoutSeconds
   staticDirPath <- lookupEnvString "HYDRA_STATIC_DIR" defaultConfig.staticDir
+  explorerUrlVal <- lookupEnvText "HYDRA_EXPLORER_URL" defaultConfig.explorerUrl
+  explorerPoll <- lookupEnvRead "HYDRA_EXPLORER_POLL_INTERVAL" defaultConfig.explorerPollIntervalSeconds
   pure
     AppConfig
       { dbConnStr = dbConn
@@ -39,6 +45,8 @@ loadConfig = do
       , rateLimitPerMin = rateLimit
       , healthTimeoutSeconds = healthTimeout
       , staticDir = staticDirPath
+      , explorerUrl = explorerUrlVal
+      , explorerPollIntervalSeconds = explorerPoll
       }
 
 lookupEnvText :: String -> Text -> IO Text

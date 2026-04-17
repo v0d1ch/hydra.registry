@@ -51,12 +51,14 @@ withTestPool action = do
   cleanTestData pool
   action pool
 
--- | Remove all test data
+-- | Remove all test data (drops and recreates tables to handle schema changes)
 cleanTestData :: Pool -> IO ()
-cleanTestData pool =
+cleanTestData pool = do
   Db.runSession pool $ do
-    Session.sql "DELETE FROM utxos"
-    Session.sql "DELETE FROM heads"
+    Session.sql "DROP TABLE IF EXISTS utxos CASCADE"
+    Session.sql "DROP TABLE IF EXISTS heads CASCADE"
+    Session.sql "DROP TABLE IF EXISTS explorer_heads CASCADE"
+  Db.initDb pool
 
 -- | Build a Greetings JSON message for testing
 mkGreetingsJson :: Text -> Text -> [(Key.Key, Value)] -> Value

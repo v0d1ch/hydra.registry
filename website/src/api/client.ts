@@ -4,6 +4,7 @@ export interface StatsResponse {
   headCount: number
   totalUtxos: number
   headsByStatus: Record<string, number>
+  explorerHeadCount: number
 }
 
 export interface HeadInfo {
