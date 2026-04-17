@@ -4,8 +4,7 @@ import Api (AppEnv (..), api, server)
 import Api.Types
 import Cache (newCache)
 import Control.Concurrent.STM
-import Data.Aeson (decode, encode)
-import Db qualified
+import Data.Aeson (encode)
 import Hydra.Client (HydraEvent)
 import Logging (newLogger)
 import Logging qualified
@@ -23,36 +22,36 @@ spec = with makeTestApp $ describe "API (integration)" $ do
     it "returns root response with version" $ do
       get "/" `shouldRespondWith` 200
 
-  describe "GET /health" $ do
+  describe "GET /api/v1/health" $ do
     it "returns ok status with DB connectivity" $ do
-      get "/health" `shouldRespondWith` 200
+      get "/api/v1/health" `shouldRespondWith` 200
 
-  describe "GET /heads" $ do
+  describe "GET /api/v1/heads" $ do
     it "returns list (possibly empty)" $ do
-      get "/heads" `shouldRespondWith` 200
+      get "/api/v1/heads" `shouldRespondWith` 200
 
     it "supports pagination query params" $ do
-      get "/heads?count=10&page=1" `shouldRespondWith` 200
+      get "/api/v1/heads?count=10&page=1" `shouldRespondWith` 200
 
-  describe "GET /heads/:headId" $ do
+  describe "GET /api/v1/heads/:headId" $ do
     it "returns 404 for non-existent head" $ do
-      get "/heads/non-existent" `shouldRespondWith` 404
+      get "/api/v1/heads/non-existent" `shouldRespondWith` 404
 
-  describe "GET /heads/:headId/addresses" $ do
+  describe "GET /api/v1/heads/:headId/addresses" $ do
     it "returns 404 for non-existent head" $ do
-      get "/heads/non-existent/addresses" `shouldRespondWith` 404
+      get "/api/v1/heads/non-existent/addresses" `shouldRespondWith` 404
 
-  describe "GET /heads/:headId/addresses/:address/balance" $ do
+  describe "GET /api/v1/heads/:headId/addresses/:address/balance" $ do
     it "returns 400 for invalid address" $ do
-      get "/heads/some-head/addresses/invalid!!!/balance" `shouldRespondWith` 400
+      get "/api/v1/heads/some-head/addresses/invalid!!!/balance" `shouldRespondWith` 400
 
     it "returns 404 for non-existent head with valid address" $ do
-      get "/heads/non-existent/addresses/addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3jcu5d8ps7zex2k2xt3uqxgjqnnj83ws8lhrn648jjxtwq2ytjqp/balance"
+      get "/api/v1/heads/non-existent/addresses/addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3jcu5d8ps7zex2k2xt3uqxgjqnnj83ws8lhrn648jjxtwq2ytjqp/balance"
         `shouldRespondWith` 404
 
-  describe "GET /heads/:headId/addresses/:address/utxos" $ do
+  describe "GET /api/v1/heads/:headId/addresses/:address/utxos" $ do
     it "returns 400 for invalid address" $ do
-      get "/heads/some-head/addresses/invalid!!!/utxos" `shouldRespondWith` 400
+      get "/api/v1/heads/some-head/addresses/invalid!!!/utxos" `shouldRespondWith` 400
 
   describe "GET /addresses/:address/utxos" $ do
     it "returns 400 for invalid address" $ do
@@ -62,19 +61,34 @@ spec = with makeTestApp $ describe "API (integration)" $ do
       get "/addresses/addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3jcu5d8ps7zex2k2xt3uqxgjqnnj83ws8lhrn648jjxtwq2ytjqp/utxos"
         `shouldRespondWith` 200
 
-  describe "DELETE /admin/heads/:headId" $ do
+  describe "DELETE /api/v1/admin/heads/:headId" $ do
     it "returns 404 for non-existent head" $ do
-      delete "/admin/heads/non-existent" `shouldRespondWith` 404
+      delete "/api/v1/admin/heads/non-existent" `shouldRespondWith` 404
 
-  describe "GET /metrics" $ do
+  describe "GET /api/v1/metrics" $ do
     it "returns Prometheus-format metrics" $ do
-      get "/metrics" `shouldRespondWith` 200
+      get "/api/v1/metrics" `shouldRespondWith` 200
 
-  describe "POST /heads/register" $ do
+  describe "POST /api/v1/heads/register" $ do
     it "returns 400 for unreachable host" $ do
       let body = encode $ RegisterHead "unreachable-host.invalid" 9999
-      request methodPost "/heads/register" [("Content-Type", "application/json")] body
+      request methodPost "/api/v1/heads/register" [("Content-Type", "application/json")] body
         `shouldRespondWith` 400
+
+  describe "GET /api/v1/explorer/heads" $ do
+    it "returns list (possibly empty)" $ do
+      get "/api/v1/explorer/heads" `shouldRespondWith` 200
+
+    it "supports pagination and filter query params" $ do
+      get "/api/v1/explorer/heads?count=10&page=1&status=Open&network=Mainnet" `shouldRespondWith` 200
+
+  describe "GET /api/v1/explorer/heads/:headId" $ do
+    it "returns 404 for non-existent explorer head" $ do
+      get "/api/v1/explorer/heads/non-existent" `shouldRespondWith` 404
+
+  describe "GET /api/v1/stats" $ do
+    it "returns stats including explorerHeadCount" $ do
+      get "/api/v1/stats" `shouldRespondWith` 200
 
 -- | Create a test Application backed by a test DB
 makeTestApp :: IO Application

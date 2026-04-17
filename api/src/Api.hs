@@ -15,7 +15,7 @@ import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import Db qualified
-import Db.Schema (Head (..), Utxo (..))
+import Db.Schema (ExplorerHead (..), Head (..), Utxo (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraEvent (..))
 import Indexer qualified
@@ -35,13 +35,15 @@ type ApiV1Routes =
   "health" :> Get '[JSON] HealthResponse
     :<|> "heads" :> "register" :> ReqBody '[JSON] RegisterHead :> Post '[JSON] RegisterHeadResponse
     :<|> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> Get '[JSON] [HeadInfo]
-    :<|> "heads" :> Capture "headId" Text :> Get '[JSON] HeadDetailResponse
+    :<|> "heads" :> Capture "headId" Text :> Get '[JSON] EnrichedHeadDetail
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Get '[JSON] [Text]
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Capture "address" Text :> "balance" :> Get '[JSON] BalanceResponse
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Capture "address" Text :> "utxos" :> Get '[JSON] [UtxoResponse]
     :<|> "admin" :> "heads" :> Capture "headId" Text :> Delete '[JSON] NoContent
     :<|> "metrics" :> Get '[PlainText] Text
     :<|> "stats" :> Get '[JSON] StatsResponse
+    :<|> "explorer" :> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> QueryParam "status" Text :> QueryParam "network" Text :> Get '[JSON] [ExplorerHeadInfo]
+    :<|> "explorer" :> "heads" :> Capture "headId" Text :> Get '[JSON] ExplorerHeadInfo
 
 -- | Full API type
 type API =
@@ -93,6 +95,8 @@ apiV1Server env =
     :<|> handleAdminDeleteHead env.pool
     :<|> handleMetrics env.metrics
     :<|> handleStats env.pool
+    :<|> handleListExplorerHeads env.pool
+    :<|> handleExplorerHeadDetail env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
 corsMiddleware :: Middleware
@@ -159,8 +163,8 @@ handleListHeads pool mCount mPage = do
       , status = h.headStatus
       }
 
--- | GET /api/v1/heads/:headId
-handleHeadDetail :: Pool -> Text -> Handler HeadDetailResponse
+-- | GET /api/v1/heads/:headId (enriched with explorer data when available)
+handleHeadDetail :: Pool -> Text -> Handler EnrichedHeadDetail
 handleHeadDetail pool hid = do
   mHead <- liftIO $ Db.getHead pool hid
   case mHead of
@@ -168,8 +172,9 @@ handleHeadDetail pool hid = do
       throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Head not found"}
     Just h -> do
       utxoCount <- liftIO $ Db.countUtxosForHead pool hid
+      mExplorer <- liftIO $ Db.getExplorerHead pool hid
       pure
-        HeadDetailResponse
+        EnrichedHeadDetail
           { headId = h.headId
           , host = h.headHost
           , port = fromIntegral h.headPort
@@ -177,6 +182,7 @@ handleHeadDetail pool hid = do
           , utxoCount = utxoCount
           , registeredAt = h.createdAt
           , lastSeenAt = h.lastMessageAt
+          , onChain = explorerHeadToOnChain <$> mExplorer
           }
 
 -- | GET /api/v1/heads/:headId/addresses
@@ -317,11 +323,13 @@ handleMetrics = liftIO . renderMetrics
 handleStats :: Pool -> Handler StatsResponse
 handleStats pool = do
   (hCount, uCount, byStatus) <- liftIO $ Db.getStats pool
+  explorerCount <- liftIO $ Db.countExplorerHeads pool
   pure
     StatsResponse
       { headCount = hCount
       , totalUtxos = uCount
       , headsByStatus = byStatus
+      , explorerHeadCount = explorerCount
       }
 
 -- | Convert a DB UTxO row to the Blockfrost-compatible response format
@@ -365,3 +373,63 @@ assetMapToAmounts assets =
   | (policyId, assetMap) <- Map.toList assets
   , (assetName, qty) <- Map.toList assetMap
   ]
+
+-- ─── Explorer head handlers ───
+
+-- | GET /api/v1/explorer/heads
+handleListExplorerHeads :: Pool -> Maybe Int -> Maybe Int -> Maybe Text -> Maybe Text -> Handler [ExplorerHeadInfo]
+handleListExplorerHeads pool mCount mPage mStatus mNetwork = do
+  let count = min 100 $ maybe 100 (max 1) mCount
+      page = maybe 1 (max 1) mPage
+  explorerHeads <- liftIO $ Db.getExplorerHeadsPaginated pool count page mStatus mNetwork
+  registeredHeads <- liftIO $ Db.getAllHeads pool
+  let registeredIds = Map.fromList [(h.headId, ()) | h <- registeredHeads]
+  pure $ map (explorerHeadToInfo registeredIds) explorerHeads
+
+-- | GET /api/v1/explorer/heads/:headId
+handleExplorerHeadDetail :: Pool -> Text -> Handler ExplorerHeadInfo
+handleExplorerHeadDetail pool hid = do
+  mExplorer <- liftIO $ Db.getExplorerHead pool hid
+  case mExplorer of
+    Nothing ->
+      throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Explorer head not found"}
+    Just eh -> do
+      mRegistered <- liftIO $ Db.getHead pool hid
+      pure $ explorerHeadToInfo (maybe Map.empty (\h -> Map.singleton h.headId ()) mRegistered) eh
+
+-- | Convert an ExplorerHead DB row to API response
+explorerHeadToInfo :: Map.Map Text () -> ExplorerHead Identity -> ExplorerHeadInfo
+explorerHeadToInfo registeredIds eh =
+  ExplorerHeadInfo
+    { headId = eh.explorerHeadId
+    , network = eh.explorerNetwork
+    , networkMagic = fromIntegral eh.explorerNetworkMagic
+    , version = eh.explorerVersion
+    , status = eh.explorerStatus
+    , contestationPeriod = fromIntegral <$> eh.explorerContestationPeriod
+    , contestations = fromIntegral <$> eh.explorerContestations
+    , snapshotNumber = fromIntegral <$> eh.explorerSnapshotNumber
+    , contestationDeadline = eh.explorerContestationDeadline
+    , point = eh.explorerPoint
+    , blockNo = fromIntegral <$> eh.explorerBlockNo
+    , members = eh.explorerMembers
+    , seedTxIn = eh.explorerSeedTxIn
+    , firstSeenAt = eh.explorerFirstSeenAt
+    , lastUpdatedAt = eh.explorerLastUpdatedAt
+    , registered = Map.member eh.explorerHeadId registeredIds
+    }
+
+-- | Convert an ExplorerHead to the on-chain metadata subset
+explorerHeadToOnChain :: ExplorerHead Identity -> ExplorerHeadOnChain
+explorerHeadToOnChain eh =
+  ExplorerHeadOnChain
+    { network = eh.explorerNetwork
+    , onChainStatus = eh.explorerStatus
+    , contestationPeriod = fromIntegral <$> eh.explorerContestationPeriod
+    , contestations = fromIntegral <$> eh.explorerContestations
+    , snapshotNumber = fromIntegral <$> eh.explorerSnapshotNumber
+    , contestationDeadline = eh.explorerContestationDeadline
+    , members = eh.explorerMembers
+    , seedTxIn = eh.explorerSeedTxIn
+    , blockNo = fromIntegral <$> eh.explorerBlockNo
+    }

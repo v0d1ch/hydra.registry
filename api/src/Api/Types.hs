@@ -141,6 +141,58 @@ data StatsResponse = StatsResponse
   { headCount :: Int
   , totalUtxos :: Int
   , headsByStatus :: Map Text Int
+  , explorerHeadCount :: Int
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Explorer head info (on-chain data from hydra-explorer)
+data ExplorerHeadInfo = ExplorerHeadInfo
+  { headId :: Text
+  , network :: Text
+  , networkMagic :: Int
+  , version :: Text
+  , status :: Text
+  , contestationPeriod :: Maybe Int
+  , contestations :: Maybe Int
+  , snapshotNumber :: Maybe Int
+  , contestationDeadline :: Maybe Text
+  , point :: Maybe Value
+  , blockNo :: Maybe Int
+  , members :: Maybe Value
+  , seedTxIn :: Maybe Text
+  , firstSeenAt :: UTCTime
+  , lastUpdatedAt :: UTCTime
+  , registered :: Bool
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Enriched head detail (registered head + optional explorer data)
+data EnrichedHeadDetail = EnrichedHeadDetail
+  { headId :: Text
+  , host :: Text
+  , port :: Int
+  , status :: Text
+  , utxoCount :: Int
+  , registeredAt :: UTCTime
+  , lastSeenAt :: Maybe UTCTime
+  , onChain :: Maybe ExplorerHeadOnChain
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | On-chain metadata subset merged into head detail
+data ExplorerHeadOnChain = ExplorerHeadOnChain
+  { network :: Text
+  , onChainStatus :: Text
+  , contestationPeriod :: Maybe Int
+  , contestations :: Maybe Int
+  , snapshotNumber :: Maybe Int
+  , contestationDeadline :: Maybe Text
+  , members :: Maybe Value
+  , seedTxIn :: Maybe Text
+  , blockNo :: Maybe Int
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
