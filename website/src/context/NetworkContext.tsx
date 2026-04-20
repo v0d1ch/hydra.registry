@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
 
-export type Network = 'Mainnet' | 'Testnet' | 'All'
+export type Network = 'All' | 'Mainnet' | 'Preview' | 'Preprod'
 
 interface NetworkContextType {
   network: Network

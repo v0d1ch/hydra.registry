@@ -14,7 +14,7 @@ import Data.Text qualified as T
 import Db qualified
 import Db.Schema (ExplorerHead (..), Head (..), HeadParticipant (..))
 import Explorer.Client (ExplorerHeadEntry (..))
-import Explorer.Members (parseMembers, participantAddress, participantToTuple)
+import Explorer.Members (parseMembers, participantToTuple)
 import Hasql.Pool (Pool)
 import Logging (Logger, logError, logInfo, logWarn)
 import Network.HTTP.Client qualified as HTTP
@@ -60,13 +60,23 @@ pollExplorer logger pool manager config = do
       reconcileStatuses logger pool entries
       rebuildRelayGraph logger pool config
 
+-- | Resolve the actual network name from networkMagic.
+-- The hydra-explorer reports "Testnet" for both Preview and Preprod.
+resolveNetwork :: Text -> Int -> Text
+resolveNetwork _raw magic = case magic of
+  764824073 -> "Mainnet"
+  1         -> "Preprod"
+  2         -> "Preview"
+  other     -> "Testnet-" <> T.pack (show other)
+
 -- | Sync a single explorer head entry to the DB
 syncExplorerHead :: Logger -> Pool -> ExplorerHeadEntry -> IO ()
 syncExplorerHead _logger pool entry = do
+  let network = resolveNetwork entry.network entry.networkMagic
   Db.upsertExplorerHead
     pool
     entry.headId
-    entry.network
+    network
     entry.networkMagic
     entry.version
     entry.status

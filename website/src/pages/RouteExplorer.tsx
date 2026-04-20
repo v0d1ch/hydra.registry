@@ -21,11 +21,17 @@ export default function RouteExplorer() {
     setRoutes(null)
     setPaymentResult(null)
 
+    if (network === 'All') {
+      setError('Please select a specific network (Mainnet, Preview, or Preprod) in the navbar.')
+      setLoading(false)
+      return
+    }
+
     try {
       const res = await findRoutes({
         invoiceId,
         senderAddress,
-        network: network === 'All' ? 'Mainnet' : network,
+        network,
       })
       setRoutes(res)
       if (res.length === 0) {
@@ -90,8 +96,8 @@ export default function RouteExplorer() {
           </div>
           <div className="form-group">
             <label>Network</label>
-            <input type="text" value={network === 'All' ? 'Mainnet' : network} disabled />
-            <span className="form-hint">Change network in the navbar selector</span>
+            <input type="text" value={network === 'All' ? 'Select a network above' : network} disabled />
+            <span className="form-hint">Use the navbar selector to pick Mainnet, Preview, or Preprod</span>
           </div>
           <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
             {loading ? 'Searching...' : 'Find Routes'}

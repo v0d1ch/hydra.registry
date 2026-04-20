@@ -3,7 +3,9 @@ import { Link, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNetwork, type Network } from '../context/NetworkContext'
 
-const networks: Network[] = ['All', 'Mainnet', 'Testnet']
+const networks: Network[] = ['All', 'Mainnet', 'Preview', 'Preprod']
+
+const networkPages = new Set(['/explorer', '/routes'])
 
 export default function Navbar() {
   const location = useLocation()
@@ -31,6 +33,7 @@ export default function Navbar() {
   }, [open])
 
   const isActive = (path: string) => location.pathname === path ? 'active' : ''
+  const showNetworkSelector = networkPages.has(location.pathname)
 
   return (
     <>
@@ -49,17 +52,19 @@ export default function Navbar() {
           <a href="https://github.com/v0d1ch/hydra.registry" target="_blank" rel="noopener noreferrer">
             GitHub
           </a>
-          <div className="network-selector">
-            {networks.map(n => (
-              <button
-                key={n}
-                className={`network-btn ${network === n ? 'network-active' : ''}`}
-                onClick={() => setNetwork(n)}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
+          {showNetworkSelector && (
+            <div className="network-selector">
+              {networks.map(n => (
+                <button
+                  key={n}
+                  className={`network-btn ${network === n ? 'network-active' : ''}`}
+                  onClick={() => setNetwork(n)}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Mobile hamburger */}
@@ -104,17 +109,19 @@ export default function Navbar() {
               <a href="https://github.com/v0d1ch/hydra.registry" target="_blank" rel="noopener noreferrer">
                 <span className="mobile-link-prefix">&gt; </span>GitHub
               </a>
-              <div className="mobile-network-selector">
-                {networks.map(n => (
-                  <button
-                    key={n}
-                    className={`network-btn ${network === n ? 'network-active' : ''}`}
-                    onClick={() => setNetwork(n)}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
+              {showNetworkSelector && (
+                <div className="mobile-network-selector">
+                  {networks.map(n => (
+                    <button
+                      key={n}
+                      className={`network-btn ${network === n ? 'network-active' : ''}`}
+                      onClick={() => setNetwork(n)}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </motion.div>
         )}

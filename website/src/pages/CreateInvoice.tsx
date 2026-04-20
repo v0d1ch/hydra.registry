@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Link } from 'react-router-dom'
 import { createInvoice, type InvoiceResponse } from '../api/client'
 
 export default function CreateInvoice() {
@@ -27,7 +26,7 @@ export default function CreateInvoice() {
     }
 
     if (!paymentHash.match(/^[0-9a-fA-F]{64}$/)) {
-      setError('Payment hash must be a 64-character hex string (SHA-256 of your secret)')
+      setError('Payment hash must be a 64-character hex string')
       setLoading(false)
       return
     }
@@ -59,13 +58,13 @@ export default function CreateInvoice() {
         <h1 className="section-title">Create Payment Invoice</h1>
         <p className="register-desc">
           Generate an invoice to receive a cross-head payment via HTLC relay.
-          You must provide the SHA-256 hash of a secret you hold &mdash; the sender
-          will use this hash to lock funds along the route.
+          You provide a payment hash &mdash; the SHA-256 of a secret that only you know.
+          The secret never touches this service.
         </p>
 
         <form className="register-form" onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="receiverAddress">Receiver Address</label>
+            <label htmlFor="receiverAddress">Your Address (Receiver)</label>
             <input
               id="receiverAddress"
               type="text"
@@ -76,16 +75,20 @@ export default function CreateInvoice() {
             />
           </div>
           <div className="form-group">
-            <label htmlFor="paymentHash">Payment Hash (SHA-256 hex)</label>
+            <label htmlFor="paymentHash">Payment Hash</label>
             <input
               id="paymentHash"
               type="text"
-              placeholder="e.g. a1b2c3d4..."
+              placeholder="64-character hex (SHA-256 of your secret)"
               value={paymentHash}
               onChange={e => setPaymentHash(e.target.value)}
               required
             />
-            <span className="form-hint">Hash of your secret. Keep the secret safe &mdash; reveal it to claim funds.</span>
+            <span className="form-hint">
+              Generate a secret offline (e.g. <code>openssl rand -hex 32</code>),
+              then hash it (<code>echo -n SECRET | sha256sum</code>).
+              Paste only the hash here.
+            </span>
           </div>
           <div className="form-row">
             <div className="form-group">
@@ -152,7 +155,7 @@ export default function CreateInvoice() {
               </div>
             </div>
             <p className="invoice-share-hint">
-              Share this invoice ID with the sender so they can find a route and pay.
+              Share the <strong>invoice ID</strong> with the sender so they can find a route and pay.
             </p>
           </motion.div>
         )}
@@ -180,15 +183,15 @@ export default function CreateInvoice() {
         <div className="next-steps">
           <div className="next-step">
             <span className="next-num">1</span>
-            <p>You generate a secret and create an invoice with its SHA-256 hash. The secret stays private.</p>
+            <p>Generate a secret offline and compute its SHA-256 hash. Create an invoice with the hash &mdash; the secret never leaves your machine.</p>
           </div>
           <div className="next-step">
             <span className="next-num">2</span>
-            <p>The sender finds a route through bridge operators and locks funds in HTLC contracts along the path.</p>
+            <p>Share the invoice ID with the sender. They find a route through bridge operators and lock funds in HTLC contracts along the path.</p>
           </div>
           <div className="next-step">
             <span className="next-num">3</span>
-            <p>You reveal the secret to claim your funds. Bridge operators use the revealed secret to claim their locked funds in sequence.</p>
+            <p>Reveal the secret to claim your funds. Bridge operators use the revealed secret to claim their locked funds in sequence.</p>
           </div>
         </div>
       </motion.section>
