@@ -26,7 +26,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: cachix/install-nix-action@v27
         with:
@@ -38,14 +38,14 @@ jobs:
         continue-on-error: true
 
       - name: Cache nix store
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /nix/store
           key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
           restore-keys: nix-${{ runner.os }}-
 
       - name: Cache cabal
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cabal/store
@@ -65,11 +65,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: website/package-lock.json
 
