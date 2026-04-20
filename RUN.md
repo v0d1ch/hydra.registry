@@ -89,6 +89,8 @@ All configuration is via environment variables with sensible defaults:
 | `HYDRA_RATE_LIMIT` | `100` | Max requests per IP per minute |
 | `HYDRA_HEALTH_TIMEOUT` | `120` | Seconds before a silent head is marked unreachable |
 | `HYDRA_STATIC_DIR` | `./website/dist` | Directory for static website files |
+| `HYDRA_EXPLORER_URL` | `https://explorer.hydra.family` | Base URL for hydra-explorer (on-chain head discovery) |
+| `HYDRA_EXPLORER_POLL_INTERVAL` | `120` | Seconds between hydra-explorer polling cycles |
 
 Example:
 
@@ -128,14 +130,15 @@ To use a different test database:
 TEST_DB_CONN_STR="host=localhost port=5432 dbname=my_test_db" cabal test
 ```
 
-The test suite includes 88 tests:
-- Hydra message parsing (golden JSON tests)
-- JSON roundtrip tests for all API types
-- `utxoToResponse` Blockfrost format conversion
-- Address validation (unit + QuickCheck property tests)
-- Rate limiter logic
-- Database CRUD operations (integration)
-- Full API endpoint tests via hspec-wai (integration)
+The test suite includes 108 tests:
+- API integration tests — all endpoints including explorer (18 tests)
+- JSON roundtrip tests for all API types (17 tests)
+- Database CRUD — heads, UTxOs, explorer heads, filtering, aggregation (26 tests)
+- Address validation — Bech32, hex, base58, property tests (20 tests)
+- Hydra message parsing — Greetings, SnapshotConfirmed, HeadIsClosed, HeadIsFinalized (15 tests)
+- Explorer client — JSON parsing of on-chain head entries (4 tests)
+- Rate limiter — per-client tracking, cleanup (6 tests)
+- Config loading (2 tests)
 
 ## Production deployment
 

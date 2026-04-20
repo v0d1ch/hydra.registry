@@ -7,6 +7,7 @@ hydra.registry is an open-source service that indexes [Hydra Head](https://hydra
 ## What it does
 
 - **Connects** to Hydra nodes via WebSocket and indexes every confirmed UTxO snapshot in real-time
+- **Discovers** Hydra heads on-chain via a hydra-explorer sidecar that polls and syncs head status automatically
 - **Serves** a Blockfrost-compatible REST API that wallets like Lace and Nami can query as if it were an L1 provider
 - **Supports** a Yoroi-compatible endpoint for wallets using the Emurgo backend format
 - **Provides** a web interface for registering Hydra heads and viewing live network stats
@@ -25,26 +26,28 @@ hydra.registry is an open-source service that indexes [Hydra Head](https://hydra
 ## Architecture
 
 ```
-                    ┌──────────────┐
-                    │  Hydra Node  │ ◄── WebSocket
-                    └──────┬───────┘
-                           │
-                    ┌──────▼───────┐
-                    │   Indexer    │  Listens for SnapshotConfirmed events
-                    └──────┬───────┘
-                           │
-                    ┌──────▼───────┐
-                    │  PostgreSQL  │  Stores heads + UTxOs
-                    └──────┬───────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-     ┌────────▼──┐  ┌──────▼──┐  ┌─────▼──────┐
-     │ Blockfrost│  │  Yoroi  │  │  Website   │
-     │   API     │  │   API   │  │            │
-     └───────────┘  └─────────┘  └────────────┘
-        Lace/Nami     Yoroi       Register heads
-                                  View stats
+  ┌──────────────┐                  ┌──────────────────┐
+  │  Hydra Node  │ ◄── WebSocket    │  hydra-explorer  │ ◄── Polling
+  └──────┬───────┘                  └────────┬─────────┘
+         │                                   │
+  ┌──────▼───────┐                  ┌────────▼─────────┐
+  │   Indexer    │                  │ Explorer Sidecar  │
+  │  (WS live)  │                  │  (on-chain sync)  │
+  └──────┬───────┘                  └────────┬─────────┘
+         │                                   │
+         └──────────────┬────────────────────┘
+                 ┌──────▼───────┐
+                 │  PostgreSQL  │  Stores heads + UTxOs + explorer data
+                 └──────┬───────┘
+                        │
+           ┌────────────┼────────────┐
+           │            │            │
+  ┌────────▼──┐  ┌──────▼──┐  ┌─────▼──────┐
+  │ Blockfrost│  │  Yoroi  │  │  Website   │
+  │   API     │  │   API   │  │            │
+  └───────────┘  └─────────┘  └────────────┘
+     Lace/Nami     Yoroi       Register heads
+                                View stats
 ```
 
 ## API endpoints
@@ -61,15 +64,22 @@ hydra.registry is an open-source service that indexes [Hydra Head](https://hydra
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/health` | Health check (includes DB connectivity) |
-| `GET` | `/api/v1/stats` | Live stats (head count, UTxOs, status breakdown) |
+| `GET` | `/api/v1/stats` | Live stats (head count, UTxOs, explorer heads, status breakdown) |
 | `POST` | `/api/v1/heads/register` | Register a Hydra head by host and port |
 | `GET` | `/api/v1/heads?count=N&page=P` | List registered heads (paginated) |
-| `GET` | `/api/v1/heads/{headId}` | Head details (status, UTxO count, timestamps) |
+| `GET` | `/api/v1/heads/{headId}` | Head details enriched with on-chain explorer data |
 | `GET` | `/api/v1/heads/{headId}/addresses` | Distinct addresses in a head |
 | `GET` | `/api/v1/heads/{headId}/addresses/{address}/balance` | Aggregated balance |
 | `GET` | `/api/v1/heads/{headId}/addresses/{address}/utxos` | UTxOs in a specific head |
 | `DELETE` | `/api/v1/admin/heads/{headId}` | Deregister a head |
 | `GET` | `/api/v1/metrics` | Prometheus-format metrics |
+
+### Explorer API (`/api/v1/explorer/`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/explorer/heads?count=N&page=P&status=S&network=N` | List on-chain heads (filterable) |
+| `GET` | `/api/v1/explorer/heads/{headId}` | On-chain head details from hydra-explorer |
 
 ## Project structure
 
@@ -83,19 +93,22 @@ api/                          Haskell backend (Servant + rel8 + PostgreSQL)
     Cache.hs                  TTL-based in-memory cache
     Config.hs                 Environment variable configuration
     Db.hs                     Database queries (rel8 + hasql)
-    Db/Schema.hs              Table schemas (heads, utxos)
+    Db/Schema.hs              Table schemas (heads, utxos, explorer heads)
+    Explorer/Client.hs        hydra-explorer data types and JSON parsing
+    Explorer/Sidecar.hs       Polling service for on-chain head discovery
     Hydra/Client.hs           WebSocket client, message parsing
     Indexer.hs                Event processing, head registration
     Logging.hs                Structured JSON logging
     Metrics.hs                Prometheus metrics
     Middleware/RateLimit.hs    IP-based rate limiting
-  test/                       Test suite (88 tests)
+  test/                       Test suite (108 tests)
 
 website/                      React frontend (Vite + TypeScript)
   src/
     pages/Landing.tsx          Landing page with stats
     pages/Register.tsx         Head registration form
-    components/                Navbar, Footer, AnimatedCounter
+    components/                Navbar, Footer, AnimatedCounter,
+                               Typewriter, MouseSpotlight, ParticleField
     api/client.ts              Typed API client
     styles/global.css          Dark theme styles
 ```
