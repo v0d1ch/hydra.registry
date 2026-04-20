@@ -55,6 +55,10 @@ withTestPool action = do
 cleanTestData :: Pool -> IO ()
 cleanTestData pool = do
   Db.runSession pool $ do
+    Session.sql "DROP TABLE IF EXISTS route_hops CASCADE"
+    Session.sql "DROP TABLE IF EXISTS payment_routes CASCADE"
+    Session.sql "DROP TABLE IF EXISTS invoices CASCADE"
+    Session.sql "DROP TABLE IF EXISTS head_participants CASCADE"
     Session.sql "DROP TABLE IF EXISTS utxos CASCADE"
     Session.sql "DROP TABLE IF EXISTS heads CASCADE"
     Session.sql "DROP TABLE IF EXISTS explorer_heads CASCADE"
