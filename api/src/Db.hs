@@ -83,11 +83,61 @@ initDb pool =
       \  last_updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\
       \);\
       \CREATE INDEX IF NOT EXISTS idx_explorer_heads_status ON explorer_heads (status);\
-      \CREATE INDEX IF NOT EXISTS idx_explorer_heads_network ON explorer_heads (network);"
+      \CREATE INDEX IF NOT EXISTS idx_explorer_heads_network ON explorer_heads (network);\
+      \ALTER TABLE heads ADD COLUMN IF NOT EXISTS is_bridge BOOLEAN NOT NULL DEFAULT false;\
+      \ALTER TABLE heads ADD COLUMN IF NOT EXISTS bridge_fee_lovelace BIGINT;\
+      \CREATE TABLE IF NOT EXISTS head_participants (\
+      \  head_id TEXT NOT NULL,\
+      \  address TEXT NOT NULL,\
+      \  vkey TEXT,\
+      \  on_chain_id TEXT,\
+      \  committed_lovelace BIGINT NOT NULL DEFAULT 0,\
+      \  committed_tx_ref TEXT,\
+      \  PRIMARY KEY (head_id, address)\
+      \);\
+      \CREATE INDEX IF NOT EXISTS idx_head_participants_address ON head_participants (address);\
+      \CREATE TABLE IF NOT EXISTS invoices (\
+      \  invoice_id TEXT PRIMARY KEY,\
+      \  receiver_address TEXT NOT NULL,\
+      \  payment_hash TEXT NOT NULL,\
+      \  amount_lovelace BIGINT NOT NULL,\
+      \  memo TEXT,\
+      \  status TEXT NOT NULL DEFAULT 'pending',\
+      \  expires_at TIMESTAMPTZ NOT NULL,\
+      \  created_at TIMESTAMPTZ NOT NULL DEFAULT now()\
+      \);\
+      \CREATE TABLE IF NOT EXISTS payment_routes (\
+      \  route_id TEXT PRIMARY KEY,\
+      \  invoice_id TEXT NOT NULL,\
+      \  sender_address TEXT NOT NULL,\
+      \  receiver_address TEXT NOT NULL,\
+      \  amount_lovelace BIGINT NOT NULL,\
+      \  status TEXT NOT NULL DEFAULT 'requested',\
+      \  route_path JSONB NOT NULL DEFAULT '[]',\
+      \  total_fee BIGINT NOT NULL DEFAULT 0,\
+      \  network TEXT NOT NULL DEFAULT 'Testnet',\
+      \  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
+      \  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\
+      \);\
+      \CREATE TABLE IF NOT EXISTS route_hops (\
+      \  hop_id TEXT PRIMARY KEY,\
+      \  route_id TEXT NOT NULL,\
+      \  hop_index INTEGER NOT NULL,\
+      \  head_id TEXT NOT NULL,\
+      \  bridge_address TEXT NOT NULL,\
+      \  htlc_status TEXT NOT NULL DEFAULT 'pending',\
+      \  htlc_tx_hash TEXT,\
+      \  secret_hash TEXT NOT NULL,\
+      \  timeout_slot BIGINT NOT NULL,\
+      \  fee_lovelace BIGINT NOT NULL DEFAULT 0,\
+      \  locked_at TIMESTAMPTZ,\
+      \  claimed_at TIMESTAMPTZ\
+      \);\
+      \CREATE INDEX IF NOT EXISTS idx_route_hops_route_id ON route_hops (route_id);"
 
 -- | Insert a new head or update on conflict
-upsertHead :: Pool -> Text -> Text -> Int -> Text -> IO ()
-upsertHead pool hid hostAddr portNum status' = do
+upsertHead :: Pool -> Text -> Text -> Int -> Text -> Bool -> Maybe Int64 -> IO ()
+upsertHead pool hid hostAddr portNum status' isBridge bridgeFee = do
   now <- getCurrentTime
   runSession pool $
     Session.statement () $
@@ -106,6 +156,8 @@ upsertHead pool hid hostAddr portNum status' = do
                       , createdAt = lit now
                       , updatedAt = lit now
                       , lastMessageAt = lit (Just now)
+                      , headIsBridge = lit isBridge
+                      , headBridgeFeeLovelace = lit bridgeFee
                       }
                   ]
             , onConflict =
@@ -513,3 +565,282 @@ countExplorerHeads :: Pool -> IO Int
 countExplorerHeads pool = do
   heads <- getAllExplorerHeads pool
   pure $ length heads
+
+-- ─── Head participants ───
+
+-- | Replace all participants for a head (delete + reinsert)
+replaceHeadParticipants :: Pool -> Text -> [(Text, Maybe Text, Maybe Text, Int64, Maybe Text)] -> IO ()
+replaceHeadParticipants pool hid participants = do
+  runSession pool $ do
+    -- Delete existing participants for this head
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.delete
+          Delete
+            { from = headParticipantSchema
+            , using = pure ()
+            , deleteWhere = \_ row -> row.participantHeadId ==. lit hid
+            , returning = NoReturning
+            }
+    -- Insert new participants
+    case participants of
+      [] -> pure ()
+      _ ->
+        Session.statement () $
+          Rel8.run_ $
+            Rel8.insert
+              Insert
+                { into = headParticipantSchema
+                , rows = Rel8.values $ map toRow participants
+                , onConflict = DoNothing
+                , returning = NoReturning
+                }
+ where
+  toRow (addr, vkey, onChainId, lovelace, txRef) =
+    HeadParticipant
+      { participantHeadId = lit hid
+      , participantAddress = lit addr
+      , participantVkey = lit vkey
+      , participantOnChainId = lit onChainId
+      , participantCommittedLovelace = lit lovelace
+      , participantCommittedTxRef = lit txRef
+      }
+
+-- | Get heads for a participant address
+getHeadsByParticipantAddress :: Pool -> Text -> IO [HeadParticipant Identity]
+getHeadsByParticipantAddress pool addr =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          p <- Rel8.each headParticipantSchema
+          Rel8.where_ (p.participantAddress ==. lit addr)
+          pure p
+
+-- | Get participants for a head
+getParticipantsForHead :: Pool -> Text -> IO [HeadParticipant Identity]
+getParticipantsForHead pool hid =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          p <- Rel8.each headParticipantSchema
+          Rel8.where_ (p.participantHeadId ==. lit hid)
+          pure p
+
+-- | Get all bridge heads (optionally filtered by network via explorer_heads join)
+getBridgeHeads :: Pool -> IO [Head Identity]
+getBridgeHeads pool =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          h <- Rel8.each headSchema
+          Rel8.where_ (h.headIsBridge ==. lit True)
+          pure h
+
+-- | Get heads that have a specific reference script hash in their UTxOs
+getHeadsWithScript :: Pool -> Text -> IO [Text]
+getHeadsWithScript pool scriptHash =
+  runSession pool $ do
+    rows <-
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            u <- Rel8.each utxoSchema
+            Rel8.where_ (u.utxoReferenceScriptHash ==. lit (Just scriptHash))
+            pure u.utxoHeadId
+    pure $ Map.keys $ Map.fromList [(h, ()) | h <- rows]
+
+-- ─── Invoices ───
+
+-- | Insert a new invoice
+insertInvoice :: Pool -> Text -> Text -> Text -> Int64 -> Maybe Text -> Text -> UTCTime -> IO ()
+insertInvoice pool iid receiverAddr payHash amount memo status' expiresAt = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.insert
+          Insert
+            { into = invoiceSchema
+            , rows =
+                Rel8.values
+                  [ Invoice
+                      { invoiceId = lit iid
+                      , invoiceReceiverAddress = lit receiverAddr
+                      , invoicePaymentHash = lit payHash
+                      , invoiceAmountLovelace = lit amount
+                      , invoiceMemo = lit memo
+                      , invoiceStatus = lit status'
+                      , invoiceExpiresAt = lit expiresAt
+                      , invoiceCreatedAt = lit now
+                      }
+                  ]
+            , onConflict = DoNothing
+            , returning = NoReturning
+            }
+
+-- | Get an invoice by ID
+getInvoice :: Pool -> Text -> IO (Maybe (Invoice Identity))
+getInvoice pool iid =
+  runSession pool $ do
+    rows <-
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            inv <- Rel8.each invoiceSchema
+            Rel8.where_ (inv.invoiceId ==. lit iid)
+            pure inv
+    pure $ case rows of
+      [] -> Nothing
+      (x : _) -> Just x
+
+-- | Update invoice status
+updateInvoiceStatus :: Pool -> Text -> Text -> IO ()
+updateInvoiceStatus pool iid newStatus =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = invoiceSchema
+            , from = pure ()
+            , set = \_ row -> row{invoiceStatus = lit newStatus}
+            , updateWhere = \_ row -> row.invoiceId ==. lit iid
+            , returning = NoReturning
+            }
+
+-- ─── Payment routes ───
+
+-- | Insert a payment route
+insertPaymentRoute :: Pool -> Text -> Text -> Text -> Text -> Int64 -> Text -> Aeson.Value -> Int64 -> Text -> IO ()
+insertPaymentRoute pool rid invoiceId senderAddr receiverAddr amount status' path totalFee network = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.insert
+          Insert
+            { into = paymentRouteSchema
+            , rows =
+                Rel8.values
+                  [ PaymentRoute
+                      { routeId = lit rid
+                      , routeInvoiceId = lit invoiceId
+                      , routeSenderAddress = lit senderAddr
+                      , routeReceiverAddress = lit receiverAddr
+                      , routeAmountLovelace = lit amount
+                      , routeStatus = lit status'
+                      , routePath = lit path
+                      , routeTotalFee = lit totalFee
+                      , routeNetwork = lit network
+                      , routeCreatedAt = lit now
+                      , routeUpdatedAt = lit now
+                      }
+                  ]
+            , onConflict = DoNothing
+            , returning = NoReturning
+            }
+
+-- | Get a payment route by ID
+getPaymentRoute :: Pool -> Text -> IO (Maybe (PaymentRoute Identity))
+getPaymentRoute pool rid =
+  runSession pool $ do
+    rows <-
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            r <- Rel8.each paymentRouteSchema
+            Rel8.where_ (r.routeId ==. lit rid)
+            pure r
+    pure $ case rows of
+      [] -> Nothing
+      (x : _) -> Just x
+
+-- | Update payment route status
+updateRouteStatus :: Pool -> Text -> Text -> IO ()
+updateRouteStatus pool rid newStatus = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = paymentRouteSchema
+            , from = pure ()
+            , set = \_ row -> row{routeStatus = lit newStatus, routeUpdatedAt = lit now}
+            , updateWhere = \_ row -> row.routeId ==. lit rid
+            , returning = NoReturning
+            }
+
+-- ─── Route hops ───
+
+-- | Insert route hops
+insertRouteHops :: Pool -> [(Text, Text, Int, Text, Text, Text, Text, Int64, Int64)] -> IO ()
+insertRouteHops pool hops =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.insert
+          Insert
+            { into = routeHopSchema
+            , rows = Rel8.values $ map toRow hops
+            , onConflict = DoNothing
+            , returning = NoReturning
+            }
+ where
+  toRow (hid, rid, idx, headId, bridgeAddr, status', secretHash, timeoutSlot, fee) =
+    RouteHop
+      { hopId = lit hid
+      , hopRouteId = lit rid
+      , hopIndex = lit (fromIntegral @Int @Int32 idx)
+      , hopHeadId = lit headId
+      , hopBridgeAddress = lit bridgeAddr
+      , hopHtlcStatus = lit status'
+      , hopHtlcTxHash = lit Nothing
+      , hopSecretHash = lit secretHash
+      , hopTimeoutSlot = lit timeoutSlot
+      , hopFeeLovelace = lit fee
+      , hopLockedAt = lit Nothing
+      , hopClaimedAt = lit Nothing
+      }
+
+-- | Get hops for a route
+getRouteHops :: Pool -> Text -> IO [RouteHop Identity]
+getRouteHops pool rid =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          hop <- Rel8.each routeHopSchema
+          Rel8.where_ (hop.hopRouteId ==. lit rid)
+          pure hop
+
+-- | Update hop HTLC status
+updateHopStatus :: Pool -> Text -> Text -> Maybe Text -> IO ()
+updateHopStatus pool hopId newStatus mTxHash = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = routeHopSchema
+            , from = pure ()
+            , set = \_ row ->
+                row
+                  { hopHtlcStatus = lit newStatus
+                  , hopHtlcTxHash = case mTxHash of
+                      Just tx -> lit (Just tx)
+                      Nothing -> row.hopHtlcTxHash
+                  , hopLockedAt = case newStatus of
+                      "locked" -> lit (Just now)
+                      _ -> row.hopLockedAt
+                  , hopClaimedAt = case newStatus of
+                      "claimed" -> lit (Just now)
+                      _ -> row.hopClaimedAt
+                  }
+            , updateWhere = \_ row -> row.hopId ==. lit hopId
+            , returning = NoReturning
+            }

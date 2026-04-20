@@ -379,7 +379,7 @@ main {
 
 .about-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 2rem;
 }
 
@@ -1379,5 +1379,484 @@ code.result-value {
 
   .section-title {
     font-size: 1.3rem;
+  }
+}
+
+/* ─── Card Links ─── */
+
+.card-link {
+  display: inline-block;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+  border-bottom: 1px solid var(--accent-dim);
+  padding-bottom: 2px;
+  transition: border-color 0.2s;
+}
+
+.card-link:hover {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+/* ─── Network Selector ─── */
+
+.network-selector {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-left: 1rem;
+}
+
+.network-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.network-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.network-btn.network-active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.mobile-network-selector {
+  display: flex;
+  gap: 0.5rem;
+  padding: 1rem 0;
+  justify-content: center;
+}
+
+.mobile-network-selector .network-btn {
+  font-size: 0.85rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* ─── Explorer Page ─── */
+
+.explorer-desc {
+  text-align: center;
+  color: var(--text-muted);
+  max-width: 600px;
+  margin: -1.5rem auto 2rem;
+  font-size: 0.95rem;
+}
+
+.explorer-filters {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.filter-group label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-bottom: 0.3rem;
+}
+
+.filter-group select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.filter-group select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.explorer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+}
+
+.explorer-card {
+  padding: 1.25rem;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.explorer-card:hover {
+  border-color: var(--accent-dim);
+  transform: translateY(-2px);
+}
+
+.explorer-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.explorer-status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.explorer-network {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--accent-dim);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.explorer-card-id {
+  margin-bottom: 0.75rem;
+}
+
+.explorer-card-id code {
+  font-size: 0.8rem;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.explorer-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.meta-label {
+  color: var(--text-muted);
+}
+
+.meta-value {
+  color: var(--text);
+}
+
+.badge-registered {
+  color: var(--accent) !important;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.explorer-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 3rem;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+
+.page-num {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* ─── Form Enhancements ─── */
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.form-hint {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.3rem;
+}
+
+.bridge-toggle {
+  margin: 0.5rem 0;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+}
+
+.toggle-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.toggle-text {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.invoice-share-hint {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ─── Routes Page ─── */
+
+.routes-list {
+  margin-top: 2rem;
+}
+
+.routes-heading {
+  font-size: 1.2rem;
+  color: var(--text);
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+.route-card {
+  padding: 1.5rem;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  margin-bottom: 1.25rem;
+}
+
+.route-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.route-rank {
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--accent);
+}
+
+.route-fee {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  background: var(--accent-dim);
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+}
+
+.route-hops {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.route-hop {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  position: relative;
+}
+
+.hop-index {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.hop-details {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.85rem;
+}
+
+.hop-details code {
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
+.hop-arrow {
+  position: absolute;
+  left: 13px;
+  top: 32px;
+  width: 2px;
+  height: 12px;
+  background: var(--border);
+}
+
+/* ─── Payment Tracker Page ─── */
+
+.payment-overview {
+  padding: 2rem;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.payment-status-badge {
+  display: inline-block;
+  border: 2px solid;
+  border-radius: 8px;
+  padding: 0.4rem 1.2rem;
+  font-family: var(--font-heading);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-bottom: 1.5rem;
+}
+
+.payment-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* ─── HTLC Hop Timeline ─── */
+
+.hops-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+  padding-left: 2rem;
+}
+
+.hop-timeline-item {
+  position: relative;
+  padding-bottom: 1.5rem;
+}
+
+.hop-timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.hop-timeline-dot {
+  position: absolute;
+  left: -2rem;
+  top: 0.5rem;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 2px var(--border);
+  z-index: 2;
+}
+
+.hop-timeline-line {
+  position: absolute;
+  left: calc(-2rem + 6px);
+  top: 1.5rem;
+  width: 2px;
+  height: calc(100% - 0.5rem);
+}
+
+.hop-timeline-card {
+  padding: 1.25rem;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.hop-timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.hop-timeline-index {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.hop-timeline-status {
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.hop-timeline-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.hop-timeline-body code {
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
+/* ─── Responsive for new pages ─── */
+
+@media (max-width: 768px) {
+  .explorer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .route-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .hop-details {
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .network-selector {
+    display: none;
   }
 }

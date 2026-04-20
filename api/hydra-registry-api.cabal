@@ -35,12 +35,14 @@ library
     Db
     Db.Schema
     Explorer.Client
+    Explorer.Members
     Explorer.Sidecar
     Hydra.Client
     Indexer
     Logging
     Metrics
     Middleware.RateLimit
+    Relay.Graph
   build-depends:
     , base >= 4.20 && < 5
     , aeson
@@ -62,6 +64,7 @@ library
     , time
     , uuid
     , wai
+    , vector
     , wai-cors
     , wai-extra
     , warp

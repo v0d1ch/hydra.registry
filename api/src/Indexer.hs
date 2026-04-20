@@ -4,6 +4,7 @@ import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Control.Monad (forever)
 import Data.Aeson (toJSON)
+import Data.Int (Int64)
 import Data.Text (Text)
 import Db qualified
 import Db.Schema qualified as Schema
@@ -50,16 +51,16 @@ processEvent logger pool = \case
     Db.updateHeadStatus pool lostHeadId "unreachable"
 
 -- | Register a new head: validate, store in DB, start listening
-registerHead :: Logger -> Pool -> TQueue HydraEvent -> Text -> Int -> IO (Either Text HydraEvent)
-registerHead logger pool eventQueue hostAddr portNum = do
+registerHead :: Logger -> Pool -> TQueue HydraEvent -> Text -> Int -> Bool -> Maybe Int64 -> IO (Either Text HydraEvent)
+registerHead logger pool eventQueue hostAddr portNum isBridge bridgeFee = do
   result <- validateHydraNode logger hostAddr portNum
   case result of
     Left err -> pure $ Left err
     Right evt@HeadGreetings{greeterHeadId, greeterHeadStatus, greeterUtxos} -> do
-      Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus
+      Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus isBridge bridgeFee
       Db.replaceUtxos pool greeterHeadId greeterUtxos
       connectToHead logger greeterHeadId hostAddr portNum eventQueue
-      logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr)]
+      logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr), ("bridge", toJSON isBridge)]
       pure $ Right evt
     Right _ -> pure $ Left "Unexpected event during validation"
 

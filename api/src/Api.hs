@@ -10,12 +10,15 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
 import Data.Functor.Identity (Identity)
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Time (addUTCTime, getCurrentTime)
+import Data.UUID qualified as UUID
+import Data.UUID.V4 qualified as UUID
 import Db qualified
-import Db.Schema (ExplorerHead (..), Head (..), Utxo (..))
+import Db.Schema (ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraEvent (..))
 import Indexer qualified
@@ -28,6 +31,7 @@ import Network.Wai.Middleware.Cors
   , simpleHeaders
   , simpleMethods
   )
+import Relay.Graph qualified as Graph
 import Servant
 
 -- | Our own endpoints that live under /api/v1/
@@ -44,6 +48,14 @@ type ApiV1Routes =
     :<|> "stats" :> Get '[JSON] StatsResponse
     :<|> "explorer" :> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> QueryParam "status" Text :> QueryParam "network" Text :> Get '[JSON] [ExplorerHeadInfo]
     :<|> "explorer" :> "heads" :> Capture "headId" Text :> Get '[JSON] ExplorerHeadInfo
+    -- Participant lookup
+    :<|> "addresses" :> Capture "address" Text :> "heads" :> Get '[JSON] [ParticipantHeadInfo]
+    -- Relay endpoints
+    :<|> "relay" :> "invoices" :> ReqBody '[JSON] CreateInvoiceRequest :> Post '[JSON] InvoiceResponse
+    :<|> "relay" :> "invoices" :> Capture "invoiceId" Text :> Get '[JSON] InvoiceResponse
+    :<|> "relay" :> "routes" :> ReqBody '[JSON] FindRoutesRequest :> Post '[JSON] [RouteResponse]
+    :<|> "relay" :> "routes" :> Capture "routeId" Text :> "execute" :> Post '[JSON] PaymentStatusResponse
+    :<|> "relay" :> "payments" :> Capture "paymentId" Text :> Get '[JSON] PaymentStatusResponse
 
 -- | Full API type
 type API =
@@ -71,6 +83,8 @@ data AppEnv = AppEnv
   , metrics :: Metrics
   , addressCache :: Cache [UtxoResponse]
   , staticDir :: FilePath
+  , relayGraph :: TVar Graph.RelayGraph
+  , htlcScriptHash :: Maybe Text
   }
 
 -- | Create the Servant server
@@ -97,6 +111,12 @@ apiV1Server env =
     :<|> handleStats env.pool
     :<|> handleListExplorerHeads env.pool
     :<|> handleExplorerHeadDetail env.pool
+    :<|> handleAddressHeads env.pool
+    :<|> handleCreateInvoice env.pool
+    :<|> handleGetInvoice env.pool
+    :<|> handleFindRoutes env.pool env.relayGraph
+    :<|> handleExecuteRoute env.pool
+    :<|> handleGetPayment env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
 corsMiddleware :: Middleware
@@ -138,7 +158,9 @@ handleHealth pool = do
 -- | POST /api/v1/heads/register
 handleRegister :: Logger -> Pool -> TQueue HydraEvent -> RegisterHead -> Handler RegisterHeadResponse
 handleRegister logger pool eventQueue req = do
-  result <- liftIO $ Indexer.registerHead logger pool eventQueue req.host req.port
+  let isBridge = maybe False id req.bridge
+      bridgeFee = fromIntegral @Int @Int64 <$> req.feeLovelace
+  result <- liftIO $ Indexer.registerHead logger pool eventQueue req.host req.port isBridge bridgeFee
   case result of
     Left err ->
       throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
@@ -433,3 +455,190 @@ explorerHeadToOnChain eh =
     , seedTxIn = eh.explorerSeedTxIn
     , blockNo = fromIntegral <$> eh.explorerBlockNo
     }
+
+-- ─── Participant handlers ───
+
+-- | GET /api/v1/addresses/:address/heads
+handleAddressHeads :: Pool -> Text -> Handler [ParticipantHeadInfo]
+handleAddressHeads pool addr = do
+  case validateAddress addr of
+    Left err ->
+      throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
+    Right _ -> pure ()
+  participants <- liftIO $ Db.getHeadsByParticipantAddress pool addr
+  -- Enrich with explorer head data for status/network
+  mapM (enrichParticipant pool) participants
+
+enrichParticipant :: Pool -> HeadParticipant Identity -> Handler ParticipantHeadInfo
+enrichParticipant pool p = do
+  mExplorer <- liftIO $ Db.getExplorerHead pool p.participantHeadId
+  let (status', network') = case mExplorer of
+        Just eh -> (eh.explorerStatus, eh.explorerNetwork)
+        Nothing -> ("unknown", "unknown")
+  pure
+    ParticipantHeadInfo
+      { headId = p.participantHeadId
+      , address = p.participantAddress
+      , vkey = p.participantVkey
+      , onChainId = p.participantOnChainId
+      , committedLovelace = p.participantCommittedLovelace
+      , committedTxRef = p.participantCommittedTxRef
+      , headStatus = status'
+      , network = network'
+      }
+
+-- ─── Relay handlers ───
+
+-- | POST /api/v1/relay/invoices
+handleCreateInvoice :: Pool -> CreateInvoiceRequest -> Handler InvoiceResponse
+handleCreateInvoice pool req = do
+  case validateAddress req.receiverAddress of
+    Left err ->
+      throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
+    Right _ -> pure ()
+  when (req.amountLovelace <= 0) $
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "amount must be positive"}
+  when (T.null req.paymentHash) $
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "paymentHash is required"}
+  now <- liftIO getCurrentTime
+  iid <- liftIO $ UUID.toText <$> UUID.nextRandom
+  let expirySeconds = maybe 3600 id req.expiresInSeconds
+      expiresAt = addUTCTime (fromIntegral expirySeconds) now
+  liftIO $ Db.insertInvoice pool iid req.receiverAddress req.paymentHash req.amountLovelace req.memo "pending" expiresAt
+  pure
+    InvoiceResponse
+      { invoiceId = iid
+      , receiverAddress = req.receiverAddress
+      , paymentHash = req.paymentHash
+      , amountLovelace = req.amountLovelace
+      , memo = req.memo
+      , status = "pending"
+      , expiresAt = expiresAt
+      , createdAt = now
+      }
+
+-- | GET /api/v1/relay/invoices/:invoiceId
+handleGetInvoice :: Pool -> Text -> Handler InvoiceResponse
+handleGetInvoice pool iid = do
+  mInvoice <- liftIO $ Db.getInvoice pool iid
+  case mInvoice of
+    Nothing ->
+      throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Invoice not found"}
+    Just inv ->
+      pure
+        InvoiceResponse
+          { invoiceId = inv.invoiceId
+          , receiverAddress = inv.invoiceReceiverAddress
+          , paymentHash = inv.invoicePaymentHash
+          , amountLovelace = inv.invoiceAmountLovelace
+          , memo = inv.invoiceMemo
+          , status = inv.invoiceStatus
+          , expiresAt = inv.invoiceExpiresAt
+          , createdAt = inv.invoiceCreatedAt
+          }
+
+-- | POST /api/v1/relay/routes
+handleFindRoutes :: Pool -> TVar Graph.RelayGraph -> FindRoutesRequest -> Handler [RouteResponse]
+handleFindRoutes pool graphVar req = do
+  -- Look up the invoice
+  mInvoice <- liftIO $ Db.getInvoice pool req.invoiceId
+  case mInvoice of
+    Nothing ->
+      throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Invoice not found"}
+    Just inv -> do
+      graph <- liftIO $ readTVarIO graphVar
+      let routes = Graph.findRoutes graph req.senderAddress inv.invoiceReceiverAddress req.network 3
+      mapM (routeToResponse pool req.invoiceId req.senderAddress inv.invoiceReceiverAddress inv.invoiceAmountLovelace inv.invoicePaymentHash req.network) routes
+
+routeToResponse :: Pool -> Text -> Text -> Text -> Int64 -> Text -> Text -> Graph.Route -> Handler RouteResponse
+routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash network route = do
+  rid <- liftIO $ UUID.toText <$> UUID.nextRandom
+  let hops =
+        [ RouteHopResponse
+            { headId = h.hopHeadId
+            , bridgeAddress = h.hopBridgeAddress
+            , fee = h.hopFee
+            }
+        | h <- route.routeHops
+        ]
+  -- Persist the route
+  liftIO $
+    Db.insertPaymentRoute
+      pool
+      rid
+      invoiceId
+      senderAddr
+      receiverAddr
+      amount
+      "requested"
+      (Aeson.toJSON hops)
+      route.routeTotalFee
+      network
+  -- Persist hops
+  hopRows <- liftIO $
+    mapM
+      ( \(idx, h) -> do
+          hid <- UUID.toText <$> UUID.nextRandom
+          pure (hid, rid, idx, h.hopHeadId, h.hopBridgeAddress, "pending", paymentHash, (0 :: Int64), h.hopFee)
+      )
+      (zip [0 ..] route.routeHops)
+  liftIO $ Db.insertRouteHops pool hopRows
+  pure
+    RouteResponse
+      { routeId = rid
+      , hops = hops
+      , totalFee = route.routeTotalFee
+      }
+
+-- | POST /api/v1/relay/routes/:routeId/execute
+handleExecuteRoute :: Pool -> Text -> Handler PaymentStatusResponse
+handleExecuteRoute pool rid = do
+  mRoute <- liftIO $ Db.getPaymentRoute pool rid
+  case mRoute of
+    Nothing ->
+      throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Route not found"}
+    Just route -> do
+      liftIO $ Db.updateRouteStatus pool rid "in_progress"
+      buildPaymentStatus pool route{routeStatus = "in_progress"}
+
+-- | GET /api/v1/relay/payments/:paymentId
+handleGetPayment :: Pool -> Text -> Handler PaymentStatusResponse
+handleGetPayment pool rid = do
+  mRoute <- liftIO $ Db.getPaymentRoute pool rid
+  case mRoute of
+    Nothing ->
+      throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Payment not found"}
+    Just route ->
+      buildPaymentStatus pool route
+
+buildPaymentStatus :: Pool -> PaymentRoute Identity -> Handler PaymentStatusResponse
+buildPaymentStatus pool route = do
+  hops <- liftIO $ Db.getRouteHops pool route.routeId
+  pure
+    PaymentStatusResponse
+      { routeId = route.routeId
+      , invoiceId = route.routeInvoiceId
+      , senderAddress = route.routeSenderAddress
+      , receiverAddress = route.routeReceiverAddress
+      , amountLovelace = route.routeAmountLovelace
+      , status = route.routeStatus
+      , totalFee = route.routeTotalFee
+      , network = route.routeNetwork
+      , hops =
+          [ HopStatusResponse
+              { hopIndex = fromIntegral h.hopIndex
+              , headId = h.hopHeadId
+              , bridgeAddress = h.hopBridgeAddress
+              , htlcStatus = h.hopHtlcStatus
+              , htlcTxHash = h.hopHtlcTxHash
+              , secretHash = h.hopSecretHash
+              , timeoutSlot = h.hopTimeoutSlot
+              , fee = h.hopFeeLovelace
+              , lockedAt = h.hopLockedAt
+              , claimedAt = h.hopClaimedAt
+              }
+          | h <- hops
+          ]
+      , createdAt = route.routeCreatedAt
+      , updatedAt = route.routeUpdatedAt
+      }

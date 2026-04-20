@@ -18,6 +18,8 @@ data Head f = Head
   , createdAt :: Column f UTCTime
   , updatedAt :: Column f UTCTime
   , lastMessageAt :: Column f (Maybe UTCTime)
+  , headIsBridge :: Column f Bool
+  , headBridgeFeeLovelace :: Column f (Maybe Int64)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -39,6 +41,8 @@ headSchema =
           , createdAt = "created_at"
           , updatedAt = "updated_at"
           , lastMessageAt = "last_message_at"
+          , headIsBridge = "is_bridge"
+          , headBridgeFeeLovelace = "bridge_fee_lovelace"
           }
     }
 
@@ -87,6 +91,152 @@ explorerHeadSchema =
           , explorerSeedTxIn = "seed_tx_in"
           , explorerFirstSeenAt = "first_seen_at"
           , explorerLastUpdatedAt = "last_updated_at"
+          }
+    }
+
+-- | Head participants extracted from explorer members data
+data HeadParticipant f = HeadParticipant
+  { participantHeadId :: Column f Text
+  , participantAddress :: Column f Text
+  , participantVkey :: Column f (Maybe Text)
+  , participantOnChainId :: Column f (Maybe Text)
+  , participantCommittedLovelace :: Column f Int64
+  , participantCommittedTxRef :: Column f (Maybe Text)
+  }
+  deriving stock (Generic)
+  deriving anyclass (Rel8able)
+
+deriving stock instance Show (HeadParticipant Identity)
+deriving stock instance Eq (HeadParticipant Identity)
+
+headParticipantSchema :: TableSchema (HeadParticipant Name)
+headParticipantSchema =
+  TableSchema
+    { name = "head_participants"
+    , columns =
+        HeadParticipant
+          { participantHeadId = "head_id"
+          , participantAddress = "address"
+          , participantVkey = "vkey"
+          , participantOnChainId = "on_chain_id"
+          , participantCommittedLovelace = "committed_lovelace"
+          , participantCommittedTxRef = "committed_tx_ref"
+          }
+    }
+
+-- | Invoices for relay payment requests
+data Invoice f = Invoice
+  { invoiceId :: Column f Text
+  , invoiceReceiverAddress :: Column f Text
+  , invoicePaymentHash :: Column f Text
+  , invoiceAmountLovelace :: Column f Int64
+  , invoiceMemo :: Column f (Maybe Text)
+  , invoiceStatus :: Column f Text
+  , invoiceExpiresAt :: Column f UTCTime
+  , invoiceCreatedAt :: Column f UTCTime
+  }
+  deriving stock (Generic)
+  deriving anyclass (Rel8able)
+
+deriving stock instance Show (Invoice Identity)
+deriving stock instance Eq (Invoice Identity)
+
+invoiceSchema :: TableSchema (Invoice Name)
+invoiceSchema =
+  TableSchema
+    { name = "invoices"
+    , columns =
+        Invoice
+          { invoiceId = "invoice_id"
+          , invoiceReceiverAddress = "receiver_address"
+          , invoicePaymentHash = "payment_hash"
+          , invoiceAmountLovelace = "amount_lovelace"
+          , invoiceMemo = "memo"
+          , invoiceStatus = "status"
+          , invoiceExpiresAt = "expires_at"
+          , invoiceCreatedAt = "created_at"
+          }
+    }
+
+-- | Payment routes (a chosen path for a payment)
+data PaymentRoute f = PaymentRoute
+  { routeId :: Column f Text
+  , routeInvoiceId :: Column f Text
+  , routeSenderAddress :: Column f Text
+  , routeReceiverAddress :: Column f Text
+  , routeAmountLovelace :: Column f Int64
+  , routeStatus :: Column f Text
+  , routePath :: Column f Value
+  , routeTotalFee :: Column f Int64
+  , routeNetwork :: Column f Text
+  , routeCreatedAt :: Column f UTCTime
+  , routeUpdatedAt :: Column f UTCTime
+  }
+  deriving stock (Generic)
+  deriving anyclass (Rel8able)
+
+deriving stock instance Show (PaymentRoute Identity)
+deriving stock instance Eq (PaymentRoute Identity)
+
+paymentRouteSchema :: TableSchema (PaymentRoute Name)
+paymentRouteSchema =
+  TableSchema
+    { name = "payment_routes"
+    , columns =
+        PaymentRoute
+          { routeId = "route_id"
+          , routeInvoiceId = "invoice_id"
+          , routeSenderAddress = "sender_address"
+          , routeReceiverAddress = "receiver_address"
+          , routeAmountLovelace = "amount_lovelace"
+          , routeStatus = "status"
+          , routePath = "route_path"
+          , routeTotalFee = "total_fee"
+          , routeNetwork = "network"
+          , routeCreatedAt = "created_at"
+          , routeUpdatedAt = "updated_at"
+          }
+    }
+
+-- | Individual hops within a payment route
+data RouteHop f = RouteHop
+  { hopId :: Column f Text
+  , hopRouteId :: Column f Text
+  , hopIndex :: Column f Int32
+  , hopHeadId :: Column f Text
+  , hopBridgeAddress :: Column f Text
+  , hopHtlcStatus :: Column f Text
+  , hopHtlcTxHash :: Column f (Maybe Text)
+  , hopSecretHash :: Column f Text
+  , hopTimeoutSlot :: Column f Int64
+  , hopFeeLovelace :: Column f Int64
+  , hopLockedAt :: Column f (Maybe UTCTime)
+  , hopClaimedAt :: Column f (Maybe UTCTime)
+  }
+  deriving stock (Generic)
+  deriving anyclass (Rel8able)
+
+deriving stock instance Show (RouteHop Identity)
+deriving stock instance Eq (RouteHop Identity)
+
+routeHopSchema :: TableSchema (RouteHop Name)
+routeHopSchema =
+  TableSchema
+    { name = "route_hops"
+    , columns =
+        RouteHop
+          { hopId = "hop_id"
+          , hopRouteId = "route_id"
+          , hopIndex = "hop_index"
+          , hopHeadId = "head_id"
+          , hopBridgeAddress = "bridge_address"
+          , hopHtlcStatus = "htlc_status"
+          , hopHtlcTxHash = "htlc_tx_hash"
+          , hopSecretHash = "secret_hash"
+          , hopTimeoutSlot = "timeout_slot"
+          , hopFeeLovelace = "fee_lovelace"
+          , hopLockedAt = "locked_at"
+          , hopClaimedAt = "claimed_at"
           }
     }
 

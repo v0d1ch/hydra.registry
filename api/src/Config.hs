@@ -14,6 +14,7 @@ data AppConfig = AppConfig
   , staticDir :: FilePath
   , explorerUrl :: Text
   , explorerPollIntervalSeconds :: Int
+  , htlcScriptHash :: Maybe Text
   }
   deriving stock (Show, Eq)
 
@@ -27,6 +28,7 @@ defaultConfig =
     , staticDir = "./website/dist"
     , explorerUrl = "https://explorer.hydra.family"
     , explorerPollIntervalSeconds = 120
+    , htlcScriptHash = Nothing
     }
 
 loadConfig :: IO AppConfig
@@ -38,6 +40,7 @@ loadConfig = do
   staticDirPath <- lookupEnvString "HYDRA_STATIC_DIR" defaultConfig.staticDir
   explorerUrlVal <- lookupEnvText "HYDRA_EXPLORER_URL" defaultConfig.explorerUrl
   explorerPoll <- lookupEnvRead "HYDRA_EXPLORER_POLL_INTERVAL" defaultConfig.explorerPollIntervalSeconds
+  htlcHash <- lookupEnvMaybe "HYDRA_HTLC_SCRIPT_HASH"
   pure
     AppConfig
       { dbConnStr = dbConn
@@ -47,6 +50,7 @@ loadConfig = do
       , staticDir = staticDirPath
       , explorerUrl = explorerUrlVal
       , explorerPollIntervalSeconds = explorerPoll
+      , htlcScriptHash = htlcHash
       }
 
 lookupEnvText :: String -> Text -> IO Text
@@ -63,3 +67,8 @@ lookupEnvString :: String -> String -> IO String
 lookupEnvString key def = do
   mVal <- lookupEnv key
   pure $ fromMaybe def mVal
+
+lookupEnvMaybe :: String -> IO (Maybe Text)
+lookupEnvMaybe key = do
+  mVal <- lookupEnv key
+  pure $ T.pack <$> mVal

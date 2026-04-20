@@ -1,6 +1,7 @@
 module Api.Types where
 
 import Data.Aeson
+import Data.Int (Int64)
 import Data.Map.Strict (Map)
 import Data.Text (Text)
 import Data.Time (UTCTime)
@@ -10,6 +11,8 @@ import GHC.Generics (Generic)
 data RegisterHead = RegisterHead
   { host :: Text
   , port :: Int
+  , bridge :: Maybe Bool
+  , feeLovelace :: Maybe Int
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -209,3 +212,106 @@ instance ToJSON ErrorResponse where
 instance FromJSON ErrorResponse where
   parseJSON = withObject "ErrorResponse" $ \v ->
     ErrorResponse <$> v .: "error"
+
+-- ─── Participant types ───
+
+-- | Head info for a participant's address lookup
+data ParticipantHeadInfo = ParticipantHeadInfo
+  { headId :: Text
+  , address :: Text
+  , vkey :: Maybe Text
+  , onChainId :: Maybe Text
+  , committedLovelace :: Int64
+  , committedTxRef :: Maybe Text
+  , headStatus :: Text
+  , network :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- ─── Relay types ───
+
+-- | Create invoice request
+data CreateInvoiceRequest = CreateInvoiceRequest
+  { receiverAddress :: Text
+  , paymentHash :: Text
+  , amountLovelace :: Int64
+  , memo :: Maybe Text
+  , expiresInSeconds :: Maybe Int
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Invoice response
+data InvoiceResponse = InvoiceResponse
+  { invoiceId :: Text
+  , receiverAddress :: Text
+  , paymentHash :: Text
+  , amountLovelace :: Int64
+  , memo :: Maybe Text
+  , status :: Text
+  , expiresAt :: UTCTime
+  , createdAt :: UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Find routes request
+data FindRoutesRequest = FindRoutesRequest
+  { invoiceId :: Text
+  , senderAddress :: Text
+  , network :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | A single route option
+data RouteResponse = RouteResponse
+  { routeId :: Text
+  , hops :: [RouteHopResponse]
+  , totalFee :: Int64
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | A hop in a route response
+data RouteHopResponse = RouteHopResponse
+  { headId :: Text
+  , bridgeAddress :: Text
+  , fee :: Int64
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Payment status response (with per-hop details)
+data PaymentStatusResponse = PaymentStatusResponse
+  { routeId :: Text
+  , invoiceId :: Text
+  , senderAddress :: Text
+  , receiverAddress :: Text
+  , amountLovelace :: Int64
+  , status :: Text
+  , totalFee :: Int64
+  , network :: Text
+  , hops :: [HopStatusResponse]
+  , createdAt :: UTCTime
+  , updatedAt :: UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Individual hop status in a payment
+data HopStatusResponse = HopStatusResponse
+  { hopIndex :: Int
+  , headId :: Text
+  , bridgeAddress :: Text
+  , htlcStatus :: Text
+  , htlcTxHash :: Maybe Text
+  , secretHash :: Text
+  , timeoutSlot :: Int64
+  , fee :: Int64
+  , lockedAt :: Maybe UTCTime
+  , claimedAt :: Maybe UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)

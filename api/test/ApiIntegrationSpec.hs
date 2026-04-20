@@ -9,6 +9,7 @@ import Hydra.Client (HydraEvent)
 import Logging (newLogger)
 import Logging qualified
 import Metrics (newMetrics)
+import Relay.Graph qualified as Graph
 import Network.HTTP.Types
 import Network.Wai (Application)
 import Servant (serve)
@@ -71,7 +72,7 @@ spec = with makeTestApp $ describe "API (integration)" $ do
 
   describe "POST /api/v1/heads/register" $ do
     it "returns 400 for unreachable host" $ do
-      let body = encode $ RegisterHead "unreachable-host.invalid" 9999
+      let body = encode $ RegisterHead "unreachable-host.invalid" 9999 Nothing Nothing
       request methodPost "/api/v1/heads/register" [("Content-Type", "application/json")] body
         `shouldRespondWith` 400
 
@@ -97,6 +98,7 @@ makeTestApp = do
     eventQueue <- newTQueueIO @HydraEvent
     metrics <- newMetrics
     addrCache <- newCache 30
+    relayGraphVar <- newTVarIO Graph.emptyGraph
     let logger = newLogger Logging.Info
         env =
           AppEnv
@@ -106,5 +108,7 @@ makeTestApp = do
             , metrics = metrics
             , addressCache = addrCache
             , staticDir = "./website/dist"
+            , relayGraph = relayGraphVar
+            , htlcScriptHash = Nothing
             }
     pure $ serve api (server env)

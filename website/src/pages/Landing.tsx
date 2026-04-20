@@ -122,7 +122,7 @@ export default function Landing() {
           animate={{ opacity: 1 }}
           transition={{ delay: 3.2, duration: 0.8 }}
         >
-          Index Hydra heads. Serve wallet-compatible APIs. Bridge L1 and L2.
+          Index Hydra heads. Serve wallet-compatible APIs. Relay cross-head payments.
         </motion.div>
 
         <motion.div
@@ -135,14 +135,9 @@ export default function Landing() {
             <span className="btn-text">Register a Head</span>
             <span className="btn-shine" />
           </Link>
-          <a
-            href="https://github.com/v0d1ch/hydra.registry"
-            className="btn btn-secondary"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            View on GitHub
-          </a>
+          <Link to="/explorer" className="btn btn-secondary">
+            Explore Heads
+          </Link>
         </motion.div>
 
         <motion.div
@@ -183,6 +178,11 @@ export default function Landing() {
               title: 'Bridge',
               desc: "Bridges the gap between Hydra's off-chain state and Cardano wallets, making L2 balances visible alongside L1 funds.",
             },
+            {
+              icon: ' > ',
+              title: 'Relay',
+              desc: 'Routes payments between Hydra heads via HTLC contracts. Bridge operators earn fees for relaying funds across the network.',
+            },
           ].map((card, i) => (
             <motion.div key={card.title} className="about-card glow-card" variants={cardVariants} custom={i + 1}>
               <div className="about-icon mono-icon">{card.icon}</div>
@@ -217,6 +217,51 @@ export default function Landing() {
               <h3>{step.title}</h3>
               <p>{step.desc}</p>
               <div className="step-line" />
+            </motion.div>
+          ))}
+        </div>
+      </motion.section>
+
+      {/* Payment Relay */}
+      <motion.section
+        className="section"
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, margin: '-100px' }}
+        variants={staggerContainer}
+      >
+        <motion.h2 className="section-title" variants={cardVariants} custom={0}>
+          Cross-Head Payment Relay
+        </motion.h2>
+        <div className="about-grid">
+          {[
+            {
+              icon: '#',
+              title: 'Create Invoice',
+              desc: 'The receiver generates a secret, hashes it, and creates an invoice. The hash locks funds along the route.',
+              link: '/invoice',
+              linkText: 'Create Invoice',
+            },
+            {
+              icon: '~',
+              title: 'Find Route',
+              desc: 'Dijkstra pathfinding finds the cheapest path through bridge operators who have HTLC contracts committed.',
+              link: '/routes',
+              linkText: 'Find Routes',
+            },
+            {
+              icon: '!',
+              title: 'Execute & Track',
+              desc: 'HTLC contracts lock funds hop-by-hop. Reveal the secret to claim. Track every hop in real-time.',
+              link: '/routes',
+              linkText: 'Get Started',
+            },
+          ].map((card, i) => (
+            <motion.div key={card.title} className="about-card glow-card" variants={cardVariants} custom={i + 1}>
+              <div className="about-icon mono-icon">{card.icon}</div>
+              <h3>{card.title}</h3>
+              <p>{card.desc}</p>
+              <Link to={card.link} className="card-link">{card.linkText}</Link>
             </motion.div>
           ))}
         </div>

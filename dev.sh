@@ -69,6 +69,12 @@ start_postgres() {
   else
     log "Database $DB_NAME exists"
   fi
+
+  # Also create test database so `cabal test` works
+  if ! psql -h "$PGHOST" -lqt 2>/dev/null | grep -qw "${DB_NAME}_test"; then
+    log "Creating test database ${DB_NAME}_test"
+    createdb -h "$PGHOST" "${DB_NAME}_test"
+  fi
 }
 
 # ── Backend ─────────────────────────────────────────────────────────
