@@ -117,7 +117,15 @@ website/                      React frontend (Vite + TypeScript)
 
 See [RUN.md](RUN.md) for detailed setup and development instructions.
 
-Quick version:
+Quick version — start everything with one command:
+
+```bash
+./dev.sh
+```
+
+This starts PostgreSQL, the Haskell backend, and the Vite frontend. It auto-enters the Nix dev shell if needed.
+
+Or manually:
 
 ```bash
 nix develop                    # Enter dev shell (GHC 9.10, Node, PostgreSQL)

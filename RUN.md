@@ -6,7 +6,23 @@
 - PostgreSQL (provided by the Nix dev shell, but you need a running instance)
 - Node.js 18+ (provided by Nix dev shell)
 
-## Development setup
+## Quick start
+
+Run the all-in-one dev script from the project root:
+
+```bash
+./dev.sh
+```
+
+This handles everything: enters the Nix dev shell (if not already in one), starts PostgreSQL, builds and runs the backend on `:8080`, and starts the Vite frontend on `:5173`. Press Ctrl+C to stop all services.
+
+You can override defaults with environment variables:
+
+```bash
+PGDATA=/my/pgdata HYDRA_HTTP_PORT=3000 ./dev.sh
+```
+
+## Manual setup
 
 ### 1. Enter the development shell
 
