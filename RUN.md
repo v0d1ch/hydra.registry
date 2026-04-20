@@ -157,7 +157,7 @@ All configuration is via environment variables with sensible defaults:
 Example:
 
 ```bash
-HYDRA_DB_CONN_STR="host=localhost port=5432 dbname=hydra_registry user=myuser password=secret" \
+HYDRA_DB_CONN_STR="host=localhost port=5432 dbname=hydra_registry user=myuser password=<YOUR_PASSWORD>" \
 HYDRA_HTTP_PORT=3000 \
 HYDRA_HTLC_SCRIPT_HASH="abc123..." \
 cabal run hydra-registry-api
