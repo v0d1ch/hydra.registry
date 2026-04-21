@@ -38,6 +38,7 @@ library
     Explorer.Members
     Explorer.Sidecar
     Hydra.Client
+    Hydra.Deposit
     Indexer
     Logging
     Metrics
@@ -47,7 +48,9 @@ library
     , base >= 4.20 && < 5
     , aeson
     , async
+    , base16-bytestring
     , bytestring
+    , cborg
     , containers
     , hasql
     , hasql-pool

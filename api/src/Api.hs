@@ -22,6 +22,7 @@ import Db qualified
 import Db.Schema (ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraEvent (..))
+import Hydra.Deposit qualified as Deposit
 import Indexer qualified
 import Logging (Logger)
 import Metrics (Metrics, renderMetrics)
@@ -39,6 +40,7 @@ import Servant
 type ApiV1Routes =
   "health" :> Get '[JSON] HealthResponse
     :<|> "heads" :> "register" :> ReqBody '[JSON] RegisterHead :> Post '[JSON] RegisterHeadResponse
+    :<|> "heads" :> "deposit" :> ReqBody '[JSON] DepositRequest :> Post '[JSON] DepositResponse
     :<|> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> Get '[JSON] [HeadInfo]
     :<|> "heads" :> Capture "headId" Text :> Get '[JSON] EnrichedHeadDetail
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Get '[JSON] [Text]
@@ -87,6 +89,7 @@ data AppEnv = AppEnv
   , staticDir :: FilePath
   , relayGraph :: TVar Graph.RelayGraph
   , htlcScriptHash :: Maybe Text
+  , htlcScriptCbor :: Maybe Text
   }
 
 -- | Create the Servant server
@@ -103,6 +106,7 @@ apiV1Server :: AppEnv -> Server ApiV1Routes
 apiV1Server env =
   handleHealth env.pool
     :<|> handleRegister env.logger env.pool env.eventQueue
+    :<|> handleDeposit env.htlcScriptCbor
     :<|> handleListHeads env.pool
     :<|> handleHeadDetail env.pool
     :<|> handleHeadAddresses env.pool
@@ -519,6 +523,31 @@ enrichParticipant pool p = do
       , headStatus = status'
       , network = network'
       }
+
+-- ─── Deposit handler ───
+
+-- | POST /api/v1/heads/deposit
+handleDeposit :: Maybe Text -> DepositRequest -> Handler DepositResponse
+handleDeposit mHtlcCbor req = do
+  -- Validate network
+  when (req.network /= "Preview" && req.network /= "Preprod") $
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "network must be 'Preview' or 'Preprod'"}
+  -- Get HTLC script CBOR
+  htlcCbor <- case mHtlcCbor of
+    Nothing ->
+      throwError $ err500{errBody = Aeson.encode $ ErrorResponse "HTLC script CBOR not configured"}
+    Just c -> pure c
+  -- Call the deposit flow
+  result <- liftIO $ Deposit.requestDeposit req.host req.port req.network htlcCbor
+  case result of
+    Left err ->
+      throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
+    Right txCbor ->
+      pure
+        DepositResponse
+          { depositTxCbor = txCbor
+          , message = "Deposit transaction created and patched with always-true witness"
+          }
 
 -- ─── Relay handlers ───
 

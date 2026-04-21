@@ -137,7 +137,9 @@ window.publishScript = async function () {
     const scriptHash = plutusScript.hash();
     console.log('Script hash:', bytesToHex(scriptHash.to_bytes()));
 
-    // Build output with reference script using builder (map format for Babbage+)
+    console.log('HTLC script hash:', bytesToHex(scriptHash.to_bytes()));
+
+    // Build output with reference script at the script address (map format for Babbage+)
     const scriptRef = CSL.ScriptRef.new_plutus_script(plutusScript);
     const output = CSL.TransactionOutputBuilder.new()
       .with_address(addr)
@@ -160,6 +162,10 @@ window.publishScript = async function () {
       .max_value_size(parseInt(pp.max_val_size))
       .max_tx_size(parseInt(pp.max_tx_size))
       .coins_per_utxo_byte(CSL.BigNum.from_str(pp.coins_per_utxo_size))
+      .ref_script_coins_per_byte(CSL.UnitInterval.new(
+        CSL.BigNum.from_str(pp.min_fee_ref_script_cost_per_byte.toString()),
+        CSL.BigNum.from_str('1'),
+      ))
       .build();
 
     const txBuilder = CSL.TransactionBuilder.new(txBuilderConfig);
@@ -182,7 +188,7 @@ window.publishScript = async function () {
     const txHash = await blockfrostPost('/tx/submit', signedTxBytes);
 
     setStatus('publish-status',
-      `Reference script published!\n\nTx hash: ${txHash}\nOutput: ${txHash}#0\nScript hash: ${bytesToHex(scriptHash.to_bytes())}\n\nSave this for your Register page REFERENCE_UTXOS config.\nWait for confirmation before using.`,
+      `Reference script published!\n\nTx hash: ${txHash}\nOutput: ${txHash}#0\nHolder address: ${holderAddr.to_bech32()}\nScript hash: ${bytesToHex(scriptHash.to_bytes())}\n\nSave this for your Register page REFERENCE_UTXOS config.\nWait for confirmation before using.`,
       'success');
   } catch (err) {
     setStatus('publish-status', `Failed: ${err.message || err}`, 'error');
@@ -227,6 +233,10 @@ window.sendTx = async function () {
       .max_value_size(parseInt(pp.max_val_size))
       .max_tx_size(parseInt(pp.max_tx_size))
       .coins_per_utxo_byte(CSL.BigNum.from_str(pp.coins_per_utxo_size))
+      .ref_script_coins_per_byte(CSL.UnitInterval.new(
+        CSL.BigNum.from_str(pp.min_fee_ref_script_cost_per_byte.toString()),
+        CSL.BigNum.from_str('1'),
+      ))
       .build();
 
     const txBuilder = CSL.TransactionBuilder.new(txBuilderConfig);

@@ -57,11 +57,15 @@ registerHead logger pool eventQueue hostAddr portNum isBridge bridgeFee = do
   case result of
     Left err -> pure $ Left err
     Right evt@HeadGreetings{greeterHeadId, greeterHeadStatus, greeterUtxos} -> do
-      Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus isBridge bridgeFee
-      Db.replaceUtxos pool greeterHeadId greeterUtxos
-      connectToHead logger greeterHeadId hostAddr portNum eventQueue
-      logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr), ("bridge", toJSON isBridge)]
-      pure $ Right evt
+      existing <- Db.getHead pool greeterHeadId
+      case existing of
+        Just _ -> pure $ Left $ "Head " <> greeterHeadId <> " is already registered"
+        Nothing -> do
+          Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus isBridge bridgeFee
+          Db.replaceUtxos pool greeterHeadId greeterUtxos
+          connectToHead logger greeterHeadId hostAddr portNum eventQueue
+          logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr), ("bridge", toJSON isBridge)]
+          pure $ Right evt
     Right _ -> pure $ Left "Unexpected event during validation"
 
 -- | Reconnect to all registered heads on startup

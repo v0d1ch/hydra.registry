@@ -16,6 +16,7 @@ import Hasql.Pool qualified as Pool
 import Hasql.Pool.Config qualified as Pool.Config
 import Hasql.Session qualified as Session
 import Hydra.Client (HydraUtxoEntry (..))
+import Hydra.Deposit qualified as Deposit
 import Rel8 hiding (null)
 
 -- | Create the database pool
@@ -359,7 +360,7 @@ replaceUtxos pool hid entries = do
       , utxoAssets = lit (assetsToJson entry.nativeAssets)
       , utxoDatumHash = lit entry.datumHash
       , utxoInlineDatum = lit entry.inlineDatum
-      , utxoReferenceScriptHash = lit Nothing
+      , utxoReferenceScriptHash = lit (entry.referenceScript >>= Deposit.extractReferenceScriptHash)
       , utxoUpdatedAt = lit now
       }
 

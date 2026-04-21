@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -m  # enable job control so each background job gets its own process group
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
@@ -17,8 +18,9 @@ PIDS=()
 cleanup() {
   echo ""
   echo "==> Shutting down..."
+  # Kill entire process group of each child (catches piped processes too)
   for pid in "${PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
+    kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
   if pg_ctl -D "$PGDATA" status &>/dev/null; then
@@ -27,7 +29,8 @@ cleanup() {
   fi
   echo "==> Done."
 }
-trap cleanup EXIT INT TERM
+trap 'cleanup; exit 130' INT
+trap cleanup EXIT TERM
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -45,6 +48,7 @@ run_with_prefix() {
   local prefix="$1"; shift
   local color="$1"; shift
   "$@" 2>&1 | sed -u "s/^/${color}[${prefix}]${NC} /" &
+  # Store both the sed PID and the background job's process group
   PIDS+=($!)
 }
 

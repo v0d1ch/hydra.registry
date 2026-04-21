@@ -122,6 +122,19 @@ export interface HopStatusResponse {
   claimedAt: string | null
 }
 
+// ─── Deposit types ───
+
+export interface DepositRequest {
+  host: string
+  port: number
+  network: string
+}
+
+export interface DepositResponse {
+  depositTxCbor: string
+  message: string
+}
+
 // ─── Request helper ───
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -159,6 +172,15 @@ export function registerHead(
   return request<RegisterHeadResponse>('/api/v1/heads/register', {
     method: 'POST',
     body: JSON.stringify({ host, port, bridge, feeLovelace }),
+  })
+}
+
+// ─── Deposit ───
+
+export function requestDeposit(req: DepositRequest): Promise<DepositResponse> {
+  return request<DepositResponse>('/api/v1/heads/deposit', {
+    method: 'POST',
+    body: JSON.stringify(req),
   })
 }
 
