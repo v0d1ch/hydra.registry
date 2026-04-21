@@ -104,7 +104,7 @@ curl -X POST http://localhost:8080/api/v1/heads/register \
 
 ### 6. Create a payment invoice
 
-The receiver creates an invoice with a SHA-256 hash of their secret:
+The receiver creates an invoice with a BLAKE2b-256 hash of their secret:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/relay/invoices \

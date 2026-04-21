@@ -12,6 +12,7 @@ import Data.Aeson.KeyMap qualified as KM
 import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Time (addUTCTime, getCurrentTime)
@@ -109,8 +110,8 @@ apiV1Server env =
     :<|> handleAdminDeleteHead env.pool
     :<|> handleMetrics env.metrics
     :<|> handleStats env.pool
-    :<|> handleListExplorerHeads env.pool
-    :<|> handleExplorerHeadDetail env.pool
+    :<|> handleListExplorerHeads env.pool env.htlcScriptHash
+    :<|> handleExplorerHeadDetail env.pool env.htlcScriptHash
     :<|> handleAddressHeads env.pool
     :<|> handleCreateInvoice env.pool
     :<|> handleGetInvoice env.pool
@@ -399,29 +400,37 @@ assetMapToAmounts assets =
 -- ─── Explorer head handlers ───
 
 -- | GET /api/v1/explorer/heads
-handleListExplorerHeads :: Pool -> Maybe Int -> Maybe Int -> Maybe Text -> Maybe Text -> Handler [ExplorerHeadInfo]
-handleListExplorerHeads pool mCount mPage mStatus mNetwork = do
+handleListExplorerHeads :: Pool -> Maybe Text -> Maybe Int -> Maybe Int -> Maybe Text -> Maybe Text -> Handler [ExplorerHeadInfo]
+handleListExplorerHeads pool mHtlcHash mCount mPage mStatus mNetwork = do
   let count = min 100 $ maybe 100 (max 1) mCount
       page = maybe 1 (max 1) mPage
   explorerHeads <- liftIO $ Db.getExplorerHeadsPaginated pool count page mStatus mNetwork
   registeredHeads <- liftIO $ Db.getAllHeads pool
+  htlcIds <- liftIO $ getHtlcHeadIds pool mHtlcHash
   let registeredIds = Map.fromList [(h.headId, ()) | h <- registeredHeads]
-  pure $ map (explorerHeadToInfo registeredIds) explorerHeads
+  pure $ map (explorerHeadToInfo registeredIds htlcIds) explorerHeads
 
 -- | GET /api/v1/explorer/heads/:headId
-handleExplorerHeadDetail :: Pool -> Text -> Handler ExplorerHeadInfo
-handleExplorerHeadDetail pool hid = do
+handleExplorerHeadDetail :: Pool -> Maybe Text -> Text -> Handler ExplorerHeadInfo
+handleExplorerHeadDetail pool mHtlcHash hid = do
   mExplorer <- liftIO $ Db.getExplorerHead pool hid
   case mExplorer of
     Nothing ->
       throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Explorer head not found"}
     Just eh -> do
       mRegistered <- liftIO $ Db.getHead pool hid
-      pure $ explorerHeadToInfo (maybe Map.empty (\h -> Map.singleton h.headId ()) mRegistered) eh
+      htlcIds <- liftIO $ getHtlcHeadIds pool mHtlcHash
+      let regIds = maybe Map.empty (\h -> Map.singleton h.headId ()) mRegistered
+      pure $ explorerHeadToInfo regIds htlcIds eh
+
+-- | Get the set of head IDs that contain the HTLC script
+getHtlcHeadIds :: Pool -> Maybe Text -> IO (Set.Set Text)
+getHtlcHeadIds _ Nothing = pure Set.empty
+getHtlcHeadIds pool (Just scriptHash) = Set.fromList <$> Db.getHeadsWithScript pool scriptHash
 
 -- | Convert an ExplorerHead DB row to API response
-explorerHeadToInfo :: Map.Map Text () -> ExplorerHead Identity -> ExplorerHeadInfo
-explorerHeadToInfo registeredIds eh =
+explorerHeadToInfo :: Map.Map Text () -> Set.Set Text -> ExplorerHead Identity -> ExplorerHeadInfo
+explorerHeadToInfo registeredIds htlcIds eh =
   ExplorerHeadInfo
     { headId = eh.explorerHeadId
     , network = eh.explorerNetwork
@@ -439,6 +448,7 @@ explorerHeadToInfo registeredIds eh =
     , firstSeenAt = eh.explorerFirstSeenAt
     , lastUpdatedAt = eh.explorerLastUpdatedAt
     , registered = Map.member eh.explorerHeadId registeredIds
+    , htlcEnabled = Set.member eh.explorerHeadId htlcIds
     }
 
 -- | Convert an ExplorerHead to the on-chain metadata subset

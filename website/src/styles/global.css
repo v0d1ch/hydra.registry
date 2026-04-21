@@ -3,9 +3,9 @@
 :root {
   --bg: #0a0a0f;
   --bg-alt: #06060a;
-  --accent: #00d4aa;
-  --accent-dim: rgba(0, 212, 170, 0.15);
-  --accent-glow: rgba(0, 212, 170, 0.3);
+  --accent: #4d8bff;
+  --accent-dim: rgba(77, 139, 255, 0.15);
+  --accent-glow: rgba(77, 139, 255, 0.3);
   --text: #e0e0e0;
   --text-muted: #888;
   --surface: #12121a;
@@ -750,6 +750,152 @@ code.result-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ─── HTLC prerequisite card ─── */
+
+.prerequisite-card {
+  margin: 1.5rem 0;
+}
+
+.prerequisite-card h3 {
+  font-size: 1rem;
+  margin-bottom: 1rem;
+  color: var(--text);
+}
+
+code.result-value.result-value-mono {
+  font-family: 'Space Grotesk', monospace;
+  word-break: break-all;
+  white-space: normal;
+  max-width: none;
+  overflow: visible;
+  text-overflow: unset;
+}
+
+/* ─── Reference UTxO table ─── */
+
+.ref-utxo-table {
+  margin-top: 2rem;
+}
+
+.ref-utxo-table h3 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
+.utxo-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+
+.utxo-table th,
+.utxo-table td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.utxo-table th {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+
+.utxo-table td code {
+  font-family: 'Space Grotesk', monospace;
+  font-size: 0.8rem;
+  background: var(--bg);
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.register-network-selector {
+  margin-top: 1.25rem;
+}
+
+/* ─── Network commit blocks ─── */
+
+.network-commit-block {
+  margin-top: 1rem;
+}
+
+.network-commit-label {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  background: var(--accent-dim);
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  margin-bottom: 0.4rem;
+}
+
+/* ─── Setup steps ─── */
+
+.setup-steps {
+  margin-top: 2rem;
+}
+
+.setup-steps h3 {
+  font-size: 1.1rem;
+  margin-bottom: 1.25rem;
+  color: var(--text);
+}
+
+.setup-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 1.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.setup-step strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
+.setup-step p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+  line-height: 1.5;
+}
+
+.setup-step code {
+  background: var(--bg);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+
+.code-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin-top: 0.75rem;
+  font-family: 'Space Grotesk', monospace;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  overflow-x: auto;
+  color: var(--text-muted);
+  white-space: pre;
 }
 
 /* ─── Next steps ─── */
@@ -1573,10 +1719,124 @@ code.result-value {
   font-size: 0.75rem;
 }
 
+.badge-htlc {
+  color: #f0c040 !important;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
 .explorer-empty {
   text-align: center;
   color: var(--text-muted);
   padding: 3rem;
+}
+
+/* ─── Balance page ─── */
+
+.balance-summary {
+  text-align: center;
+  padding: 2rem;
+  margin: 2rem 0;
+}
+
+.balance-total-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+}
+
+.balance-total-amount {
+  font-family: var(--font-heading);
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.balance-total-sub {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.balance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+  margin-top: 1.5rem;
+}
+
+.balance-card {
+  padding: 1.25rem;
+}
+
+.balance-amount {
+  font-family: var(--font-heading);
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0.75rem 0 0.5rem;
+}
+
+.balance-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.balance-tokens {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.balance-token-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+.balance-empty-hint {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+}
+
+.balance-source-live {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--success);
+  background: rgba(0, 212, 170, 0.15);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.balance-source-committed {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #f0c040;
+  background: rgba(240, 192, 64, 0.15);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.balance-token-unit {
+  font-family: 'Space Grotesk', monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
 }
 
 .pagination {

@@ -7,42 +7,6 @@ import { getStats, type StatsResponse } from '../api/client'
 
 const title = 'hydra.registry'
 
-const steps = [
-  {
-    num: '01',
-    title: 'Register your Head',
-    desc: 'Point hydra.registry at your running Hydra node. We connect via WebSocket and start indexing.',
-    icon: '[ ]',
-  },
-  {
-    num: '02',
-    title: 'Indexer connects',
-    desc: 'We listen for SnapshotConfirmed events and index every UTxO in real-time across all registered heads.',
-    icon: '</>',
-  },
-  {
-    num: '03',
-    title: 'Wallets query',
-    desc: 'Lace, Nami, and Yoroi query our Blockfrost-compatible API as if it were a regular L1 provider.',
-    icon: '{ }',
-  },
-  {
-    num: '04',
-    title: 'L2 balances appear',
-    desc: 'Users see their Hydra funds directly in their favorite wallet. No custom UI needed.',
-    icon: ' $ ',
-  },
-]
-
-const wallets = [
-  { name: 'Lace', format: 'Blockfrost', status: 'supported' },
-  { name: 'Nami', format: 'Blockfrost', status: 'supported' },
-  { name: 'Yoroi', format: 'Yoroi API', status: 'supported' },
-  { name: 'Flint', format: 'Blockfrost', status: 'likely' },
-  { name: 'Eternl', format: 'Proprietary', status: 'planned' },
-  { name: 'VESPR', format: 'Proprietary', status: 'planned' },
-]
-
 const cardVariants = {
   hidden: { opacity: 0, y: 40, scale: 0.95 },
   visible: (i: number) => ({
@@ -113,7 +77,7 @@ export default function Landing() {
           transition={{ delay: 0.8, duration: 0.6 }}
         >
           <span className="tagline-prefix">&gt; </span>
-          <Typewriter text="Unified L2 state for Cardano wallets" delay={40} startDelay={1200} />
+          <Typewriter text="Pay anyone across Hydra heads" delay={40} startDelay={1200} />
         </motion.div>
 
         <motion.div
@@ -122,7 +86,7 @@ export default function Landing() {
           animate={{ opacity: 1 }}
           transition={{ delay: 3.2, duration: 0.8 }}
         >
-          Index Hydra heads. Serve wallet-compatible APIs. Relay cross-head payments.
+          The relay finds the cheapest route between Hydra heads and moves your funds via HTLC contracts.
         </motion.div>
 
         <motion.div
@@ -131,8 +95,8 @@ export default function Landing() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 3.8, duration: 0.6 }}
         >
-          <Link to="/register" className="btn btn-primary cyber-btn">
-            <span className="btn-text">Register a Head</span>
+          <Link to="/routes" className="btn btn-primary cyber-btn">
+            <span className="btn-text">Send a Payment</span>
             <span className="btn-shine" />
           </Link>
           <Link to="/explorer" className="btn btn-secondary">
@@ -150,49 +114,6 @@ export default function Landing() {
         </motion.div>
       </section>
 
-      {/* What is it */}
-      <motion.section
-        className="section"
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true, margin: '-100px' }}
-        variants={staggerContainer}
-      >
-        <motion.h2 className="section-title" variants={cardVariants} custom={0}>
-          What is hydra.registry?
-        </motion.h2>
-        <div className="about-grid">
-          {[
-            {
-              icon: '{ }',
-              title: 'Index',
-              desc: 'A standalone service that connects to Hydra heads via WebSocket, indexes every confirmed snapshot, and stores UTxO state in PostgreSQL.',
-            },
-            {
-              icon: '</>',
-              title: 'Serve',
-              desc: 'Exposes a REST API compatible with Blockfrost and Yoroi formats so existing wallets can query L2 funds without any modifications.',
-            },
-            {
-              icon: '[ ]',
-              title: 'Bridge',
-              desc: "Bridges the gap between Hydra's off-chain state and Cardano wallets, making L2 balances visible alongside L1 funds.",
-            },
-            {
-              icon: ' > ',
-              title: 'Relay',
-              desc: 'Routes payments between Hydra heads via HTLC contracts. Bridge operators earn fees for relaying funds across the network.',
-            },
-          ].map((card, i) => (
-            <motion.div key={card.title} className="about-card glow-card" variants={cardVariants} custom={i + 1}>
-              <div className="about-icon mono-icon">{card.icon}</div>
-              <h3>{card.title}</h3>
-              <p>{card.desc}</p>
-            </motion.div>
-          ))}
-        </div>
-      </motion.section>
-
       {/* How it works */}
       <motion.section
         className="section"
@@ -205,7 +126,32 @@ export default function Landing() {
           How it works
         </motion.h2>
         <div className="steps-grid">
-          {steps.map((step, i) => (
+          {[
+            {
+              num: '01',
+              icon: '#',
+              title: 'Receiver creates invoice',
+              desc: 'The receiver generates a secret offline, hashes it, and publishes an invoice with the amount and hash.',
+            },
+            {
+              num: '02',
+              icon: '~',
+              title: 'Relay finds the route',
+              desc: 'The sender enters the invoice ID. The relay discovers the cheapest path through bridge operators across heads.',
+            },
+            {
+              num: '03',
+              icon: '!',
+              title: 'HTLC locks funds',
+              desc: 'Funds are locked hop-by-hop in HTLC contracts along the route. Each bridge operator holds funds until the secret is revealed.',
+            },
+            {
+              num: '04',
+              icon: '$',
+              title: 'Secret claims payment',
+              desc: 'The receiver reveals the secret to claim their funds. Bridge operators use it to unlock their portion in sequence.',
+            },
+          ].map((step, i) => (
             <motion.div
               key={step.num}
               className="step-card glow-card"
@@ -222,7 +168,7 @@ export default function Landing() {
         </div>
       </motion.section>
 
-      {/* Payment Relay */}
+      {/* Why use it */}
       <motion.section
         className="section"
         initial="hidden"
@@ -231,30 +177,73 @@ export default function Landing() {
         variants={staggerContainer}
       >
         <motion.h2 className="section-title" variants={cardVariants} custom={0}>
-          Cross-Head Payment Relay
+          Why hydra.registry?
         </motion.h2>
         <div className="about-grid">
           {[
             {
-              icon: '#',
-              title: 'Create Invoice',
-              desc: 'The receiver generates a secret, hashes it, and creates an invoice. The hash locks funds along the route.',
-              link: '/invoice',
-              linkText: 'Create Invoice',
+              icon: '~',
+              title: 'Cheapest path',
+              desc: 'Dijkstra pathfinding weighted by bridge operator fees. Up to 3 route options so you can pick the best deal.',
             },
             {
-              icon: '~',
-              title: 'Find Route',
-              desc: 'Dijkstra pathfinding finds the cheapest path through bridge operators who have HTLC contracts committed.',
+              icon: '!',
+              title: 'Trustless',
+              desc: 'HTLC contracts guarantee atomicity. Either the full payment completes or everyone gets refunded. No middleman holds your funds.',
+            },
+            {
+              icon: '#',
+              title: 'Multi-hop',
+              desc: 'Payments can traverse multiple heads through bridge operators. Each hop adds a small fee but opens up more routes.',
+            },
+            {
+              icon: '@',
+              title: 'Wallet-ready L2 balances',
+              desc: 'Wallets like Lace and Yoroi can query Hydra head balances through our Blockfrost-compatible API. See your L2 funds alongside L1.',
+            },
+          ].map((card, i) => (
+            <motion.div key={card.title} className="about-card glow-card" variants={cardVariants} custom={i + 1}>
+              <div className="about-icon mono-icon">{card.icon}</div>
+              <h3>{card.title}</h3>
+              <p>{card.desc}</p>
+            </motion.div>
+          ))}
+        </div>
+      </motion.section>
+
+      {/* CTA */}
+      <motion.section
+        className="section"
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true, margin: '-100px' }}
+        variants={staggerContainer}
+      >
+        <motion.h2 className="section-title" variants={cardVariants} custom={0}>
+          Get started
+        </motion.h2>
+        <div className="about-grid">
+          {[
+            {
+              icon: '>',
+              title: 'Send a payment',
+              desc: 'Have an invoice ID? Find the cheapest route and pay in seconds.',
               link: '/routes',
               linkText: 'Find Routes',
             },
             {
-              icon: '!',
-              title: 'Execute & Track',
-              desc: 'HTLC contracts lock funds hop-by-hop. Reveal the secret to claim. Track every hop in real-time.',
-              link: '/routes',
-              linkText: 'Get Started',
+              icon: '<',
+              title: 'Receive a payment',
+              desc: 'Generate a secret, create an invoice, and share the ID with the sender.',
+              link: '/invoice',
+              linkText: 'Create Invoice',
+            },
+            {
+              icon: '$',
+              title: 'Earn fees as a bridge',
+              desc: 'Register your Hydra head as a bridge operator and earn fees for every payment relayed through it.',
+              link: '/register',
+              linkText: 'Register Head',
             },
           ].map((card, i) => (
             <motion.div key={card.title} className="about-card glow-card" variants={cardVariants} custom={i + 1}>
@@ -262,39 +251,6 @@ export default function Landing() {
               <h3>{card.title}</h3>
               <p>{card.desc}</p>
               <Link to={card.link} className="card-link">{card.linkText}</Link>
-            </motion.div>
-          ))}
-        </div>
-      </motion.section>
-
-      {/* Wallet compatibility */}
-      <motion.section
-        className="section"
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true, margin: '-100px' }}
-        variants={staggerContainer}
-      >
-        <motion.h2 className="section-title" variants={cardVariants} custom={0}>
-          Wallet compatibility
-        </motion.h2>
-        <div className="wallet-grid">
-          {wallets.map((w, i) => (
-            <motion.div
-              key={w.name}
-              className={`wallet-card glow-card wallet-${w.status}`}
-              variants={cardVariants}
-              custom={i + 1}
-            >
-              <h3>{w.name}</h3>
-              <span className="wallet-format">{w.format}</span>
-              <span className={`wallet-badge badge-${w.status}`}>
-                {w.status === 'supported'
-                  ? 'Supported'
-                  : w.status === 'likely'
-                    ? 'Likely compatible'
-                    : 'Planned'}
-              </span>
             </motion.div>
           ))}
         </div>
@@ -309,7 +265,7 @@ export default function Landing() {
         variants={staggerContainer}
       >
         <motion.h2 className="section-title" variants={cardVariants} custom={0}>
-          Live stats
+          Network
         </motion.h2>
         {stats ? (
           <div className="stats-grid">
@@ -318,7 +274,7 @@ export default function Landing() {
             <AnimatedCounter target={stats.totalUtxos} label="UTxOs Indexed" />
             <AnimatedCounter
               target={Object.values(stats.headsByStatus).reduce((a, b) => a + b, 0)}
-              label="Total Connections"
+              label="Active Connections"
             />
           </div>
         ) : (

@@ -1,6 +1,6 @@
 # hydra.registry
 
-Unified L2 state for Cardano wallets.
+Cross-head payment routing for Cardano Hydra.
 
 hydra.registry is an open-source service that indexes [Hydra Head](https://hydra.family) UTxO state and exposes it through wallet-compatible APIs. It bridges the gap between Hydra's off-chain L2 state and Cardano wallets, so users can see their Hydra funds directly in Lace, Nami, Yoroi, and other wallets — no custom UI needed.
 

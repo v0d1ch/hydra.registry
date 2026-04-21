@@ -107,6 +107,7 @@ spec = describe "Api.Types" $ do
               , firstSeenAt = now
               , lastUpdatedAt = now
               , registered = True
+              , htlcEnabled = False
               }
       roundtrip val `shouldBe` Just val
 

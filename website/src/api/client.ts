@@ -40,6 +40,7 @@ export interface ExplorerHeadInfo {
   firstSeenAt: string
   lastUpdatedAt: string
   registered: boolean
+  htlcEnabled: boolean
 }
 
 // ─── Participant types ───
@@ -182,10 +183,32 @@ export function getExplorerHead(headId: string): Promise<ExplorerHeadInfo> {
   return request<ExplorerHeadInfo>(`/api/v1/explorer/heads/${headId}`)
 }
 
+// ─── UTxO types (Blockfrost-compatible) ───
+
+export interface UtxoAmount {
+  unit: string
+  quantity: string
+}
+
+export interface UtxoResponse {
+  address: string
+  tx_hash: string
+  output_index: number
+  amount: UtxoAmount[]
+  data_hash: string | null
+  inline_datum: unknown | null
+  reference_script_hash: string | null
+  head_id: string
+}
+
 // ─── Participants ───
 
 export function getHeadsByAddress(address: string): Promise<ParticipantHeadInfo[]> {
   return request<ParticipantHeadInfo[]>(`/api/v1/addresses/${address}/heads`)
+}
+
+export function getAddressUtxos(address: string): Promise<UtxoResponse[]> {
+  return request<UtxoResponse[]>(`/addresses/${address}/utxos`)
 }
 
 // ─── Relay: Invoices ───

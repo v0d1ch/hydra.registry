@@ -129,6 +129,11 @@ export default function Explorer() {
                       <span className="meta-label badge-registered">Registered</span>
                     </div>
                   )}
+                  {head.htlcEnabled && (
+                    <div className="meta-row">
+                      <span className="meta-label badge-htlc">HTLC</span>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             ))}

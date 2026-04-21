@@ -167,6 +167,7 @@ data ExplorerHeadInfo = ExplorerHeadInfo
   , firstSeenAt :: UTCTime
   , lastUpdatedAt :: UTCTime
   , registered :: Bool
+  , htlcEnabled :: Bool
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

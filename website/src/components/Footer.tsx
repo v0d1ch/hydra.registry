@@ -4,7 +4,7 @@ export default function Footer() {
       <div className="footer-content">
         <div className="footer-brand">
           <span className="footer-logo">hydra.registry</span>
-          <p>Unified L2 state for Cardano wallets</p>
+          <p>Cross-head payment routing for Cardano Hydra</p>
         </div>
         <div className="footer-links">
           <div className="footer-col">

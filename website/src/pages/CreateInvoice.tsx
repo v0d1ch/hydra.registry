@@ -58,7 +58,7 @@ export default function CreateInvoice() {
         <h1 className="section-title">Create Payment Invoice</h1>
         <p className="register-desc">
           Generate an invoice to receive a cross-head payment via HTLC relay.
-          You provide a payment hash &mdash; the SHA-256 of a secret that only you know.
+          You provide a payment hash &mdash; the BLAKE2b-256 hash of a secret that only you know.
           The secret never touches this service.
         </p>
 
@@ -79,14 +79,14 @@ export default function CreateInvoice() {
             <input
               id="paymentHash"
               type="text"
-              placeholder="64-character hex (SHA-256 of your secret)"
+              placeholder="64-character hex (BLAKE2b-256 of your secret)"
               value={paymentHash}
               onChange={e => setPaymentHash(e.target.value)}
               required
             />
             <span className="form-hint">
               Generate a secret offline (e.g. <code>openssl rand -hex 32</code>),
-              then hash it (<code>echo -n SECRET | sha256sum</code>).
+              then hash it (<code>echo -n SECRET | b2sum -l 256</code>).
               Paste only the hash here.
             </span>
           </div>
@@ -183,7 +183,7 @@ export default function CreateInvoice() {
         <div className="next-steps">
           <div className="next-step">
             <span className="next-num">1</span>
-            <p>Generate a secret offline and compute its SHA-256 hash. Create an invoice with the hash &mdash; the secret never leaves your machine.</p>
+            <p>Generate a secret offline and compute its BLAKE2b-256 hash. Create an invoice with the hash &mdash; the secret never leaves your machine.</p>
           </div>
           <div className="next-step">
             <span className="next-num">2</span>

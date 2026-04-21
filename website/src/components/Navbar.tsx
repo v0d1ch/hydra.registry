@@ -49,9 +49,7 @@ export default function Navbar() {
           <Link to="/register" className={isActive('/register')}>Register</Link>
           <Link to="/invoice" className={isActive('/invoice')}>Invoice</Link>
           <Link to="/routes" className={isActive('/routes')}>Routes</Link>
-          <a href="https://github.com/v0d1ch/hydra.registry" target="_blank" rel="noopener noreferrer">
-            GitHub
-          </a>
+          <Link to="/balance" className={isActive('/balance')}>Balance</Link>
           {showNetworkSelector && (
             <div className="network-selector">
               {networks.map(n => (
@@ -106,9 +104,9 @@ export default function Navbar() {
               <Link to="/routes" className={isActive('/routes')}>
                 <span className="mobile-link-prefix">&gt; </span>Routes
               </Link>
-              <a href="https://github.com/v0d1ch/hydra.registry" target="_blank" rel="noopener noreferrer">
-                <span className="mobile-link-prefix">&gt; </span>GitHub
-              </a>
+              <Link to="/balance" className={isActive('/balance')}>
+                <span className="mobile-link-prefix">&gt; </span>Balance
+              </Link>
               {showNetworkSelector && (
                 <div className="mobile-network-selector">
                   {networks.map(n => (
