@@ -5,6 +5,7 @@ import {
   getHeadsByAddress,
   getAddressUtxos,
   getExplorerHead,
+  getHeadParticipants,
   type ParticipantHeadInfo,
   type UtxoResponse,
   type ExplorerHeadInfo,
@@ -83,6 +84,7 @@ export default function Balance() {
   const [loading, setLoading] = useState(false)
   const [balances, setBalances] = useState<HeadBalance[] | null>(null)
   const [headDetail, setHeadDetail] = useState<ExplorerHeadInfo | null>(null)
+  const [headParticipants, setHeadParticipants] = useState<ParticipantHeadInfo[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const isHeadId = (input: string) => /^[0-9a-fA-F]{56}$/.test(input.trim())
@@ -95,12 +97,17 @@ export default function Balance() {
     setError(null)
     setBalances(null)
     setHeadDetail(null)
+    setHeadParticipants([])
 
     try {
       if (isHeadId(input)) {
-        // Head ID lookup — show the head info directly
-        const found = await getExplorerHead(input).catch(() => null)
+        // Head ID lookup — show head info + participants
+        const [found, participants] = await Promise.all([
+          getExplorerHead(input).catch(() => null),
+          getHeadParticipants(input).catch(() => [] as ParticipantHeadInfo[]),
+        ])
         setHeadDetail(found)
+        setHeadParticipants(participants)
         setBalances([])
       } else {
         // Address lookup
@@ -222,6 +229,31 @@ export default function Balance() {
                   <span className="result-value">{new Date(headDetail.lastUpdatedAt).toLocaleString()}</span>
                 </div>
               </div>
+
+              {headParticipants.length > 0 && (
+                <div className="head-participants-section">
+                  <div className="head-tvl">
+                    <span className="head-tvl-label">Total Value Locked</span>
+                    <span className="head-tvl-amount">
+                      {(headParticipants.reduce((sum, p) => sum + p.committedLovelace, 0) / 1_000_000)
+                        .toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} ADA
+                    </span>
+                  </div>
+                  <h4 className="head-participants-title">
+                    Participants ({headParticipants.length})
+                  </h4>
+                  <div className="head-participants-list">
+                    {headParticipants.map((p, idx) => (
+                      <div key={idx} className="head-participant-row">
+                        <code className="head-participant-address">{p.address}</code>
+                        <span className="head-participant-committed">
+                          {(p.committedLovelace / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} ADA
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         )}

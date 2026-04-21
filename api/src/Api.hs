@@ -49,6 +49,7 @@ type ApiV1Routes =
     :<|> "stats" :> Get '[JSON] StatsResponse
     :<|> "explorer" :> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> QueryParam "status" Text :> QueryParam "network" Text :> Get '[JSON] [ExplorerHeadInfo]
     :<|> "explorer" :> "heads" :> Capture "headId" Text :> Get '[JSON] ExplorerHeadInfo
+    :<|> "explorer" :> "heads" :> Capture "headId" Text :> "participants" :> Get '[JSON] [ParticipantHeadInfo]
     -- Participant lookup
     :<|> "addresses" :> Capture "address" Text :> "heads" :> Get '[JSON] [ParticipantHeadInfo]
     -- Relay endpoints
@@ -112,6 +113,7 @@ apiV1Server env =
     :<|> handleStats env.pool
     :<|> handleListExplorerHeads env.pool env.htlcScriptHash
     :<|> handleExplorerHeadDetail env.pool env.htlcScriptHash
+    :<|> handleExplorerHeadParticipants env.pool
     :<|> handleAddressHeads env.pool
     :<|> handleCreateInvoice env.pool
     :<|> handleGetInvoice env.pool
@@ -422,6 +424,27 @@ handleExplorerHeadDetail pool mHtlcHash hid = do
       htlcIds <- liftIO $ getHtlcHeadIds pool mHtlcHash
       let regIds = maybe Map.empty (\h -> Map.singleton h.headId ()) mRegistered
       pure $ explorerHeadToInfo regIds htlcIds eh
+
+-- | GET /api/v1/explorer/heads/:headId/participants
+handleExplorerHeadParticipants :: Pool -> Text -> Handler [ParticipantHeadInfo]
+handleExplorerHeadParticipants pool hid = do
+  participants <- liftIO $ Db.getParticipantsForHead pool hid
+  mExplorer <- liftIO $ Db.getExplorerHead pool hid
+  let net = maybe "" (\eh -> eh.explorerNetwork) mExplorer
+      status = maybe "Unknown" (\eh -> eh.explorerStatus) mExplorer
+  pure
+    [ ParticipantHeadInfo
+        { headId = hid
+        , address = p.participantAddress
+        , vkey = p.participantVkey
+        , onChainId = p.participantOnChainId
+        , committedLovelace = fromIntegral p.participantCommittedLovelace
+        , committedTxRef = p.participantCommittedTxRef
+        , headStatus = status
+        , network = net
+        }
+    | p <- participants
+    ]
 
 -- | Get the set of head IDs that contain the HTLC script
 getHtlcHeadIds :: Pool -> Maybe Text -> IO (Set.Set Text)

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
-import { Link } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import { getExplorerHeads, type ExplorerHeadInfo } from '../api/client'
 import { useNetwork } from '../context/NetworkContext'
 
@@ -13,6 +12,24 @@ const statusColors: Record<string, string> = {
   Initializing: '#f0c040',
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <button className="copy-btn" onClick={handleCopy} title="Copy head ID">
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
 export default function Explorer() {
   const { network } = useNetwork()
   const [heads, setHeads] = useState<ExplorerHeadInfo[]>([])
@@ -20,6 +37,7 @@ export default function Explorer() {
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -29,6 +47,10 @@ export default function Explorer() {
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [page, statusFilter, network])
+
+  const toggleExpand = (headId: string) => {
+    setExpandedId(prev => prev === headId ? null : headId)
+  }
 
   return (
     <div className="explorer-page">
@@ -81,10 +103,12 @@ export default function Explorer() {
             {heads.map((head, i) => (
               <motion.div
                 key={head.headId}
-                className="explorer-card glow-card"
+                className={`explorer-card glow-card ${expandedId === head.headId ? 'explorer-card-expanded' : ''}`}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05, duration: 0.3 }}
+                onClick={() => toggleExpand(head.headId)}
+                style={{ cursor: 'pointer' }}
               >
                 <div className="explorer-card-header">
                   <span
@@ -93,48 +117,77 @@ export default function Explorer() {
                   />
                   <span className="explorer-status">{head.status}</span>
                   <span className="explorer-network">{head.network}</span>
+                  {head.registered && <span className="badge-registered">Registered</span>}
+                  {head.htlcEnabled && <span className="badge-htlc">HTLC</span>}
                 </div>
                 <div className="explorer-card-id">
                   <code>{head.headId.slice(0, 16)}...{head.headId.slice(-8)}</code>
+                  <CopyButton text={head.headId} />
                 </div>
                 <div className="explorer-card-meta">
                   <div className="meta-row">
                     <span className="meta-label">Version</span>
                     <span className="meta-value">{head.version}</span>
                   </div>
-                  {head.snapshotNumber !== null && (
+                  {head.snapshotNumber !== null && head.snapshotNumber > 0 && (
                     <div className="meta-row">
                       <span className="meta-label">Snapshots</span>
                       <span className="meta-value">{head.snapshotNumber}</span>
                     </div>
                   )}
-                  {head.contestationPeriod !== null && (
-                    <div className="meta-row">
-                      <span className="meta-label">Contestation</span>
-                      <span className="meta-value">{head.contestationPeriod}s</span>
-                    </div>
-                  )}
-                  {head.blockNo !== null && (
-                    <div className="meta-row">
-                      <span className="meta-label">Block</span>
-                      <span className="meta-value">{head.blockNo}</span>
-                    </div>
-                  )}
-                  <div className="meta-row">
-                    <span className="meta-label">First seen</span>
-                    <span className="meta-value">{new Date(head.firstSeenAt).toLocaleDateString()}</span>
-                  </div>
-                  {head.registered && (
-                    <div className="meta-row">
-                      <span className="meta-label badge-registered">Registered</span>
-                    </div>
-                  )}
-                  {head.htlcEnabled && (
-                    <div className="meta-row">
-                      <span className="meta-label badge-htlc">HTLC</span>
-                    </div>
-                  )}
                 </div>
+
+                <AnimatePresence>
+                  {expandedId === head.headId && (
+                    <motion.div
+                      className="explorer-card-detail"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <div className="detail-divider" />
+                      {head.contestationPeriod !== null && (
+                        <div className="meta-row">
+                          <span className="meta-label">Contestation period</span>
+                          <span className="meta-value">{head.contestationPeriod}s</span>
+                        </div>
+                      )}
+                      {head.contestations !== null && head.contestations > 0 && (
+                        <div className="meta-row">
+                          <span className="meta-label">Contestations</span>
+                          <span className="meta-value">{head.contestations}</span>
+                        </div>
+                      )}
+                      {head.contestationDeadline && (
+                        <div className="meta-row">
+                          <span className="meta-label">Contestation deadline</span>
+                          <span className="meta-value">{new Date(head.contestationDeadline).toLocaleString()}</span>
+                        </div>
+                      )}
+                      {head.blockNo !== null && (
+                        <div className="meta-row">
+                          <span className="meta-label">Block</span>
+                          <span className="meta-value">{head.blockNo}</span>
+                        </div>
+                      )}
+                      <div className="meta-row">
+                        <span className="meta-label">Network magic</span>
+                        <span className="meta-value">{head.networkMagic}</span>
+                      </div>
+                      <div className="meta-row">
+                        <span className="meta-label">Last updated</span>
+                        <span className="meta-value">{new Date(head.lastUpdatedAt).toLocaleString()}</span>
+                      </div>
+                      {head.seedTxIn && (
+                        <div className="meta-row">
+                          <span className="meta-label">Seed TxIn</span>
+                          <code className="meta-value meta-value-mono">{head.seedTxIn}</code>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </motion.div>
             ))}
           </div>

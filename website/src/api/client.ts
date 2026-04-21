@@ -211,6 +211,15 @@ export function getAddressUtxos(address: string): Promise<UtxoResponse[]> {
   return request<UtxoResponse[]>(`/addresses/${address}/utxos`)
 }
 
+export function getHeadAddresses(headId: string): Promise<string[]> {
+  return request<string[]>(`/api/v1/heads/${headId}/addresses`)
+}
+
+export function getHeadParticipants(headId: string): Promise<ParticipantHeadInfo[]> {
+  // Re-use: each participant row includes the head info
+  return request<ParticipantHeadInfo[]>(`/api/v1/explorer/heads/${headId}/participants`)
+}
+
 // ─── Relay: Invoices ───
 
 export function createInvoice(req: CreateInvoiceRequest): Promise<InvoiceResponse> {
