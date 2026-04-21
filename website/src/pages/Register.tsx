@@ -2,17 +2,17 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { registerHead } from '../api/client'
 
-const HTLC_SCRIPT_HASH = '0cf48862039d41d87df4257a6861640d99168f7ab9fa294e6da9ab57'
+const HTLC_SCRIPT_HASH = '81b00e96189dc6dc1d492c469442d0fce05367e946a1b59de13a17df'
 const HTLC_REPO = 'https://github.com/v0d1ch/htlc'
 
 // Pre-published reference UTxOs — fill in after publishing
 const REFERENCE_UTXOS: Record<string, { txRef: string; address: string }> = {
   Mainnet: { txRef: 'TBD', address: 'TBD' },
-  Preview: { txRef: 'TBD', address: 'TBD' },
-  Preprod: { txRef: 'TBD', address: 'TBD' },
+  Preview: { txRef: '3e42cac4de82bb159f7024a5d8835df0fb9afaae7a224e23802e2e519b54400e#0', address: 'addr_test1qqgpqd0mquexnjmqssnjdszj2pd0u3zmuxa9985qzlq8qc3j3khkelv8t7a63zcrkfr0pg7xctze6e97gwnlwf4hm0kssrkahd' },
+  Preprod: { txRef: '3f6eb8407d1c61fee5dfa9bf6a1851fa084d8469f93d222aa5bbe9d818d935e3#0', address: 'addr_test1qqgpqd0mquexnjmqssnjdszj2pd0u3zmuxa9985qzlq8qc3j3khkelv8t7a63zcrkfr0pg7xctze6e97gwnlwf4hm0kssrkahd' },
 }
 
-const REF_LOVELACE = 5_000_000
+const REF_LOVELACE = 6_000_000
 
 const NETWORKS = Object.keys(REFERENCE_UTXOS) as (keyof typeof REFERENCE_UTXOS)[]
 

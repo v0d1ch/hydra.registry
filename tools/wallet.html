@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hydra Registry — Wallet Tools</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --border: #1e1e2e;
+      --accent: #4d8bff;
+      --accent-dim: rgba(77, 139, 255, 0.15);
+      --text: #e0e0e0;
+      --text-muted: #888;
+      --success: #00d4aa;
+      --error: #ff4d6a;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      max-width: 700px;
+    }
+
+    .card h2 {
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0.3rem;
+    }
+
+    select, input, textarea {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+
+    select:focus, input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    textarea { resize: vertical; min-height: 80px; font-family: monospace; font-size: 0.8rem; }
+
+    button {
+      padding: 0.6rem 1.2rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: var(--accent-dim);
+      color: var(--accent);
+      margin-left: 0.5rem;
+    }
+
+    .status {
+      margin-top: 1rem;
+      padding: 0.8rem;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-family: monospace;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+
+    .status.info { background: var(--accent-dim); color: var(--accent); }
+    .status.success { background: rgba(0,212,170,0.15); color: var(--success); }
+    .status.error { background: rgba(255,77,106,0.15); color: var(--error); }
+
+    .wallet-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.6rem 0.8rem;
+      background: var(--bg);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+    }
+
+    .wallet-info .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    .wallet-info code {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+    }
+
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+    .section-divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 1.5rem 0;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Hydra Registry — Wallet Tools</h1>
+<p class="subtitle">CIP-30 wallet integration for on-chain operations</p>
+
+<!-- Wallet Connection -->
+<div class="card" id="wallet-card">
+  <h2>1. Connect Wallet</h2>
+  <label for="wallet-select">Wallet</label>
+  <select id="wallet-select">
+    <option value="">Detecting wallets...</option>
+  </select>
+
+  <label for="network-select">Network</label>
+  <select id="network-select">
+    <option value="Preview">Preview (magic 2)</option>
+    <option value="Preprod">Preprod (magic 1)</option>
+    <option value="Mainnet">Mainnet</option>
+  </select>
+
+  <label for="blockfrost-key">Blockfrost Project ID</label>
+  <input id="blockfrost-key" type="text" placeholder="previewXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" />
+
+  <button class="btn-primary" id="connect-btn" onclick="connectWallet()">Connect</button>
+  <div id="wallet-status"></div>
+</div>
+
+<!-- Publish Reference Script -->
+<div class="card" id="publish-card">
+  <h2>2. Publish HTLC Reference Script</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+    Creates a UTxO containing the HTLC Plutus V3 script as a reference script.
+    Sends 5 ADA to your own address with the script attached.
+  </p>
+
+  <label>Script hash</label>
+  <div class="wallet-info">
+    <code>81b00e96189dc6dc1d492c469442d0fce05367e946a1b59de13a17df</code>
+  </div>
+
+  <div class="actions">
+    <button class="btn-primary" id="publish-btn" onclick="publishScript()" disabled>
+      Publish Reference Script
+    </button>
+  </div>
+  <div id="publish-status"></div>
+</div>
+
+<!-- Generic Tx Builder (future use) -->
+<div class="card">
+  <h2>3. Send Custom Transaction (advanced)</h2>
+  <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+    Build and sign an arbitrary transaction via your connected wallet.
+  </p>
+
+  <label for="tx-recipient">Recipient address</label>
+  <input id="tx-recipient" type="text" placeholder="addr..." />
+
+  <label for="tx-lovelace">Amount (lovelace)</label>
+  <input id="tx-lovelace" type="number" placeholder="2000000" value="2000000" />
+
+  <label for="tx-metadata">Metadata JSON (optional)</label>
+  <textarea id="tx-metadata" placeholder='{"674": {"msg": ["hello"]}}'></textarea>
+
+  <div class="actions">
+    <button class="btn-primary" id="send-btn" onclick="sendTx()" disabled>Send</button>
+  </div>
+  <div id="send-status"></div>
+</div>
+
+<script type="module" src="./main.js"></script>
+
+</body>
+</html>

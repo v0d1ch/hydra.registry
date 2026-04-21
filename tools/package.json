@@ -1,0 +1,17 @@
+{
+  "name": "hydra-wallet-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@emurgo/cardano-serialization-lib-browser": "^15.0.3"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0",
+    "vite-plugin-top-level-await": "^1.4.4",
+    "vite-plugin-wasm": "^3.4.1"
+  }
+}
