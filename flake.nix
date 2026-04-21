@@ -4,9 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    cardano-node.url = "github:IntersectMBO/cardano-node";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, cardano-node }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -35,6 +36,20 @@
 
             # Database
             pkgs.postgresql
+            pkgs.pgcli
+            pkgs.pgformatter
+
+            # Cardano
+            cardano-node.packages.${system}.cardano-cli
+
+            # Node / frontend
+            pkgs.nodejs
+
+            # Networking & debugging
+            pkgs.websocat
+            pkgs.curl
+            pkgs.jq
+            pkgs.httpie
 
             # Utilities
             pkgs.pkg-config

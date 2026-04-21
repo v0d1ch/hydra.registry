@@ -15,6 +15,7 @@ tags
 TAGS
 static.out
 pgdata/
+.direnv/
 
 # Secrets — never commit these
 .env
