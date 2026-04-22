@@ -6,6 +6,7 @@ import Data.Aeson.KeyMap qualified as KM
 import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
 import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Time (UTCTime, getCurrentTime)
 import Db.Schema
@@ -449,6 +450,32 @@ getStats pool = do
       totalUtxos = length utxos
       statusCounts = Map.fromListWith (+) [(h.headStatus, 1 :: Int) | h <- heads]
   pure (totalHeads, totalUtxos, statusCounts)
+
+-- | Get explorer stats: unique participants, heads by network, total committed lovelace
+getExplorerStats :: Pool -> IO (Int, Map.Map Text Int, Int64)
+getExplorerStats pool = getFilteredExplorerStats pool Nothing Nothing
+
+-- | Get explorer stats with optional status and network filters
+getFilteredExplorerStats :: Pool -> Maybe Text -> Maybe Text -> IO (Int, Map.Map Text Int, Int64)
+getFilteredExplorerStats pool mStatus mNetwork = do
+  explorerHeads <- getAllExplorerHeads pool
+  let filtered = applyFilters explorerHeads
+      headIds = Set.fromList $ map (.explorerHeadId) filtered
+  participants <- runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $
+          Rel8.each headParticipantSchema
+  let matchingParticipants = Prelude.filter (\p -> Set.member p.participantHeadId headIds) participants
+      uniqueAddresses = Map.keys $ Map.fromList [(p.participantAddress, ()) | p <- matchingParticipants]
+      uniqueCount = length uniqueAddresses
+      networkCounts = Map.fromListWith (+) [(eh.explorerNetwork, 1 :: Int) | eh <- filtered]
+      totalCommitted = Prelude.sum $ map (.participantCommittedLovelace) matchingParticipants
+  pure (uniqueCount, networkCounts, totalCommitted)
+ where
+  applyFilters = Prelude.filter $ \eh ->
+    maybe True (\s -> eh.explorerStatus == s) mStatus
+      && maybe True (\n -> eh.explorerNetwork == n) mNetwork
 
 -- | Check database connectivity
 checkDbConnectivity :: Pool -> IO Bool

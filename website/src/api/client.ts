@@ -7,6 +7,9 @@ export interface StatsResponse {
   totalUtxos: number
   headsByStatus: Record<string, number>
   explorerHeadCount: number
+  uniqueParticipants: number
+  headsByNetwork: Record<string, number>
+  totalCommittedLovelace: number
 }
 
 export interface HeadInfo {
@@ -195,6 +198,22 @@ export function requestDeposit(req: DepositRequest): Promise<DepositResponse> {
     method: 'POST',
     body: JSON.stringify(req),
   })
+}
+
+// ─── Explorer stats ───
+
+export interface ExplorerStatsResponse {
+  explorerHeadCount: number
+  uniqueParticipants: number
+  totalCommittedLovelace: number
+}
+
+export function getExplorerStats(status?: string, network?: string): Promise<ExplorerStatsResponse> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (network && network !== 'All') params.set('network', network)
+  const qs = params.toString()
+  return request<ExplorerStatsResponse>(`/api/v1/explorer/stats${qs ? `?${qs}` : ''}`)
 }
 
 // ─── Explorer ───

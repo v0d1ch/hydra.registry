@@ -53,6 +53,7 @@ type ApiV1Routes =
     :<|> "explorer" :> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> QueryParam "status" Text :> QueryParam "network" Text :> Get '[JSON] [ExplorerHeadInfo]
     :<|> "explorer" :> "heads" :> Capture "headId" Text :> Get '[JSON] ExplorerHeadInfo
     :<|> "explorer" :> "heads" :> Capture "headId" Text :> "participants" :> Get '[JSON] [ParticipantHeadInfo]
+    :<|> "explorer" :> "stats" :> QueryParam "status" Text :> QueryParam "network" Text :> Get '[JSON] ExplorerStatsResponse
     -- Participant lookup
     :<|> "addresses" :> Capture "address" Text :> "heads" :> Get '[JSON] [ParticipantHeadInfo]
     -- Relay endpoints
@@ -120,6 +121,7 @@ apiV1Server env =
     :<|> handleListExplorerHeads env.pool env.htlcScriptHash
     :<|> handleExplorerHeadDetail env.pool env.htlcScriptHash
     :<|> handleExplorerHeadParticipants env.pool
+    :<|> handleExplorerStats env.pool
     :<|> handleAddressHeads env.pool
     :<|> handleCreateInvoice env.pool
     :<|> handleGetInvoice env.pool
@@ -370,12 +372,16 @@ handleStats :: Pool -> Handler StatsResponse
 handleStats pool = do
   (hCount, uCount, byStatus) <- liftIO $ Db.getStats pool
   explorerCount <- liftIO $ Db.countExplorerHeads pool
+  (uniqueParticipants', networkCounts, totalCommitted) <- liftIO $ Db.getExplorerStats pool
   pure
     StatsResponse
       { headCount = hCount
       , totalUtxos = uCount
       , headsByStatus = byStatus
       , explorerHeadCount = explorerCount
+      , uniqueParticipants = uniqueParticipants'
+      , headsByNetwork = networkCounts
+      , totalCommittedLovelace = totalCommitted
       }
 
 -- | Convert a DB UTxO row to the Blockfrost-compatible response format
@@ -466,6 +472,18 @@ handleExplorerHeadParticipants pool hid = do
         }
     | p <- participants
     ]
+
+-- | GET /api/v1/explorer/stats
+handleExplorerStats :: Pool -> Maybe Text -> Maybe Text -> Handler ExplorerStatsResponse
+handleExplorerStats pool mStatus mNetwork = do
+  (uniqueCount, networkCounts, totalCommitted) <- liftIO $ Db.getFilteredExplorerStats pool mStatus mNetwork
+  let headCount = Prelude.sum $ Map.elems networkCounts
+  pure
+    ExplorerStatsResponse
+      { explorerHeadCount = headCount
+      , uniqueParticipants = uniqueCount
+      , totalCommittedLovelace = totalCommitted
+      }
 
 -- | Get the set of head IDs that contain the HTLC script
 getHtlcHeadIds :: Pool -> Maybe Text -> IO (Set.Set Text)

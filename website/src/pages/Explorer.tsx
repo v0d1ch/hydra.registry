@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { getExplorerHeads, type ExplorerHeadInfo } from '../api/client'
+import { getExplorerHeads, getExplorerStats, type ExplorerHeadInfo, type ExplorerStatsResponse } from '../api/client'
 import { useNetwork } from '../context/NetworkContext'
+import AnimatedCounter from '../components/AnimatedCounter'
 
 const PAGE_SIZE = 20
 
@@ -38,6 +39,13 @@ export default function Explorer() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [stats, setStats] = useState<ExplorerStatsResponse | null>(null)
+
+  useEffect(() => {
+    getExplorerStats(statusFilter || undefined, network === 'All' ? undefined : network)
+      .then(setStats)
+      .catch(() => {})
+  }, [statusFilter, network])
 
   useEffect(() => {
     setLoading(true)
@@ -65,6 +73,17 @@ export default function Explorer() {
           Heads discovered on-chain by the hydra-explorer sidecar. These are live Hydra heads
           across Cardano {network === 'All' ? 'networks' : network}.
         </p>
+
+        {stats && (
+          <div className="explorer-stats">
+            <AnimatedCounter target={stats.explorerHeadCount} label="On-chain Heads" />
+            <AnimatedCounter target={stats.uniqueParticipants} label="Unique Participants" />
+            <AnimatedCounter
+              target={Math.floor(stats.totalCommittedLovelace / 1_000_000)}
+              label="Total Committed (ADA)"
+            />
+          </div>
+        )}
 
         <div className="explorer-filters">
           <div className="filter-group">

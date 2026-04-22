@@ -145,6 +145,18 @@ data StatsResponse = StatsResponse
   , totalUtxos :: Int
   , headsByStatus :: Map Text Int
   , explorerHeadCount :: Int
+  , uniqueParticipants :: Int
+  , headsByNetwork :: Map Text Int
+  , totalCommittedLovelace :: Int64
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Explorer stats response (filterable)
+data ExplorerStatsResponse = ExplorerStatsResponse
+  { explorerHeadCount :: Int
+  , uniqueParticipants :: Int
+  , totalCommittedLovelace :: Int64
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
