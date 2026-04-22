@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { findRoutes, executeRoute, type RouteResponse, type PaymentStatusResponse } from '../api/client'
+import { findRoutes, executeRoute, getRelayGraph, type RouteResponse, type PaymentStatusResponse, type SubgraphResponse } from '../api/client'
 import { useNetwork } from '../context/NetworkContext'
+import RelayGraph from '../components/RelayGraph'
 
 export default function RouteExplorer() {
   const { network } = useNetwork()
@@ -13,6 +14,9 @@ export default function RouteExplorer() {
   const [executing, setExecuting] = useState<string | null>(null)
   const [paymentResult, setPaymentResult] = useState<PaymentStatusResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [graphData, setGraphData] = useState<SubgraphResponse | null>(null)
+  const [graphLoading, setGraphLoading] = useState(false)
+  const [graphError, setGraphError] = useState<string | null>(null)
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -43,6 +47,26 @@ export default function RouteExplorer() {
       setLoading(false)
     }
   }
+
+  // Load relay graph when network changes
+  useEffect(() => {
+    if (network === 'All') {
+      setGraphData(null)
+      setGraphError(null)
+      return
+    }
+    setGraphLoading(true)
+    setGraphError(null)
+    getRelayGraph(network)
+      .then(res => {
+        setGraphData(res)
+        if (res.nodes.length === 0) {
+          setGraphError('No relay heads found on this network.')
+        }
+      })
+      .catch(err => setGraphError(err instanceof Error ? err.message : 'Failed to load graph'))
+      .finally(() => setGraphLoading(false))
+  }, [network])
 
   const handleExecute = async (routeId: string) => {
     setExecuting(routeId)
@@ -197,6 +221,52 @@ export default function RouteExplorer() {
             animate={{ opacity: 1 }}
           >
             <p>{error}</p>
+          </motion.div>
+        )}
+      </motion.section>
+
+      <motion.section
+        className="section"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+      >
+        <h2 className="section-title">Head Network Graph</h2>
+        <p className="register-desc">
+          Interactive map of all open Hydra heads{network !== 'All' ? ` on ${network}` : ''}, not just those running HTLC.
+          Nodes are linked when heads share participants. Drag to rearrange, hover to see connections, click for details.
+        </p>
+
+        {network === 'All' && (
+          <div className="relay-graph-empty">
+            Select a specific network (Mainnet, Preview, or Preprod) in the navbar to view the graph.
+          </div>
+        )}
+
+        {graphLoading && (
+          <div className="stats-loading">
+            <div className="loading-spinner" />
+            <p>Loading relay graph...</p>
+          </div>
+        )}
+
+        {graphError && (
+          <motion.div
+            className="register-result error"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
+            <p>{graphError}</p>
+          </motion.div>
+        )}
+
+        {graphData && graphData.nodes.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <RelayGraph nodes={graphData.nodes} edges={graphData.edges} />
           </motion.div>
         )}
       </motion.section>

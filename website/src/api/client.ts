@@ -200,6 +200,34 @@ export function requestDeposit(req: DepositRequest): Promise<DepositResponse> {
   })
 }
 
+// ─── Relay graph ───
+
+export interface SubgraphNode {
+  headId: string
+  network: string
+  hasHtlc: boolean
+  isUserHead: boolean
+  participants: string[]
+  committedLovelace: number
+}
+
+export interface SubgraphEdge {
+  fromHead: string
+  toHead: string
+  bridgeAddress: string
+  fee: number
+}
+
+export interface SubgraphResponse {
+  nodes: SubgraphNode[]
+  edges: SubgraphEdge[]
+}
+
+export function getRelayGraph(network: string): Promise<SubgraphResponse> {
+  const params = new URLSearchParams({ network })
+  return request<SubgraphResponse>(`/api/v1/relay/graph?${params}`)
+}
+
 // ─── Explorer stats ───
 
 export interface ExplorerStatsResponse {

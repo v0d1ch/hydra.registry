@@ -270,6 +270,35 @@ data DepositResponse = DepositResponse
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+-- ─── Relay graph types ───
+
+data SubgraphNode = SubgraphNode
+  { headId :: Text
+  , network :: Text
+  , hasHtlc :: Bool
+  , isUserHead :: Bool
+  , participants :: [Text]
+  , committedLovelace :: Int64
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+data SubgraphEdge = SubgraphEdge
+  { fromHead :: Text
+  , toHead :: Text
+  , bridgeAddress :: Text
+  , fee :: Int64
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+data SubgraphResponse = SubgraphResponse
+  { nodes :: [SubgraphNode]
+  , edges :: [SubgraphEdge]
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
 -- ─── Relay types ───
 
 -- | Create invoice request

@@ -634,6 +634,15 @@ replaceHeadParticipants pool hid participants = do
       , participantCommittedTxRef = lit txRef
       }
 
+-- | Get all participants
+getAllParticipants :: Pool -> IO [HeadParticipant Identity]
+getAllParticipants pool =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $
+          Rel8.each headParticipantSchema
+
 -- | Get heads for a participant address
 getHeadsByParticipantAddress :: Pool -> Text -> IO [HeadParticipant Identity]
 getHeadsByParticipantAddress pool addr =

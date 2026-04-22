@@ -57,6 +57,7 @@ type ApiV1Routes =
     -- Participant lookup
     :<|> "addresses" :> Capture "address" Text :> "heads" :> Get '[JSON] [ParticipantHeadInfo]
     -- Relay endpoints
+    :<|> "relay" :> "graph" :> QueryParam "network" Text :> Get '[JSON] SubgraphResponse
     :<|> "relay" :> "invoices" :> ReqBody '[JSON] CreateInvoiceRequest :> Post '[JSON] InvoiceResponse
     :<|> "relay" :> "invoices" :> Capture "invoiceId" Text :> Get '[JSON] InvoiceResponse
     :<|> "relay" :> "routes" :> ReqBody '[JSON] FindRoutesRequest :> Post '[JSON] [RouteResponse]
@@ -123,6 +124,7 @@ apiV1Server env =
     :<|> handleExplorerHeadParticipants env.pool
     :<|> handleExplorerStats env.pool
     :<|> handleAddressHeads env.pool
+    :<|> handleRelayGraph env.pool env.htlcScriptHash
     :<|> handleCreateInvoice env.pool
     :<|> handleGetInvoice env.pool
     :<|> handleFindRoutes env.pool env.relayGraph
@@ -585,6 +587,81 @@ handleDeposit mHtlcCbor req = do
           }
 
 -- ─── Relay handlers ───
+
+-- | GET /api/v1/relay/graph?network=...
+-- Returns explorer heads that have participants and edges between heads sharing a participant.
+-- Deduplicates edges and caps output to keep responses fast.
+handleRelayGraph :: Pool -> Maybe Text -> Maybe Text -> Handler SubgraphResponse
+handleRelayGraph pool mHtlcHash mNetwork = do
+  network' <- maybe (throwError $ err400{errBody = Aeson.encode $ ErrorResponse "network is required"}) pure mNetwork
+  explorerHeads <- liftIO $ Db.getAllExplorerHeads pool
+  participants <- liftIO $ Db.getAllParticipants pool
+  htlcIds <- liftIO $ getHtlcHeadIds pool mHtlcHash
+  let -- Filter heads by network
+      networkHeads = [eh | eh <- explorerHeads, eh.explorerNetwork == network', eh.explorerStatus == "Open"]
+      headIds = Set.fromList [eh.explorerHeadId | eh <- networkHeads]
+      -- Build address→heads map from participants (only small groups to avoid explosion)
+      addrToHeads :: Map.Map Text (Set.Set Text)
+      addrToHeads =
+        Map.filter (\s -> Set.size s >= 2 && Set.size s <= 10) $
+          Map.fromListWith Set.union
+            [ (p.participantAddress, Set.singleton p.participantHeadId)
+            | p <- participants
+            , Set.member p.participantHeadId headIds
+            ]
+      -- Deduplicated edges: one per (from, to) pair, keep first bridge address seen
+      edgeMap :: Map.Map (Text, Text) SubgraphEdge
+      edgeMap =
+        Map.fromList
+          [ ( (h1, h2)
+            , SubgraphEdge
+                { fromHead = h1
+                , toHead = h2
+                , bridgeAddress = addr
+                , fee = 0
+                }
+            )
+          | (addr, hset) <- Map.toList addrToHeads
+          , h1 <- Set.toList hset
+          , h2 <- Set.toList hset
+          , h1 /= h2
+          ]
+      dedupedEdges = take 500 $ Map.elems edgeMap
+      -- Only include nodes that appear in at least one edge
+      connectedIds =
+        Set.fromList $
+          concatMap (\e -> [e.fromHead, e.toHead]) dedupedEdges
+      -- Build head→participants and head→committed lovelace maps
+      headParticipants :: Map.Map Text [Text]
+      headParticipants =
+        Map.fromListWith (<>)
+          [ (p.participantHeadId, [p.participantAddress])
+          | p <- participants
+          , Set.member p.participantHeadId connectedIds
+          ]
+      headLovelace :: Map.Map Text Int64
+      headLovelace =
+        Map.fromListWith (+)
+          [ (p.participantHeadId, p.participantCommittedLovelace)
+          | p <- participants
+          , Set.member p.participantHeadId connectedIds
+          ]
+  pure
+    SubgraphResponse
+      { nodes =
+          [ SubgraphNode
+              { headId = eh.explorerHeadId
+              , network = eh.explorerNetwork
+              , hasHtlc = Set.member eh.explorerHeadId htlcIds
+              , isUserHead = False
+              , participants = Map.findWithDefault [] eh.explorerHeadId headParticipants
+              , committedLovelace = Map.findWithDefault 0 eh.explorerHeadId headLovelace
+              }
+          | eh <- networkHeads
+          , Set.member eh.explorerHeadId connectedIds
+          ]
+      , edges = dedupedEdges
+      }
 
 -- | POST /api/v1/relay/invoices
 handleCreateInvoice :: Pool -> CreateInvoiceRequest -> Handler InvoiceResponse
