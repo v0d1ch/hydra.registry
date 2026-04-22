@@ -230,6 +230,15 @@ data ParticipantHeadInfo = ParticipantHeadInfo
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+-- | Check head response (pre-registration validation)
+data CheckHeadResponse = CheckHeadResponse
+  { headId :: Text
+  , headStatus :: Text
+  , alreadyRegistered :: Bool
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
 -- ─── Deposit types ───
 
 -- | Request to create a deposit transaction

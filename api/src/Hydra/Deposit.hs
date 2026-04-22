@@ -108,35 +108,85 @@ callCommitEndpoint host port payload = do
     Left err -> pure $ Left $ "HTTP error calling /commit: " <> T.pack (show err)
     Right r -> pure r
 
--- | Patch a Conway-era transaction CBOR to inject the always-true native script witness.
+-- | Patch a Conway-era transaction CBOR to inject the always-true native script witness
+-- and bump the fee to cover the extra bytes.
 --
 -- Transaction structure: 84 [body, witness_set, is_valid, auxiliary_data]
 -- Witness set may be wrapped in CBOR tag 258 (d90102).
--- We add key 1 -> [[0, []]] (native script = ScriptAll []) to the witness map.
+-- We add key 1 -> [[1, []]] (native script = ScriptAll []) to the witness map.
 patchDepositTx :: Text -> Either Text Text
 patchDepositTx hexCbor = do
-  -- Strip any surrounding quotes/whitespace
   let cleanHex = T.strip hexCbor
   rawBytes <- case Base16.decode (TE.encodeUtf8 cleanHex) of
     Left err -> Left $ "Invalid hex: " <> T.pack err
     Right bs -> Right bs
-  -- Decode CBOR
   term <- case CBOR.deserialiseFromBytes CBOR.decodeTerm (LBS.fromStrict rawBytes) of
     Left err -> Left $ "CBOR decode error: " <> T.pack (show err)
     Right (_, t) -> Right t
-  -- Navigate the transaction array
   case term of
     CBOR.TList [body, witnessSet, isValid, auxData] -> do
+      patchedBody <- bumpFee body
       patchedWitness <- patchWitnessSet witnessSet
-      let patchedTx = CBOR.TList [body, patchedWitness, isValid, auxData]
+      let patchedTx = CBOR.TList [patchedBody, patchedWitness, isValid, auxData]
           encoded = CBOR.toLazyByteString (CBOR.encodeTerm patchedTx)
       Right $ TE.decodeUtf8 $ Base16.encode $ LBS.toStrict encoded
     CBOR.TListI [body, witnessSet, isValid, auxData] -> do
+      patchedBody <- bumpFee body
       patchedWitness <- patchWitnessSet witnessSet
-      let patchedTx = CBOR.TList [body, patchedWitness, isValid, auxData]
+      let patchedTx = CBOR.TList [patchedBody, patchedWitness, isValid, auxData]
           encoded = CBOR.toLazyByteString (CBOR.encodeTerm patchedTx)
       Right $ TE.decodeUtf8 $ Base16.encode $ LBS.toStrict encoded
     _ -> Left "Transaction CBOR is not a 4-element array"
+
+-- | Bump the fee in the transaction body (key 2) and reduce the change output
+-- (last output, key 1) by the same amount to keep the transaction balanced.
+-- The native script witness adds ~10 bytes; we add 500 lovelace as safe margin.
+feeDelta :: Int
+feeDelta = 500
+
+feeDeltaI :: Integer
+feeDeltaI = 500
+
+bumpFee :: CBOR.Term -> Either Text CBOR.Term
+bumpFee (CBOR.TMap kvs) = Right $ CBOR.TMap $ map adjustBody kvs
+bumpFee (CBOR.TMapI kvs) = Right $ CBOR.TMap $ map adjustBody kvs
+bumpFee _ = Left "Transaction body is not a map"
+
+adjustBody :: (CBOR.Term, CBOR.Term) -> (CBOR.Term, CBOR.Term)
+-- Key 2 = fee: increase
+adjustBody (k@(CBOR.TInt 2), CBOR.TInt fee) = (k, CBOR.TInt (fee + feeDelta))
+adjustBody (k@(CBOR.TInt 2), CBOR.TInteger fee) = (k, CBOR.TInteger (fee + feeDeltaI))
+-- Key 1 = outputs: reduce lovelace in the last output (change)
+adjustBody (k@(CBOR.TInt 1), CBOR.TList outputs) = (k, CBOR.TList (reduceChangeOutput outputs))
+adjustBody (k@(CBOR.TInt 1), CBOR.TListI outputs) = (k, CBOR.TList (reduceChangeOutput outputs))
+adjustBody kv = kv
+
+-- | Reduce the lovelace in the last output (the change output) by feeDelta.
+-- Conway output format: map {0: address, 1: value, ...} where value is either
+-- a plain integer (lovelace only) or [lovelace, multiasset].
+reduceChangeOutput :: [CBOR.Term] -> [CBOR.Term]
+reduceChangeOutput [] = []
+reduceChangeOutput outputs =
+  let (initial, changeOut) = (init outputs, last outputs)
+   in initial ++ [adjustOutputValue changeOut]
+
+adjustOutputValue :: CBOR.Term -> CBOR.Term
+adjustOutputValue (CBOR.TMap kvs) = CBOR.TMap (map adjustValueField kvs)
+adjustOutputValue (CBOR.TMapI kvs) = CBOR.TMap (map adjustValueField kvs)
+-- Legacy tuple format: [address, value, ...]
+adjustOutputValue (CBOR.TList (addr : val : rest)) = CBOR.TList (addr : subtractLovelace val : rest)
+adjustOutputValue other = other
+
+adjustValueField :: (CBOR.Term, CBOR.Term) -> (CBOR.Term, CBOR.Term)
+adjustValueField (k@(CBOR.TInt 1), val) = (k, subtractLovelace val)
+adjustValueField kv = kv
+
+subtractLovelace :: CBOR.Term -> CBOR.Term
+subtractLovelace (CBOR.TInt n) = CBOR.TInt (n - feeDelta)
+subtractLovelace (CBOR.TInteger n) = CBOR.TInteger (n - feeDeltaI)
+subtractLovelace (CBOR.TList (CBOR.TInt n : rest)) = CBOR.TList (CBOR.TInt (n - feeDelta) : rest)
+subtractLovelace (CBOR.TList (CBOR.TInteger n : rest)) = CBOR.TList (CBOR.TInteger (n - feeDeltaI) : rest)
+subtractLovelace other = other
 
 -- | Patch the witness set to include the always-true native script.
 -- The always-true script is ScriptAll [] = [0, []] in CBOR.
@@ -164,7 +214,7 @@ patchWitnessMap other = Left $ "Witness set inner is not a map: " <> T.pack (sho
 addNativeScript :: [(CBOR.Term, CBOR.Term)] -> [(CBOR.Term, CBOR.Term)]
 addNativeScript kvs =
   let key1 = CBOR.TInt 1
-      alwaysTrueScript = CBOR.TList [CBOR.TInt 0, CBOR.TList []]
+      alwaysTrueScript = CBOR.TList [CBOR.TInt 1, CBOR.TList []]
       -- Check if key 1 already exists
       hasKey1 = any (\(k, _) -> k == key1) kvs
    in if hasKey1

@@ -122,6 +122,19 @@ export interface HopStatusResponse {
   claimedAt: string | null
 }
 
+// ─── Check head types ───
+
+export interface CheckHeadResponse {
+  headId: string
+  headStatus: string
+  alreadyRegistered: boolean
+}
+
+export function checkHead(host: string, port: number): Promise<CheckHeadResponse> {
+  const params = new URLSearchParams({ host, port: String(port) })
+  return request<CheckHeadResponse>(`/api/v1/heads/check?${params}`)
+}
+
 // ─── Deposit types ───
 
 export interface DepositRequest {

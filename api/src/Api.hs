@@ -21,7 +21,7 @@ import Data.UUID.V4 qualified as UUID
 import Db qualified
 import Db.Schema (ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
 import Hasql.Pool (Pool)
-import Hydra.Client (HydraEvent (..))
+import Hydra.Client (HydraEvent (..), validateHydraNode)
 import Hydra.Deposit qualified as Deposit
 import Indexer qualified
 import Logging (Logger)
@@ -39,6 +39,7 @@ import Servant
 -- | Our own endpoints that live under /api/v1/
 type ApiV1Routes =
   "health" :> Get '[JSON] HealthResponse
+    :<|> "heads" :> "check" :> QueryParam "host" Text :> QueryParam "port" Int :> Get '[JSON] CheckHeadResponse
     :<|> "heads" :> "register" :> ReqBody '[JSON] RegisterHead :> Post '[JSON] RegisterHeadResponse
     :<|> "heads" :> "deposit" :> ReqBody '[JSON] DepositRequest :> Post '[JSON] DepositResponse
     :<|> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> Get '[JSON] [HeadInfo]
@@ -105,6 +106,7 @@ server env =
 apiV1Server :: AppEnv -> Server ApiV1Routes
 apiV1Server env =
   handleHealth env.pool
+    :<|> handleCheckHead env.logger env.pool
     :<|> handleRegister env.logger env.pool env.eventQueue
     :<|> handleDeposit env.htlcScriptCbor
     :<|> handleListHeads env.pool
@@ -161,6 +163,21 @@ handleHealth pool = do
       , headCount = length heads
       , dbConnected = dbOk
       }
+
+-- | GET /api/v1/heads/check?host=...&port=...
+handleCheckHead :: Logger -> Pool -> Maybe Text -> Maybe Int -> Handler CheckHeadResponse
+handleCheckHead logger pool mHost mPort = do
+  hostAddr <- maybe (throwError $ err400{errBody = Aeson.encode $ ErrorResponse "host is required"}) pure mHost
+  portNum <- maybe (throwError $ err400{errBody = Aeson.encode $ ErrorResponse "port is required"}) pure mPort
+  result <- liftIO $ validateHydraNode logger hostAddr portNum
+  case result of
+    Left err ->
+      throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
+    Right HeadGreetings{greeterHeadId, greeterHeadStatus} -> do
+      existing <- liftIO $ Db.getHead pool greeterHeadId
+      pure $ CheckHeadResponse greeterHeadId greeterHeadStatus (maybe False (const True) existing)
+    Right _ ->
+      throwError $ err500{errBody = Aeson.encode $ ErrorResponse "Unexpected response from Hydra node"}
 
 -- | POST /api/v1/heads/register
 handleRegister :: Logger -> Pool -> TQueue HydraEvent -> RegisterHead -> Handler RegisterHeadResponse
