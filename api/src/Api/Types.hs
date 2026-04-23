@@ -375,13 +375,30 @@ data HopStatusResponse = HopStatusResponse
   { hopIndex :: Int
   , headId :: Text
   , bridgeAddress :: Text
+  , senderAddress :: Text
+  , receiverAddress :: Text
   , htlcStatus :: Text
   , htlcTxHash :: Maybe Text
   , secretHash :: Text
   , timeoutSlot :: Int64
   , fee :: Int64
+  , preimage :: Maybe Text
   , lockedAt :: Maybe UTCTime
   , claimedAt :: Maybe UTCTime
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Request to submit a revealed preimage
+data SubmitPreimageRequest = SubmitPreimageRequest
+  { preimage :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Generic success message response
+data MessageResponse = MessageResponse
+  { message :: Text
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

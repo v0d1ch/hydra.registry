@@ -13,6 +13,7 @@ import Data.Aeson (toJSON)
 import Db qualified
 import Explorer.Sidecar qualified as Sidecar
 import Hydra.Client (HydraEvent)
+import Relay.ExpirySweep qualified as ExpirySweep
 import Relay.Graph qualified as Graph
 import Indexer qualified
 import Logging
@@ -39,7 +40,7 @@ main = do
   eventQueue <- newTQueueIO @HydraEvent
 
   -- Start the indexer (runs forever in its own thread)
-  indexerAsync <- async $ Indexer.startIndexer logger pool eventQueue
+  indexerAsync <- async $ Indexer.startIndexer logger pool config.htlcScriptHash eventQueue
   logInfo logger "Indexer started" []
 
   -- Reconnect to registered heads
@@ -59,6 +60,10 @@ main = do
           }
   sidecarAsync <- async $ Sidecar.startSidecar logger pool sidecarConfig
   logInfo logger "Explorer sidecar started" [("url", toJSON config.explorerUrl), ("interval_s", toJSON config.explorerPollIntervalSeconds)]
+
+  -- Start expiry sweep (marks stale invoices/routes as expired every 60s)
+  expiryAsync <- async $ ExpirySweep.startExpirySweep logger pool
+  logInfo logger "Expiry sweep started" []
 
   -- Rate limiter with periodic cleanup
   rateLimiter <- newRateLimiter config.rateLimitPerMin
@@ -114,6 +119,7 @@ main = do
       logInfo logger "Shutting down..." []
       cancel indexerAsync
       cancel sidecarAsync
+      cancel expiryAsync
       cancel cleanupAsync
       logInfo logger "Shutdown complete" []
 

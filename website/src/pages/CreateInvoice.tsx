@@ -55,7 +55,23 @@ export default function CreateInvoice() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <h1 className="section-title">Create Payment Invoice</h1>
+        <h2 className="section-title">How HTLC Payments Work</h2>
+        <div className="next-steps">
+          <div className="next-step">
+            <span className="next-num">1</span>
+            <p>Generate a secret offline and compute its BLAKE2b-256 hash. Create an invoice with the hash &mdash; the secret never leaves your machine.</p>
+          </div>
+          <div className="next-step">
+            <span className="next-num">2</span>
+            <p>Share the invoice ID with the sender. They find a route through bridge operators and lock funds in HTLC contracts along the path.</p>
+          </div>
+          <div className="next-step">
+            <span className="next-num">3</span>
+            <p>Reveal the secret to claim your funds. Bridge operators use the revealed secret to claim their locked funds in sequence.</p>
+          </div>
+        </div>
+
+        <h1 className="section-title" style={{ marginTop: '4rem' }}>Create Payment Invoice</h1>
         <p className="register-desc">
           Generate an invoice to receive a cross-head payment via HTLC relay.
           You provide a payment hash &mdash; the BLAKE2b-256 hash of a secret that only you know.
@@ -173,28 +189,6 @@ export default function CreateInvoice() {
         )}
       </motion.section>
 
-      <motion.section
-        className="section"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.3, duration: 0.5 }}
-      >
-        <h2 className="section-title">How HTLC Payments Work</h2>
-        <div className="next-steps">
-          <div className="next-step">
-            <span className="next-num">1</span>
-            <p>Generate a secret offline and compute its BLAKE2b-256 hash. Create an invoice with the hash &mdash; the secret never leaves your machine.</p>
-          </div>
-          <div className="next-step">
-            <span className="next-num">2</span>
-            <p>Share the invoice ID with the sender. They find a route through bridge operators and lock funds in HTLC contracts along the path.</p>
-          </div>
-          <div className="next-step">
-            <span className="next-num">3</span>
-            <p>Reveal the secret to claim your funds. Bridge operators use the revealed secret to claim their locked funds in sequence.</p>
-          </div>
-        </div>
-      </motion.section>
     </div>
   )
 }

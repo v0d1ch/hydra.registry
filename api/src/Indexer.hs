@@ -11,32 +11,41 @@ import Db.Schema qualified as Schema
 import Hasql.Pool (Pool)
 import Hydra.Client
 import Logging
+import Relay.HtlcWatcher qualified as HtlcWatcher
 
 -- | Run the indexer loop that processes events from all Hydra head connections.
 -- This function blocks forever — run it in a separate thread.
-startIndexer :: Logger -> Pool -> TQueue HydraEvent -> IO ()
-startIndexer logger pool eventQueue = forever $ do
+startIndexer :: Logger -> Pool -> Maybe Text -> TQueue HydraEvent -> IO ()
+startIndexer logger pool mHtlcScriptHash eventQueue = forever $ do
   event <- atomically $ readTQueue eventQueue
-  result <- try @SomeException $ processEvent logger pool event
+  result <- try @SomeException $ processEvent logger pool mHtlcScriptHash event
   case result of
     Left err ->
       logError logger "Error processing indexer event" [("error", toJSON (show err))]
     Right () -> pure ()
 
 -- | Process a single Hydra event
-processEvent :: Logger -> Pool -> HydraEvent -> IO ()
-processEvent logger pool = \case
+processEvent :: Logger -> Pool -> Maybe Text -> HydraEvent -> IO ()
+processEvent logger pool mHtlcScriptHash = \case
   HeadGreetings{greeterHeadId, greeterHeadStatus, greeterUtxos} -> do
     logInfo logger "Head greeting received" [("headId", toJSON greeterHeadId), ("status", toJSON greeterHeadStatus)]
     Db.updateHeadStatus pool greeterHeadId greeterHeadStatus
     Db.replaceUtxos pool greeterHeadId greeterUtxos
     Db.updateLastMessageAt pool greeterHeadId
+    -- Check for HTLC events
+    case mHtlcScriptHash of
+      Just scriptHash -> HtlcWatcher.processUtxoSnapshot logger pool greeterHeadId scriptHash greeterUtxos
+      Nothing -> pure ()
   HeadSnapshotConfirmed{snapHeadId, snapNumber, snapUtxos} -> do
     logInfo logger "Snapshot confirmed" [("headId", toJSON snapHeadId), ("snapshot", toJSON snapNumber), ("utxoCount", toJSON (length snapUtxos))]
     Db.updateHeadStatus pool snapHeadId "Open"
     Db.updateSnapshotNumber pool snapHeadId snapNumber
     Db.replaceUtxos pool snapHeadId snapUtxos
     Db.updateLastMessageAt pool snapHeadId
+    -- Check for HTLC events
+    case mHtlcScriptHash of
+      Just scriptHash -> HtlcWatcher.processUtxoSnapshot logger pool snapHeadId scriptHash snapUtxos
+      Nothing -> pure ()
   HeadClosed{closedHeadId} -> do
     logInfo logger "Head closed" [("headId", toJSON closedHeadId)]
     Db.updateHeadStatus pool closedHeadId "Closed"

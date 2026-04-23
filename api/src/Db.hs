@@ -127,9 +127,12 @@ initDb pool =
       \  hop_index INTEGER NOT NULL,\
       \  head_id TEXT NOT NULL,\
       \  bridge_address TEXT NOT NULL,\
+      \  sender_address TEXT NOT NULL,\
+      \  receiver_address TEXT NOT NULL,\
       \  htlc_status TEXT NOT NULL DEFAULT 'pending',\
       \  htlc_tx_hash TEXT,\
       \  secret_hash TEXT NOT NULL,\
+      \  preimage TEXT,\
       \  timeout_slot BIGINT NOT NULL,\
       \  fee_lovelace BIGINT NOT NULL DEFAULT 0,\
       \  locked_at TIMESTAMPTZ,\
@@ -814,7 +817,7 @@ updateRouteStatus pool rid newStatus = do
 -- ─── Route hops ───
 
 -- | Insert route hops
-insertRouteHops :: Pool -> [(Text, Text, Int, Text, Text, Text, Text, Int64, Int64)] -> IO ()
+insertRouteHops :: Pool -> [(Text, Text, Int, Text, Text, Text, Text, Text, Text, Int64, Int64)] -> IO ()
 insertRouteHops pool hops =
   runSession pool $
     Session.statement () $
@@ -827,16 +830,19 @@ insertRouteHops pool hops =
             , returning = NoReturning
             }
  where
-  toRow (hid, rid, idx, headId, bridgeAddr, status', secretHash, timeoutSlot, fee) =
+  toRow (hid, rid, idx, headId, bridgeAddr, senderAddr, receiverAddr, status', secretHash, timeoutSlot, fee) =
     RouteHop
       { hopId = lit hid
       , hopRouteId = lit rid
       , hopIndex = lit (fromIntegral @Int @Int32 idx)
       , hopHeadId = lit headId
       , hopBridgeAddress = lit bridgeAddr
+      , hopSenderAddress = lit senderAddr
+      , hopReceiverAddress = lit receiverAddr
       , hopHtlcStatus = lit status'
       , hopHtlcTxHash = lit Nothing
       , hopSecretHash = lit secretHash
+      , hopPreimage = lit Nothing
       , hopTimeoutSlot = lit timeoutSlot
       , hopFeeLovelace = lit fee
       , hopLockedAt = lit Nothing
@@ -879,5 +885,107 @@ updateHopStatus pool hopId newStatus mTxHash = do
                       _ -> row.hopClaimedAt
                   }
             , updateWhere = \_ row -> row.hopId ==. lit hopId
+            , returning = NoReturning
+            }
+
+-- | Get all active (pending or locked) hops for a given head
+getActiveHopsByHead :: Pool -> Text -> IO [RouteHop Identity]
+getActiveHopsByHead pool headId =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          hop <- Rel8.each routeHopSchema
+          Rel8.where_ (hop.hopHeadId ==. lit headId)
+          Rel8.where_ (hop.hopHtlcStatus ==. lit "pending" ||. hop.hopHtlcStatus ==. lit "locked")
+          pure hop
+
+-- | Mark a hop as locked with the HTLC transaction hash
+updateHopLocked :: Pool -> Text -> Text -> UTCTime -> IO ()
+updateHopLocked pool hopId txHash lockedTime =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = routeHopSchema
+            , from = pure ()
+            , set = \_ row ->
+                row
+                  { hopHtlcStatus = lit "locked"
+                  , hopHtlcTxHash = lit (Just txHash)
+                  , hopLockedAt = lit (Just lockedTime)
+                  }
+            , updateWhere = \_ row -> row.hopId ==. lit hopId
+            , returning = NoReturning
+            }
+
+-- | Mark a hop as claimed
+updateHopClaimed :: Pool -> Text -> UTCTime -> IO ()
+updateHopClaimed pool hopId claimedTime =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = routeHopSchema
+            , from = pure ()
+            , set = \_ row ->
+                row
+                  { hopHtlcStatus = lit "claimed"
+                  , hopClaimedAt = lit (Just claimedTime)
+                  }
+            , updateWhere = \_ row -> row.hopId ==. lit hopId
+            , returning = NoReturning
+            }
+
+-- | Store the revealed preimage on all hops sharing the same secret hash.
+-- Once revealed, every hop in the cascade can use it to claim.
+setPreimageByHash :: Pool -> Text -> Text -> IO ()
+setPreimageByHash pool secretHash preimage =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = routeHopSchema
+            , from = pure ()
+            , set = \_ row -> row{hopPreimage = lit (Just preimage)}
+            , updateWhere = \_ row -> row.hopSecretHash ==. lit secretHash
+            , returning = NoReturning
+            }
+
+-- | Expire pending invoices past their deadline.
+expirePendingInvoices :: Pool -> UTCTime -> IO ()
+expirePendingInvoices pool now =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = invoiceSchema
+            , from = pure ()
+            , set = \_ row -> row{invoiceStatus = lit "expired"}
+            , updateWhere = \_ row ->
+                row.invoiceStatus ==. lit "pending"
+                  &&. row.invoiceExpiresAt Rel8.<. lit now
+            , returning = NoReturning
+            }
+
+-- | Expire routes whose invoices have expired.
+expireStaleRoutes :: Pool -> UTCTime -> IO ()
+expireStaleRoutes pool now =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = paymentRouteSchema
+            , from = Rel8.each invoiceSchema
+            , set = \_ row -> row{routeStatus = lit "expired", routeUpdatedAt = lit now}
+            , updateWhere = \invoice row ->
+                row.routeInvoiceId ==. invoice.invoiceId
+                  &&. invoice.invoiceStatus ==. lit "expired"
+                  &&. (row.routeStatus ==. lit "requested" ||. row.routeStatus ==. lit "in_progress")
             , returning = NoReturning
             }

@@ -43,7 +43,10 @@ library
     Logging
     Metrics
     Middleware.RateLimit
+    Relay.ExpirySweep
     Relay.Graph
+    Relay.HtlcWatcher
+    Relay.Slot
   build-depends:
     , base >= 4.20 && < 5
     , aeson

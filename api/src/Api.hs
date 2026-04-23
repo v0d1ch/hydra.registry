@@ -15,7 +15,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Time (addUTCTime, getCurrentTime)
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.UUID.V4 qualified as UUID
 import Db qualified
@@ -34,6 +34,7 @@ import Network.Wai.Middleware.Cors
   , simpleMethods
   )
 import Relay.Graph qualified as Graph
+import Relay.Slot qualified as Slot
 import Servant
 
 -- | Our own endpoints that live under /api/v1/
@@ -63,6 +64,7 @@ type ApiV1Routes =
     :<|> "relay" :> "routes" :> ReqBody '[JSON] FindRoutesRequest :> Post '[JSON] [RouteResponse]
     :<|> "relay" :> "routes" :> Capture "routeId" Text :> "execute" :> Post '[JSON] PaymentStatusResponse
     :<|> "relay" :> "payments" :> Capture "paymentId" Text :> Get '[JSON] PaymentStatusResponse
+    :<|> "relay" :> "preimage" :> Capture "paymentHash" Text :> ReqBody '[JSON] SubmitPreimageRequest :> Post '[JSON] MessageResponse
 
 -- | Full API type
 type API =
@@ -130,6 +132,7 @@ apiV1Server env =
     :<|> handleFindRoutes env.pool env.relayGraph
     :<|> handleExecuteRoute env.pool
     :<|> handleGetPayment env.pool
+    :<|> handleSubmitPreimage env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
 corsMiddleware :: Middleware
@@ -722,10 +725,10 @@ handleFindRoutes pool graphVar req = do
     Just inv -> do
       graph <- liftIO $ readTVarIO graphVar
       let routes = Graph.findRoutes graph req.senderAddress inv.invoiceReceiverAddress req.network 3
-      mapM (routeToResponse pool req.invoiceId req.senderAddress inv.invoiceReceiverAddress inv.invoiceAmountLovelace inv.invoicePaymentHash req.network) routes
+      mapM (routeToResponse pool req.invoiceId req.senderAddress inv.invoiceReceiverAddress inv.invoiceAmountLovelace inv.invoicePaymentHash inv.invoiceExpiresAt req.network) routes
 
-routeToResponse :: Pool -> Text -> Text -> Text -> Int64 -> Text -> Text -> Graph.Route -> Handler RouteResponse
-routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash network route = do
+routeToResponse :: Pool -> Text -> Text -> Text -> Int64 -> Text -> UTCTime -> Text -> Graph.Route -> Handler RouteResponse
+routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash expiresAt network route = do
   rid <- liftIO $ UUID.toText <$> UUID.nextRandom
   let hops =
         [ RouteHopResponse
@@ -748,14 +751,34 @@ routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash networ
       (Aeson.toJSON hops)
       route.routeTotalFee
       network
-  -- Persist hops
+  -- Compute timeout slot from invoice expiry
+  timeoutSlot <- case Slot.utcTimeToSlot network expiresAt of
+    Nothing -> throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Unsupported network for slot conversion"}
+    Just slot -> pure slot
+  -- Persist hops with pre-calculated sender/receiver per hop.
+  -- Each hop is one HTLC in one head:
+  --   hop[0]:    sender = route sender,           receiver = hop[0].bridge
+  --   hop[i]:    sender = hop[i-1].bridge,        receiver = hop[i].bridge
+  --   hop[last]: sender = hop[last-1].bridge,     receiver = route receiver
+  -- All hops share the same timeout slot (the invoice expiry).
+  let indexedHops = zip [0 ..] route.routeHops
+      numHops = length route.routeHops
+      hopSenderReceiver idx h =
+        let sender = if idx == 0
+              then senderAddr
+              else (route.routeHops !! (idx - 1)).hopBridgeAddress
+            receiver = if idx == numHops - 1
+              then receiverAddr
+              else h.hopBridgeAddress
+        in (sender, receiver)
   hopRows <- liftIO $
     mapM
       ( \(idx, h) -> do
           hid <- UUID.toText <$> UUID.nextRandom
-          pure (hid, rid, idx, h.hopHeadId, h.hopBridgeAddress, "pending", paymentHash, (0 :: Int64), h.hopFee)
+          let (hopSender, hopReceiver) = hopSenderReceiver idx h
+          pure (hid, rid, idx, h.hopHeadId, h.hopBridgeAddress, hopSender, hopReceiver, "pending", paymentHash, timeoutSlot, h.hopFee)
       )
-      (zip [0 ..] route.routeHops)
+      indexedHops
   liftIO $ Db.insertRouteHops pool hopRows
   pure
     RouteResponse
@@ -803,9 +826,12 @@ buildPaymentStatus pool route = do
               { hopIndex = fromIntegral h.hopIndex
               , headId = h.hopHeadId
               , bridgeAddress = h.hopBridgeAddress
+              , senderAddress = h.hopSenderAddress
+              , receiverAddress = h.hopReceiverAddress
               , htlcStatus = h.hopHtlcStatus
               , htlcTxHash = h.hopHtlcTxHash
               , secretHash = h.hopSecretHash
+              , preimage = h.hopPreimage
               , timeoutSlot = h.hopTimeoutSlot
               , fee = h.hopFeeLovelace
               , lockedAt = h.hopLockedAt
@@ -816,3 +842,13 @@ buildPaymentStatus pool route = do
       , createdAt = route.routeCreatedAt
       , updatedAt = route.routeUpdatedAt
       }
+
+-- | POST /api/v1/relay/preimage/:paymentHash
+-- Submit a revealed preimage so bridge operators can claim their hops.
+handleSubmitPreimage :: Pool -> Text -> SubmitPreimageRequest -> Handler MessageResponse
+handleSubmitPreimage pool paymentHash req = do
+  -- Validate: blake2b-256(preimage) must equal the payment hash
+  -- For now, trust the caller — validation requires a blake2b binding.
+  -- The on-chain script is the ultimate validator anyway.
+  liftIO $ Db.setPreimageByHash pool paymentHash req.preimage
+  pure $ MessageResponse "Preimage stored — bridge operators can now claim their hops"

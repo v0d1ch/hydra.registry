@@ -205,9 +205,12 @@ data RouteHop f = RouteHop
   , hopIndex :: Column f Int32
   , hopHeadId :: Column f Text
   , hopBridgeAddress :: Column f Text
+  , hopSenderAddress :: Column f Text
+  , hopReceiverAddress :: Column f Text
   , hopHtlcStatus :: Column f Text
   , hopHtlcTxHash :: Column f (Maybe Text)
   , hopSecretHash :: Column f Text
+  , hopPreimage :: Column f (Maybe Text)
   , hopTimeoutSlot :: Column f Int64
   , hopFeeLovelace :: Column f Int64
   , hopLockedAt :: Column f (Maybe UTCTime)
@@ -230,9 +233,12 @@ routeHopSchema =
           , hopIndex = "hop_index"
           , hopHeadId = "head_id"
           , hopBridgeAddress = "bridge_address"
+          , hopSenderAddress = "sender_address"
+          , hopReceiverAddress = "receiver_address"
           , hopHtlcStatus = "htlc_status"
           , hopHtlcTxHash = "htlc_tx_hash"
           , hopSecretHash = "secret_hash"
+          , hopPreimage = "preimage"
           , hopTimeoutSlot = "timeout_slot"
           , hopFeeLovelace = "fee_lovelace"
           , hopLockedAt = "locked_at"

@@ -161,6 +161,14 @@ export default function PaymentTracker() {
                     <code className="meta-value">{hop.headId.slice(0, 12)}...</code>
                   </div>
                   <div className="meta-row">
+                    <span className="meta-label">Sender</span>
+                    <code className="meta-value">{hop.senderAddress.slice(0, 16)}...</code>
+                  </div>
+                  <div className="meta-row">
+                    <span className="meta-label">Receiver</span>
+                    <code className="meta-value">{hop.receiverAddress.slice(0, 16)}...</code>
+                  </div>
+                  <div className="meta-row">
                     <span className="meta-label">Bridge</span>
                     <code className="meta-value">{hop.bridgeAddress.slice(0, 16)}...</code>
                   </div>
@@ -172,6 +180,12 @@ export default function PaymentTracker() {
                     <span className="meta-label">Timeout Slot</span>
                     <span className="meta-value">{hop.timeoutSlot}</span>
                   </div>
+                  {hop.preimage && (
+                    <div className="meta-row">
+                      <span className="meta-label">Preimage</span>
+                      <code className="meta-value">{hop.preimage.slice(0, 16)}...</code>
+                    </div>
+                  )}
                   {hop.htlcTxHash && (
                     <div className="meta-row">
                       <span className="meta-label">HTLC Tx</span>

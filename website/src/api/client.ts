@@ -116,9 +116,12 @@ export interface HopStatusResponse {
   hopIndex: number
   headId: string
   bridgeAddress: string
+  senderAddress: string
+  receiverAddress: string
   htlcStatus: string
   htlcTxHash: string | null
   secretHash: string
+  preimage: string | null
   timeoutSlot: number
   fee: number
   lockedAt: string | null
@@ -226,6 +229,13 @@ export interface SubgraphResponse {
 export function getRelayGraph(network: string): Promise<SubgraphResponse> {
   const params = new URLSearchParams({ network })
   return request<SubgraphResponse>(`/api/v1/relay/graph?${params}`)
+}
+
+export function submitPreimage(paymentHash: string, preimage: string): Promise<{ message: string }> {
+  return request<{ message: string }>(`/api/v1/relay/preimage/${paymentHash}`, {
+    method: 'POST',
+    body: JSON.stringify({ preimage }),
+  })
 }
 
 // ─── Explorer stats ───
