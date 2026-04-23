@@ -121,6 +121,7 @@ test-suite hydra-registry-api-test
     , text
     , time
     , hasql
+    , vector
     , wai
   other-modules:
     ApiIntegrationSpec
@@ -130,5 +131,8 @@ test-suite hydra-registry-api-test
     ExplorerClientSpec
     HydraClientSpec
     RateLimitSpec
+    RelayGraphSpec
+    RelayHtlcWatcherSpec
+    RelaySlotSpec
     TestUtils
     ValidationSpec
