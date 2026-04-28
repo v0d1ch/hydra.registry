@@ -94,7 +94,10 @@ export default function RelayGraph({ nodes, edges }: Props) {
     nodes.forEach((n, i) => idxMap.set(n.headId, i))
     nodeIndexRef.current = idxMap
 
-    setSelected(null)
+    // When there's only one node (e.g. an isolated head looked up via
+    // ?headId=…), open its detail panel automatically so the user sees the
+    // same info they'd get by clicking it in a multi-node graph.
+    setSelected(nodes.length === 1 ? 0 : null)
     hoveredRef.current = null
   }, [nodes, edges])
 
@@ -291,7 +294,11 @@ export default function RelayGraph({ nodes, edges }: Props) {
         const isDimmed = activeId !== null && !isActive && !isNeighbor
         const isSel = i === selIdx
         const conns = adjRef.current.neighbors.get(p.id)?.size ?? 0
-        const r = NODE_RADIUS + Math.min(conns * 0.5, 4)
+        // When only a single head is rendered (e.g. a focused isolated head
+        // looked up via ?headId=…), bump the base radius so the dot is
+        // actually visible on the canvas instead of a 3-pixel speck.
+        const baseR = n === 1 ? 14 : NODE_RADIUS
+        const r = baseR + Math.min(conns * 0.5, 4)
         const color = nodeColor(i)
 
         ctx.globalAlpha = isDimmed ? 0.1 : 1
@@ -375,7 +382,8 @@ export default function RelayGraph({ nodes, edges }: Props) {
       const dx = mx - pNodes[i].x
       const dy = my - pNodes[i].y
       const conns = adjRef.current.neighbors.get(pNodes[i].id)?.size ?? 0
-      const r = NODE_RADIUS + Math.min(conns * 0.5, 4) + 6
+      const baseR = pNodes.length === 1 ? 14 : NODE_RADIUS
+      const r = baseR + Math.min(conns * 0.5, 4) + 6
       if (dx * dx + dy * dy < r * r) return i
     }
     return null

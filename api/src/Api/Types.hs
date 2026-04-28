@@ -251,25 +251,6 @@ data CheckHeadResponse = CheckHeadResponse
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
--- ─── Deposit types ───
-
--- | Request to create a deposit transaction
-data DepositRequest = DepositRequest
-  { host :: Text
-  , port :: Int
-  , network :: Text -- "Preview" | "Preprod" | "Mainnet"
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (FromJSON, ToJSON)
-
--- | Response containing the patched deposit tx CBOR
-data DepositResponse = DepositResponse
-  { depositTxCbor :: Text -- Hex-encoded patched deposit tx CBOR
-  , message :: Text
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (FromJSON, ToJSON)
-
 -- ─── Relay graph types ───
 
 data SubgraphNode = SubgraphNode

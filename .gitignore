@@ -24,5 +24,8 @@ pgdata/
 *.key
 credentials.json
 
+# Testnet data (node-db, keys, state)
+testnet/data/
+
 # Dependencies
 tools/node_modules/

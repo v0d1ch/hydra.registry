@@ -141,19 +141,6 @@ export function checkHead(host: string, port: number): Promise<CheckHeadResponse
   return request<CheckHeadResponse>(`/api/v1/heads/check?${params}`)
 }
 
-// ─── Deposit types ───
-
-export interface DepositRequest {
-  host: string
-  port: number
-  network: string
-}
-
-export interface DepositResponse {
-  depositTxCbor: string
-  message: string
-}
-
 // ─── Request helper ───
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -194,13 +181,30 @@ export function registerHead(
   })
 }
 
-// ─── Deposit ───
+// ─── Registered head detail ───
 
-export function requestDeposit(req: DepositRequest): Promise<DepositResponse> {
-  return request<DepositResponse>('/api/v1/heads/deposit', {
-    method: 'POST',
-    body: JSON.stringify(req),
-  })
+export interface RegisteredHeadDetail {
+  headId: string
+  host: string
+  port: number
+  status: string
+  utxoCount: number
+  registeredAt: string
+  lastSeenAt: string | null
+  // Present only when the explorer sidecar has observed this head on chain.
+  onChain: ExplorerOnChain | null
+}
+
+export interface ExplorerOnChain {
+  network: string
+  networkMagic: number
+  status: string
+  snapshotNumber: number | null
+  htlcEnabled: boolean
+}
+
+export function getRegisteredHead(headId: string): Promise<RegisteredHeadDetail> {
+  return request<RegisteredHeadDetail>(`/api/v1/heads/${headId}`)
 }
 
 // ─── Relay graph ───

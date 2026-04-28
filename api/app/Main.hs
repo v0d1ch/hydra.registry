@@ -94,7 +94,6 @@ main = do
           , staticDir = config.staticDir
           , relayGraph = relayGraphVar
           , htlcScriptHash = config.htlcScriptHash
-          , htlcScriptCbor = config.htlcScriptCbor
           }
 
   -- Build middleware stack

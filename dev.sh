@@ -33,11 +33,12 @@ trap 'cleanup; exit 130' INT
 trap cleanup EXIT TERM
 
 # ── Colors ──────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+BLUE=$'\033[0;34m'
+YELLOW=$'\033[1;33m'
+BOLD=$'\033[1m'
+NC=$'\033[0m'
 
 log()  { echo -e "${GREEN}==> $1${NC}"; }
 warn() { echo -e "${YELLOW}==> $1${NC}"; }
@@ -47,7 +48,9 @@ err()  { echo -e "${RED}==> $1${NC}" >&2; }
 run_with_prefix() {
   local prefix="$1"; shift
   local color="$1"; shift
-  "$@" 2>&1 | sed -u "s/^/${color}[${prefix}]${NC} /" &
+  local padded
+  printf -v padded "%-6s" "$prefix"
+  "$@" 2>&1 | sed -u "s/^/${color}${BOLD}${padded}${NC} ${color}|${NC} /" &
   # Store both the sed PID and the background job's process group
   PIDS+=($!)
 }

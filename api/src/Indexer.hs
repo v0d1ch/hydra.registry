@@ -27,11 +27,22 @@ startIndexer logger pool mHtlcScriptHash eventQueue = forever $ do
 -- | Process a single Hydra event
 processEvent :: Logger -> Pool -> Maybe Text -> HydraEvent -> IO ()
 processEvent logger pool mHtlcScriptHash = \case
-  HeadGreetings{greeterHeadId, greeterHeadStatus, greeterUtxos} -> do
+  HeadGreetings{greeterHeadId, greeterHeadStatus, greeterUtxos, greeterParticipants} -> do
     logInfo logger "Head greeting received" [("headId", toJSON greeterHeadId), ("status", toJSON greeterHeadStatus)]
     Db.updateHeadStatus pool greeterHeadId greeterHeadStatus
     Db.replaceUtxos pool greeterHeadId greeterUtxos
     Db.updateLastMessageAt pool greeterHeadId
+    -- Mirror the head's participants into head_participants so the relay
+    -- graph picks up bridge relationships between locally-registered heads
+    -- without depending on the external hydra-explorer sidecar. We use the
+    -- onChainId hex as the join key (the @address@ column) since the
+    -- WS Greetings doesn't tell us each participant's funding address —
+    -- this still lets the graph builder detect "two heads share a party".
+    case greeterParticipants of
+      [] -> pure ()
+      pids ->
+        Db.replaceHeadParticipants pool greeterHeadId
+          [(onChainId, Nothing, Just onChainId, 0, Nothing) | onChainId <- pids]
     -- Check for HTLC events
     case mHtlcScriptHash of
       Just scriptHash -> HtlcWatcher.processUtxoSnapshot logger pool greeterHeadId scriptHash greeterUtxos

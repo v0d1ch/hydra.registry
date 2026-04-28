@@ -5,9 +5,10 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     cardano-node.url = "github:IntersectMBO/cardano-node";
+    hydra.url = "github:cardano-scaling/hydra/2.0.0";
   };
 
-  outputs = { self, nixpkgs, flake-utils, cardano-node }:
+  outputs = { self, nixpkgs, flake-utils, cardano-node, hydra }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -41,6 +42,11 @@
 
             # Cardano
             cardano-node.packages.${system}.cardano-cli
+            cardano-node.packages.${system}.cardano-node
+
+            # Hydra
+            hydra.packages.${system}.hydra-node
+            hydra.packages.${system}.hydra-tui
 
             # Node / frontend
             pkgs.nodejs
@@ -61,9 +67,11 @@
             echo "GHC: $(ghc --version)"
             echo ""
             echo "Commands:"
-            echo "  cabal build   - build the project"
-            echo "  cabal run     - run the server"
-            echo "  cabal test    - run tests"
+            echo "  cabal build        - build the project"
+            echo "  cabal run          - run the server"
+            echo "  cabal test         - run tests"
+            echo "  ./dev.sh           - start full dev environment"
+            echo "  ./testnet/run.sh   - start cardano-node + hydra heads for e2e testing"
             echo ""
           '';
         };

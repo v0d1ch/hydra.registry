@@ -110,6 +110,5 @@ makeTestApp = do
             , staticDir = "./website/dist"
             , relayGraph = relayGraphVar
             , htlcScriptHash = Nothing
-            , htlcScriptCbor = Nothing
             }
     pure $ serve api (server env)

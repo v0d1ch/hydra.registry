@@ -1,12 +1,46 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Link } from 'react-router-dom'
-import { findRoutes, executeRoute, getRelayGraph, type RouteResponse, type PaymentStatusResponse, type SubgraphResponse } from '../api/client'
+import { Link, useSearchParams } from 'react-router-dom'
+import {
+  findRoutes,
+  executeRoute,
+  getRelayGraph,
+  getExplorerHead,
+  getHeadParticipants,
+  getRegisteredHead,
+  type RouteResponse,
+  type PaymentStatusResponse,
+  type SubgraphResponse,
+  type SubgraphNode,
+} from '../api/client'
 import { useNetwork } from '../context/NetworkContext'
 import RelayGraph from '../components/RelayGraph'
 
+interface RegisteredHead {
+  headId: string
+  host: string
+  port: number
+  isBridge?: boolean
+  registeredAt?: string
+}
+
+function loadRegisteredHeads(): RegisteredHead[] {
+  try {
+    const raw = localStorage.getItem('registeredHeads')
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 export default function RouteExplorer() {
   const { network } = useNetwork()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const headIdFilter = searchParams.get('headId')?.trim() ?? ''
+  const [headIdInput, setHeadIdInput] = useState(headIdFilter)
+  const registeredHeads = useMemo(loadRegisteredHeads, [])
   const [invoiceId, setInvoiceId] = useState('')
   const [senderAddress, setSenderAddress] = useState('')
   const [loading, setLoading] = useState(false)
@@ -17,6 +51,107 @@ export default function RouteExplorer() {
   const [graphData, setGraphData] = useState<SubgraphResponse | null>(null)
   const [graphLoading, setGraphLoading] = useState(false)
   const [graphError, setGraphError] = useState<string | null>(null)
+  // Stand-alone synthesized node for an isolated head (no shared participants
+  // → no edges → not present in /relay/graph). We fetch its metadata directly
+  // so the user can still see their head on the page.
+  const [standaloneNode, setStandaloneNode] = useState<SubgraphNode | null>(null)
+  const [standaloneLoading, setStandaloneLoading] = useState(false)
+
+  // Keep the URL in sync if the user navigates directly with a different ?headId
+  useEffect(() => {
+    setHeadIdInput(headIdFilter)
+  }, [headIdFilter])
+
+  const applyHeadFilter = (id: string) => {
+    const trimmed = id.trim()
+    const next = new URLSearchParams(searchParams)
+    if (trimmed) next.set('headId', trimmed)
+    else next.delete('headId')
+    setSearchParams(next, { replace: false })
+  }
+
+  // Subset the graph to the focal head + its 1-hop neighbours. If the focal
+  // head is isolated (no edges, so absent from /relay/graph), splice in the
+  // standalone node we fetched directly so it still renders as a single dot.
+  const filteredGraph = useMemo<SubgraphResponse | null>(() => {
+    if (!graphData) return null
+    if (!headIdFilter) return graphData
+    const focalEdges = graphData.edges.filter(
+      e => e.fromHead === headIdFilter || e.toHead === headIdFilter,
+    )
+    const keptIds = new Set<string>([headIdFilter])
+    focalEdges.forEach(e => {
+      keptIds.add(e.fromHead)
+      keptIds.add(e.toHead)
+    })
+    const matchingNodes = graphData.nodes.filter(n => keptIds.has(n.headId))
+    const focalAlreadyIn = matchingNodes.some(n => n.headId === headIdFilter)
+    const nodes = focalAlreadyIn || !standaloneNode
+      ? matchingNodes
+      : [standaloneNode, ...matchingNodes]
+    return { nodes, edges: focalEdges }
+  }, [graphData, headIdFilter, standaloneNode])
+
+  // Fetch standalone metadata when the focal head doesn't appear in the
+  // /relay/graph response (no edges). We try the explorer first (most
+  // detailed), then fall back to the registered-heads view (covers heads
+  // that are registered locally but the external explorer sidecar hasn't
+  // observed yet).
+  useEffect(() => {
+    if (!headIdFilter || !graphData) {
+      setStandaloneNode(null)
+      return
+    }
+    if (graphData.nodes.some(n => n.headId === headIdFilter)) {
+      setStandaloneNode(null)
+      return
+    }
+    let cancelled = false
+    setStandaloneLoading(true)
+    ;(async () => {
+      try {
+        const explorer = await getExplorerHead(headIdFilter).catch(() => null)
+        const participants = await getHeadParticipants(headIdFilter).catch(() => [] as never[])
+        if (cancelled) return
+        if (explorer) {
+          setStandaloneNode({
+            headId: explorer.headId,
+            network: explorer.network,
+            hasHtlc: explorer.htlcEnabled,
+            isUserHead: false,
+            participants: participants.map(p => p.address),
+            committedLovelace: participants.reduce(
+              (acc, p) => acc + (p.committedLovelace ?? 0),
+              0,
+            ),
+          })
+          return
+        }
+        // Explorer hasn't seen this head yet — fall back to the registered
+        // view so a freshly-registered head shows up immediately.
+        const reg = await getRegisteredHead(headIdFilter).catch(() => null)
+        if (cancelled) return
+        if (!reg) {
+          setStandaloneNode(null)
+          return
+        }
+        setStandaloneNode({
+          headId: reg.headId,
+          network: reg.onChain?.network ?? (network !== 'All' ? network : 'Unknown'),
+          hasHtlc: reg.onChain?.htlcEnabled ?? false,
+          isUserHead: true,
+          participants: participants.map(p => p.address),
+          committedLovelace: participants.reduce(
+            (acc, p) => acc + (p.committedLovelace ?? 0),
+            0,
+          ),
+        })
+      } finally {
+        if (!cancelled) setStandaloneLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [headIdFilter, graphData, network])
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -237,6 +372,62 @@ export default function RouteExplorer() {
           Nodes are linked when heads share participants. Drag to rearrange, hover to see connections, click for details.
         </p>
 
+        <form
+          className="register-form"
+          onSubmit={e => { e.preventDefault(); applyHeadFilter(headIdInput) }}
+          style={{ marginBottom: '1.5rem' }}
+        >
+          <div className="form-group">
+            <label htmlFor="headIdFilter">Filter by Head ID</label>
+            <input
+              id="headIdFilter"
+              type="text"
+              placeholder="paste a head id to focus on it and its 1-hop neighbours"
+              value={headIdInput}
+              onChange={e => setHeadIdInput(e.target.value)}
+              list="registered-heads"
+            />
+            <datalist id="registered-heads">
+              {registeredHeads.map(h => (
+                <option key={h.headId} value={h.headId}>
+                  {h.host}:{h.port}{h.isBridge ? ' (bridge)' : ''}
+                </option>
+              ))}
+            </datalist>
+            <span className="form-hint">
+              The URL stays in sync (<code>?headId=…</code>) so you can deep-link or share a focused view.
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button type="submit" className="btn btn-primary">Filter</button>
+            {headIdFilter && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { setHeadIdInput(''); applyHeadFilter('') }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </form>
+
+        {headIdFilter && (
+          <div className="register-result" style={{ marginBottom: '1rem' }}>
+            <p>
+              Showing routes through head <code>{headIdFilter.slice(0, 12)}…</code>
+              {filteredGraph && filteredGraph.nodes.length > 0 && (
+                <>
+                  {' '}
+                  · {filteredGraph.edges.length === 0
+                    ? 'isolated (no neighbours yet — register a second head sharing a participant to see edges)'
+                    : `${filteredGraph.nodes.length - 1} neighbour${filteredGraph.nodes.length === 2 ? '' : 's'} · ${filteredGraph.edges.length} edge${filteredGraph.edges.length === 1 ? '' : 's'}`}
+                </>
+              )}
+            </p>
+          </div>
+        )}
+
         {network === 'All' && (
           <div className="relay-graph-empty">
             Select a specific network (Mainnet, Preview, or Preprod) in the navbar to view the graph.
@@ -260,13 +451,19 @@ export default function RouteExplorer() {
           </motion.div>
         )}
 
-        {graphData && graphData.nodes.length > 0 && (
+        {filteredGraph && filteredGraph.nodes.length === 0 && headIdFilter && !graphLoading && !standaloneLoading && (
+          <div className="relay-graph-empty">
+            Head <code>{headIdFilter.slice(0, 12)}…</code> not found on {network} (no record in the explorer or registry).
+          </div>
+        )}
+
+        {filteredGraph && filteredGraph.nodes.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
           >
-            <RelayGraph nodes={graphData.nodes} edges={graphData.edges} />
+            <RelayGraph nodes={filteredGraph.nodes} edges={filteredGraph.edges} />
           </motion.div>
         )}
       </motion.section>

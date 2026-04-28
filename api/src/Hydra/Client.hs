@@ -33,6 +33,12 @@ data HydraEvent
       { greeterHeadId :: Text
       , greeterHeadStatus :: Text
       , greeterUtxos :: [HydraUtxoEntry]
+      , -- | On-chain identifiers (28-byte cardano-vkey hashes, hex) for
+        -- every participant of the head, parsed from the @participants@
+        -- field of the @Greetings@ message. Used to populate
+        -- @head_participants@ so the relay graph can detect bridge
+        -- relationships between locally-registered heads.
+        greeterParticipants :: [Text]
       }
   | HeadSnapshotConfirmed
       { snapHeadId :: Text
@@ -63,7 +69,11 @@ parseHydraMessage = \case
         let utxoEntries = case KM.lookup "snapshotUtxo" obj of
               Just v -> parseUtxoMap v
               _ -> []
-        Just $ HeadGreetings hid hstatus utxoEntries
+        let parts = case KM.lookup "participants" obj of
+              Just (Array arr) ->
+                [s | String s <- foldr (:) [] arr]
+              _ -> []
+        Just $ HeadGreetings hid hstatus utxoEntries parts
       "SnapshotConfirmed" -> do
         hid <- case KM.lookup "headId" obj of
           Just (String s) -> Just s
@@ -132,6 +142,15 @@ getOptionalTextField obj k = case KM.lookup k obj of
 nonNull :: Value -> Maybe Value
 nonNull Null = Nothing
 nonNull v = Just v
+
+-- | Extract a reference script hash from the Hydra @referenceScript@ JSON.
+-- Returns the value of the @.hash@ field if present.
+extractReferenceScriptHash :: Value -> Maybe Text
+extractReferenceScriptHash = \case
+  Object obj -> case KM.lookup "hash" obj of
+    Just (String h) -> Just h
+    _ -> Nothing
+  _ -> Nothing
 
 getLovelace :: KM.KeyMap Value -> Integer
 getLovelace obj = case KM.lookup "value" obj of
