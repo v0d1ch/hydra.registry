@@ -50,6 +50,7 @@ export default function Navbar() {
           <Link to="/invoice" className={isActive('/invoice')}>Invoice</Link>
           <Link to="/routes" className={isActive('/routes')}>Routes</Link>
           <Link to="/balance" className={isActive('/balance')}>Balance</Link>
+          <Link to="/docs" className={isActive('/docs')}>Docs</Link>
           {showNetworkSelector && (
             <div className="network-selector">
               {networks.map(n => (
@@ -106,6 +107,9 @@ export default function Navbar() {
               </Link>
               <Link to="/balance" className={isActive('/balance')}>
                 <span className="mobile-link-prefix">&gt; </span>Balance
+              </Link>
+              <Link to="/docs" className={isActive('/docs')}>
+                <span className="mobile-link-prefix">&gt; </span>Docs
               </Link>
               {showNetworkSelector && (
                 <div className="mobile-network-selector">
