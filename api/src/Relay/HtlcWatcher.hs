@@ -1,19 +1,23 @@
 module Relay.HtlcWatcher
   ( processUtxoSnapshot
+  , htlcScriptAddresses
   )
 where
 
 import Data.Aeson (Value)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KM
+import Data.Either (rights)
 import Data.Functor.Identity (Identity)
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Text (Text)
-import Data.Text qualified as T
 import Data.Time (getCurrentTime)
 import Db qualified
 import Db.Schema (PaymentRoute (..), RouteHop (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraUtxoEntry (..))
+import Hydra.Htlc qualified as Htlc
 import Logging
 
 -- | After each snapshot, detect HTLC lock and claim events by comparing
@@ -29,20 +33,33 @@ processUtxoSnapshot logger pool headId htlcScriptHash utxos = do
   -- Get all active (pending or locked) hops for this head
   activeHops <- Db.getActiveHopsByHead pool headId
 
-  -- Detect locks: UTxOs at HTLC script address with matching payment hash
-  let htlcUtxos = filter (isHtlcUtxo htlcScriptHash) utxos
+  -- Detect locks: UTxOs at HTLC script address with matching payment hash.
+  -- The address comparison is against the bech32-encoded script address
+  -- for every supported network — we don't know the head's network at
+  -- watcher time, but the script hash is fixed so the candidate set is
+  -- small.
+  let scriptAddrs = htlcScriptAddresses htlcScriptHash
+      htlcUtxos = filter (isHtlcUtxo scriptAddrs) utxos
   mapM_ (detectLock logger pool headId activeHops) htlcUtxos
 
   -- Detect claims: locked hops whose HTLC tx is no longer in the UTxO set
   let utxoTxHashes = map (\u -> u.txHash) utxos
   mapM_ (detectClaim logger pool utxoTxHashes) activeHops
 
--- | Check if a UTxO sits at the HTLC script address.
--- We identify HTLC UTxOs by checking if the address contains the script hash,
--- since script addresses embed the script hash.
-isHtlcUtxo :: Text -> HydraUtxoEntry -> Bool
-isHtlcUtxo scriptHash entry =
-  scriptHash `T.isInfixOf` entry.address
+-- | Bech32 enterprise-script addresses for the given script hash on
+-- every supported network. Filters out networks where address derivation
+-- fails (shouldn't happen for the hard-coded list, but kept tolerant).
+htlcScriptAddresses :: Text -> Set Text
+htlcScriptAddresses scriptHash =
+  Set.fromList $
+    rights [Htlc.scriptAddressFromHash scriptHash n | n <- ["Mainnet", "Preview", "Preprod"]]
+
+-- | A UTxO is an HTLC lock candidate when it sits at the bech32 script
+-- address for the configured validator on any supported network and has
+-- an inline datum we can parse.
+isHtlcUtxo :: Set Text -> HydraUtxoEntry -> Bool
+isHtlcUtxo addrs entry =
+  Set.member entry.address addrs
     && hasInlineDatum entry
  where
   hasInlineDatum e = case e.inlineDatum of

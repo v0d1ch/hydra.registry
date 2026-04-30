@@ -9,6 +9,18 @@ import TestUtils
 
 spec :: Spec
 spec = describe "Hydra.Client" $ do
+  describe "normalizeHost" $ do
+    it "rewrites 'localhost' to '127.0.0.1' to force IPv4" $ do
+      -- Linux glibc resolves 'localhost' to ::1 first; hydra-node binds
+      -- IPv4 only, so the IPv6 connect attempt fails with a confusing
+      -- "does not exist" error before the resolver retries IPv4.
+      normalizeHost "localhost" `shouldBe` "127.0.0.1"
+
+    it "passes other hostnames through unchanged" $ do
+      normalizeHost "127.0.0.1" `shouldBe` "127.0.0.1"
+      normalizeHost "myhost.example.com" `shouldBe` "myhost.example.com"
+      normalizeHost "node-2.preview.iohk.io" `shouldBe` "node-2.preview.iohk.io"
+
   describe "parseHydraMessage" $ do
     it "parses Greetings message with headId and status" $ do
       let msg = mkGreetingsJson "head-abc" "Open" []
@@ -66,6 +78,38 @@ spec = describe "Hydra.Client" $ do
           snapHeadId `shouldBe` "head-xyz"
           length snapUtxos `shouldBe` 1
           (head snapUtxos).outputIndex `shouldBe` 1
+        _ -> expectationFailure "Expected HeadSnapshotConfirmed"
+
+    -- Regression for the manual-e2e finding on 2026-04-30: the
+    -- snapshot for an incremental commit reports an empty @utxo@
+    -- and the deposit lives in @utxoToCommit@. Earlier the parser
+    -- only read @utxo@ and so the registry never saw the deposited
+    -- UTxO arrive.
+    it "merges utxoToCommit into snapUtxos for incremental commits" $ do
+      let depositUtxo = mkTxOutJson "addr1deposit" 30_000_000
+          msg =
+            mkSnapshotConfirmedWithCommitJson
+              "head-xyz"
+              [] -- empty utxo
+              [("deposit-tx#1", depositUtxo)] -- pending commit
+      case parseHydraMessage msg of
+        Just HeadSnapshotConfirmed{snapUtxos} -> do
+          length snapUtxos `shouldBe` 1
+          (head snapUtxos).address `shouldBe` "addr1deposit"
+          (head snapUtxos).lovelace `shouldBe` 30_000_000
+        _ -> expectationFailure "Expected HeadSnapshotConfirmed"
+
+    it "merges both utxo and utxoToCommit when both are non-empty" $ do
+      let existing = mkTxOutJson "addr1existing" 5_000_000
+          deposit = mkTxOutJson "addr1deposit" 30_000_000
+          msg =
+            mkSnapshotConfirmedWithCommitJson
+              "head-xyz"
+              [("existing-tx#0", existing)]
+              [("deposit-tx#1", deposit)]
+      case parseHydraMessage msg of
+        Just HeadSnapshotConfirmed{snapUtxos} ->
+          length snapUtxos `shouldBe` 2
         _ -> expectationFailure "Expected HeadSnapshotConfirmed"
 
     it "parses HeadIsClosed message" $ do

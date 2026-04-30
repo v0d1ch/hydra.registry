@@ -90,6 +90,33 @@ mkSnapshotConfirmedJson hid utxos =
         )
       ]
 
+-- | Build a SnapshotConfirmed JSON message with both @utxo@ and
+-- @utxoToCommit@ fields populated. Hydra v2 uses this shape for the
+-- snapshot that includes a pending incremental commit: @utxo@ is the
+-- pre-increment state, @utxoToCommit@ is the deposit waiting to be
+-- folded in. Our parser must merge both.
+mkSnapshotConfirmedWithCommitJson
+  :: Text
+  -> [(Key.Key, Value)]
+  -- ^ utxo (current ledger)
+  -> [(Key.Key, Value)]
+  -- ^ utxoToCommit (pending deposit)
+  -> Value
+mkSnapshotConfirmedWithCommitJson hid utxos toCommit =
+  Object $
+    KM.fromList
+      [ ("tag", String "SnapshotConfirmed")
+      , ("headId", String hid)
+      ,
+        ( "snapshot"
+        , Object $
+            KM.fromList
+              [ ("utxo", Object (KM.fromList utxos))
+              , ("utxoToCommit", Object (KM.fromList toCommit))
+              ]
+        )
+      ]
+
 -- | Build a HeadIsClosed JSON message for testing
 mkHeadIsClosedJson :: Text -> Value
 mkHeadIsClosedJson hid =

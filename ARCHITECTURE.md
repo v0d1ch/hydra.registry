@@ -367,17 +367,20 @@ sequenceDiagram
 Important properties:
 
 - **Atomicity**: receiver claims first; revealing the preimage on chain (in the head snapshot) is what lets every upstream bridge claim. If receiver never claims, every locked hop refunds at timeout.
-- **Timeouts are monotone, decreasing upstream-to-downstream**: hop 0 must time out *after* hop 1, otherwise the bridge could be left holding the bag (claimed downstream but couldn't claim upstream in time).
+- **Timeouts are monotone-decreasing downstream**: `routeToResponse` anchors the *receiver-side* hop at `chainSlot + secondsRemaining` and steps every upstream hop later by `hopTimeoutMarginSlots` (600 slots ≈ 10 min) via the `hopTimeoutSlot` helper in `Api.hs`. That gives a bridge time to claim its upstream lock after seeing the preimage land downstream, without losing the cascade's safety property.
 - **`datum.timeout` is POSIX-ms, not slot**. The Plutus validator compares against `tx.validity_range`, which Plutus exposes as `POSIXTime ms`. `Relay.Slot.slotToPosixMs` does the conversion.
 - **Validity upper bounds are clamped to `min(timeoutSlot - safety, chainTip + ERA_SAFE_WINDOW)`** to avoid `TimeTranslationPastHorizon` from the head ledger. See `clampValidityUpper` in `Api.hs`.
 - **Min-ada on lock outputs** is dynamic: 7 ADA when the validator is inlined as the output's reference script, ~2 ADA when the head has published a shared reference UTxO via `POST /heads/{id}/ref-script`. The constants live in `Api.hs` (`htlcLockMinAdaInlineLovelace`, `htlcLockMinAdaSharedLovelace`).
+- **Blueprints surface fee + collateral guidance**. Lock blueprints carry `recommendedFeeLovelace`; claim/refund blueprints additionally carry `collateralRequiredLovelace` so the caller can size `--tx-in-collateral` + `--tx-out-return-collateral` + `--tx-total-collateral` without learning that the head ledger demands `ceil(fee × collateralPercentage / 100)` from a `TxInvalid` error.
 
 ### 4.8 Detection: `Relay.HtlcWatcher`
 
 The watcher is invoked from `Indexer.processEvent` on every Greetings/SnapshotConfirmed event. It diffs the new UTxO set against the previous one and:
 
-- A **new** UTxO at the HTLC script address whose datum's `payment_hash` matches a `route_hops.secret_hash` → mark that hop `locked`, record `htlc_tx_hash`.
+- A **new** UTxO at the HTLC script address whose datum's `payment_hash` matches a `route_hops.secret_hash` → mark that hop `locked`, record `htlc_tx_hash`. Address comparison is **bech32-equality against the script address derived from the configured script hash for every supported network** (`htlcScriptAddresses`), not a substring match against hex — bech32 is base32 so the hex hash never appears literally.
 - A **disappeared** HTLC UTxO whose tx ref matches a previously-locked hop → mark `claimed`. The watcher doesn't try to extract the preimage from the redeemer; the API receives it via `POST /relay/preimage/{hash}` and propagates.
+
+`Hydra.Client.parseHydraMessage` for `SnapshotConfirmed` merges `snapshot.utxo` ∪ `snapshot.utxoToCommit` so the indexer sees an incremental commit's deposit on the *first* snapshot that incorporates it, instead of waiting for a follow-up snapshot.
 
 ### 4.9 External services
 
@@ -497,6 +500,7 @@ graph LR
 - **TDD:** new behaviour gets a failing test first, then implementation.
 - **Routing identity:** the registry routes by Cardano **key hash** (= 28-byte hash of the participant's `--cardano-signing-key`, also called `OnChainId` in hydra-node), not by bech32 wallet address. Receivers pick where claimed funds land at claim-tx build time.
 - **Slot vs POSIX-ms:** anything compared against `tx.validity_range` inside a Plutus script is POSIX-ms; anything compared against `tx_validity_lower/upper_bound` at the Cardano-CLI level is slot. The `route_hops.timeout_slot` column is a slot; `datum.timeout` in the HTLC datum is POSIX-ms. Don't mix them.
+- **`localhost` resolves to IPv6 first** on Linux glibc, but `hydra-node` binds IPv4 only. `Hydra.Client.normalizeHost` rewrites `"localhost"` → `"127.0.0.1"` before any WS connect; non-loopback hostnames are passed through. If you need to register a hydra-node by hostname (not IP) and it doesn't have an A-record, document it explicitly — there's no fallback past the rewrite today.
 
 ---
 
@@ -511,3 +515,11 @@ These are tracked outside this doc (in conversation tasks and memory). At a glan
 ---
 
 *Last full review:* 2026-04-30. Update the date and the relevant sections together when significant structural change lands.
+
+*Recent updates:*
+- 2026-04-30 — Manual e2e flushed out 5 latent bugs; all fixed with regression tests:
+  - `HtlcWatcher` now compares bech32 script addresses (was a no-op hex substring on bech32).
+  - `parseHydraMessage` merges `snapshot.utxo ∪ snapshot.utxoToCommit` (was missing incremental-commit deposits).
+  - Lock/claim/refund blueprints surface `recommendedFeeLovelace` and `collateralRequiredLovelace`.
+  - Per-hop `hopTimeoutSlot` makes route timeouts strictly monotone-decreasing downstream.
+  - `Hydra.Client.normalizeHost` forces IPv4 for `localhost` to dodge the IPv6-first resolver default.

@@ -813,13 +813,20 @@ routeToResponse pool chainSlot invoiceId senderAddr receiverAddr amount paymentH
   -- and produces deadlines already in the past from the head's view.
   now <- liftIO getCurrentTime
   let secondsRemaining = max 60 (round (diffUTCTime expiresAt now)) :: Int64
-  timeoutSlot <-
+      numHops = length htlcs
+  -- Receiver-side hop (largest @hopIndex@) needs a smaller timeout
+  -- than upstream hops so the bridge has time to react after seeing
+  -- the preimage downstream. Anchor the *downstream-most* hop at the
+  -- invoice deadline and step each upstream hop later by
+  -- 'hopTimeoutMarginSlots'.
+  baseTimeoutSlot <-
     if chainSlot > 0
       then pure (chainSlot + secondsRemaining)
       else case Slot.utcTimeToSlot network expiresAt of
         Just slot -> pure slot
         Nothing ->
           throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ "Unsupported network for slot conversion: " <> network}
+  let timeoutForHop i = hopTimeoutSlot baseTimeoutSlot numHops i
   hopRows <- liftIO $
     mapM
       ( \(i, h) -> do
@@ -834,7 +841,7 @@ routeToResponse pool chainSlot invoiceId senderAddr receiverAddr amount paymentH
             , h.htlcHopReceiver
             , "pending"
             , paymentHash
-            , timeoutSlot
+            , timeoutForHop (fromIntegral i)
             , h.htlcHopFee
             )
       )
@@ -947,6 +954,49 @@ htlcLockMinAdaInlineLovelace = 7_000_000
 htlcLockMinAdaSharedLovelace :: Int64
 htlcLockMinAdaSharedLovelace = 2_000_000
 
+-- | Slot margin between adjacent hops' timeouts. The receiver-side hop
+-- (largest @hopIndex@) gets the smallest timeout; each upstream hop is
+-- 'hopTimeoutMarginSlots' later, so a bridge has time to react after
+-- seeing the preimage downstream before the upstream lock can refund.
+-- 600 slots ≈ 10 minutes on networks with 1s/slot.
+hopTimeoutMarginSlots :: Int64
+hopTimeoutMarginSlots = 600
+
+-- | Deadline slot for hop @i@ in a route of @numHops@ hops, anchored
+-- so the *downstream-most* hop (@i = numHops - 1@) lands at
+-- 'baseSlot'. Every upstream hop is 'hopTimeoutMarginSlots' later so
+-- a bridge has time to claim upstream after seeing the preimage land
+-- downstream.
+--
+-- Property: timeouts are strictly monotone-decreasing in @i@ as long
+-- as 'hopTimeoutMarginSlots > 0', which guarantees the cascade has
+-- the correct safety ordering for any fee/path topology.
+hopTimeoutSlot :: Int64 -> Int -> Int -> Int64
+hopTimeoutSlot baseSlot numHops i =
+  baseSlot + fromIntegral (numHops - 1 - i) * hopTimeoutMarginSlots
+
+-- | Recommended fee floor for a non-Plutus tx (lock side). Locks just
+-- spend a wallet UTxO into a script-address output with inline datum
+-- and (optionally) inline ref script, so 300_000 lovelace covers
+-- typical ~ 200-byte tx-bodies on Conway protocol params.
+recommendedLockFeeLovelace :: Int64
+recommendedLockFeeLovelace = 300_000
+
+-- | Recommended fee floor for a Plutus-spending tx (claim/refund). The
+-- script execution dominates: with our small validator the ledger
+-- demands ~ 1.15 ADA, 1.5 ADA gives margin against future param
+-- changes.
+recommendedScriptFeeLovelace :: Int64
+recommendedScriptFeeLovelace = 1_500_000
+
+-- | Required collateral pledge for a script-spending tx. Cardano
+-- mandates @ceil(fee * collateralPercentage / 100)@ where
+-- @collateralPercentage = 150@, giving 2.25 ADA for a 1.5 ADA fee. We
+-- round up to 2.5 ADA so a single 5 ADA collateral input with a
+-- return-collateral output is enough.
+recommendedCollateralLovelace :: Int64
+recommendedCollateralLovelace = 2_500_000
+
 -- | Clamp a script-tx validity-upper to both the HTLC's timeout
 -- (with safety margin) and the head ledger's era horizon (chain tip
 -- plus a safe window). If neither chain tip is known nor the timeout
@@ -1045,6 +1095,7 @@ handleLockTx pool chainSlotVar rid idx = do
       , lockAmountLovelace = lockAmount
       , validityUpperSlot = clampValidityUpper chainSlot timeoutSlot
       , requiredSignerPkh = Htlc.hexEncode senderPkh
+      , recommendedFeeLovelace = recommendedLockFeeLovelace
       }
 
 -- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/claim-tx
@@ -1071,6 +1122,8 @@ handleClaimTx pool chainSlotVar rid idx req = do
       , refScriptUtxo = mRefScript
       , validityUpperSlot = clampValidityUpper chainSlot timeout
       , requiredSignerPkh = Htlc.hexEncode receiverPkh
+      , recommendedFeeLovelace = recommendedScriptFeeLovelace
+      , collateralRequiredLovelace = recommendedCollateralLovelace
       }
 
 -- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/refund-tx
@@ -1093,6 +1146,8 @@ handleRefundTx pool chainSlotVar rid idx = do
       , refScriptUtxo = mRefScript
       , validityLowerSlot = timeout + htlcSafetyMarginSlots
       , requiredSignerPkh = Htlc.hexEncode senderPkh
+      , recommendedFeeLovelace = recommendedScriptFeeLovelace
+      , collateralRequiredLovelace = recommendedCollateralLovelace
       }
 
 decodeAddrPkh :: Text -> Text -> Handler ByteString

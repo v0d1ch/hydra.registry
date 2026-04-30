@@ -22,8 +22,16 @@ htlcScriptHashHex = "81b00e96189dc6dc1d492c469442d0fce05367e946a1b59de13a17df"
 -- The address is the enterprise script form: header byte (0x71 mainnet,
 -- 0x70 testnet) followed by the 28-byte script hash, encoded as bech32.
 htlcScriptAddress :: Text -> Either Text Text
-htlcScriptAddress network = do
-  scriptHashBytes <- decodeHex28 htlcScriptHashHex
+htlcScriptAddress = scriptAddressFromHash htlcScriptHashHex
+
+-- | Derive the bech32 enterprise-script address for an arbitrary
+-- 28-byte script hash on the given network. Generalises
+-- 'htlcScriptAddress' so callers (e.g. the HTLC watcher) can compare
+-- snapshot UTxO addresses to a known script-hash without re-implementing
+-- bech32 encoding.
+scriptAddressFromHash :: Text -> Text -> Either Text Text
+scriptAddressFromHash hashHex network = do
+  scriptHashBytes <- decodeHex28 hashHex
   (header, hrpText) <- case network of
     "Mainnet" -> Right (0x71 :: Int, "addr" :: Text)
     "Preview" -> Right (0x70, "addr_test")

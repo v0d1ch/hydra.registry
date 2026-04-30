@@ -136,10 +136,23 @@ close_and_fanout() {
 }
 
 CLEANUP_RAN=0
+hard_kill() {
+  log "Hard kill: skipping graceful close, killing hydra-nodes now."
+  for pid in "${PIDS[@]}"; do
+    kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+  done
+  pkill -f -- "$DATA_DIR/.*hydra-state.*/bin/etcd" 2>/dev/null || true
+  wait 2>/dev/null || true
+  exit 130
+}
 cleanup() {
   if [ "$CLEANUP_RAN" -eq 1 ]; then return 0; fi
   CLEANUP_RAN=1
   echo ""
+  # A second ctrl-c during cleanup short-circuits the (slow) graceful
+  # close-and-fanout and hard-kills the nodes immediately.
+  trap hard_kill INT
+  log "Closing heads gracefully — press Ctrl-C again to skip and hard-kill."
   # Hydra-nodes must still be alive for Close/Fanout to reach them.
   close_and_fanout
   log "Shutting down hydra-nodes..."

@@ -442,6 +442,7 @@ data LockTxBlueprint = LockTxBlueprint
   , lockAmountLovelace :: Int64 -- ^ amount + fees of remaining downstream hops
   , validityUpperSlot :: Int64 -- ^ upper bound for tx validity (must be < timeoutSlot)
   , requiredSignerPkh :: Text -- ^ locker's vkey hash (sender of this hop)
+  , recommendedFeeLovelace :: Int64 -- ^ ledger-mandated minimum fee floor for this tx shape (no Plutus, just inline datum + ref script)
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -455,6 +456,15 @@ data ClaimTxRequest = ClaimTxRequest
   deriving anyclass (FromJSON, ToJSON)
 
 -- | Claim-tx blueprint.
+--
+-- Claims run the HTLC validator on chain (well, on L2), so the head's
+-- ledger requires a collateral input alongside the script-spending
+-- input. 'collateralRequiredLovelace' is a generous estimate of how
+-- much pure-ADA value the caller must pledge as collateral
+-- (@--tx-in-collateral@ + @--tx-out-return-collateral@ +
+-- @--tx-total-collateral@). The exact ledger requirement is
+-- @ceil(fee * collateralPercentage / 100)@ — we round up to spare the
+-- caller from estimating execution-cost-driven fee jitter.
 data ClaimTxBlueprint = ClaimTxBlueprint
   { headId :: Text
   , htlcInputTxHash :: Text -- ^ from @route_hops.htlc_tx_hash@
@@ -463,11 +473,13 @@ data ClaimTxBlueprint = ClaimTxBlueprint
   , redeemerCborHex :: Text -- ^ @Claim(preimage)@ as Plutus Data CBOR
   , validityUpperSlot :: Int64
   , requiredSignerPkh :: Text -- ^ claimer pkh = receiver of this hop
+  , recommendedFeeLovelace :: Int64 -- ^ ledger-mandated minimum fee floor (script execution dominates)
+  , collateralRequiredLovelace :: Int64 -- ^ pledge ≥ this much pure-ADA as collateral
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
--- | Refund-tx blueprint.
+-- | Refund-tx blueprint. Same collateral rules as 'ClaimTxBlueprint'.
 data RefundTxBlueprint = RefundTxBlueprint
   { headId :: Text
   , htlcInputTxHash :: Text
@@ -476,6 +488,8 @@ data RefundTxBlueprint = RefundTxBlueprint
   , redeemerCborHex :: Text -- ^ @Refund@ as Plutus Data CBOR
   , validityLowerSlot :: Int64 -- ^ lower bound for tx validity (must be > timeoutSlot)
   , requiredSignerPkh :: Text -- ^ refunder pkh = sender of this hop
+  , recommendedFeeLovelace :: Int64
+  , collateralRequiredLovelace :: Int64
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

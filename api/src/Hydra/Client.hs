@@ -91,15 +91,21 @@ parseHydraMessage = \case
         hid <- case KM.lookup "headId" obj of
           Just (String s) -> Just s
           _ -> Nothing
+        -- In Hydra v2, a snapshot that incorporates an incremental
+        -- commit reports the freshly deposited UTxO under
+        -- @utxoToCommit@ rather than @utxo@. The commit only folds
+        -- into @utxo@ on the *next* snapshot, so reading @utxo@ alone
+        -- leaves us with an empty view until then. We merge both so
+        -- the indexer sees the post-increment state immediately.
         let (snapNum, utxoEntries) = case KM.lookup "snapshot" obj of
               Just (Object snap) ->
                 let num = case KM.lookup "number" snap of
                       Just (Number n) -> round n
                       _ -> 0
-                    utxos = case KM.lookup "utxo" snap of
+                    utxoFrom k = case KM.lookup k snap of
                       Just v -> parseUtxoMap v
                       _ -> []
-                 in (num, utxos)
+                 in (num, utxoFrom "utxo" <> utxoFrom "utxoToCommit")
               _ -> (0, [])
         Just $ HeadSnapshotConfirmed hid snapNum utxoEntries
       "HeadIsClosed" -> do
@@ -194,11 +200,21 @@ readMaybe' s = case reads s of
   [(x, "")] -> Just x
   _ -> Nothing
 
+-- | Force IPv4 for the @localhost@ pseudo-name. Linux glibc resolves
+-- @localhost@ to @::1@ first, but our hydra-node listens on
+-- @0.0.0.0@ — IPv4 only — so the IPv6 connect attempt fails with a
+-- bewildering "does not exist" before the resolver retries IPv4.
+-- Other hostnames are passed through unchanged.
+normalizeHost :: Text -> Text
+normalizeHost h
+  | h == "localhost" = "127.0.0.1"
+  | otherwise = h
+
 -- | Validate a Hydra node by connecting and parsing the Greetings message
 validateHydraNode :: Logger -> Text -> Int -> IO (Either Text HydraEvent)
 validateHydraNode logger hostAddr portNum = do
   result <- try @SomeException $ do
-    WS.runClient (T.unpack hostAddr) portNum "/" $ \conn -> do
+    WS.runClient (T.unpack (normalizeHost hostAddr)) portNum "/" $ \conn -> do
       msg <- WS.receiveData conn
       case decode msg of
         Nothing -> pure $ Left "Failed to parse message from Hydra node"
@@ -226,7 +242,7 @@ connectToHead logger headId hostAddr portNum eventQueue = void $ async $ reconne
   reconnectLoop :: Int -> IO ()
   reconnectLoop delay = do
     listenResult <- try @SomeException $ do
-      WS.runClient (T.unpack hostAddr) portNum "/" $ \conn -> do
+      WS.runClient (T.unpack (normalizeHost hostAddr)) portNum "/" $ \conn -> do
         logInfo logger "Connected to Hydra head" [("headId", toJSON headId), ("host", toJSON hostAddr)]
         forever $ do
           msg <- WS.receiveData conn

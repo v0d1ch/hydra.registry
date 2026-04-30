@@ -11,18 +11,25 @@ import Db qualified
 import Db.Schema (Invoice (..), PaymentRoute (..), RouteHop (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraUtxoEntry (..))
+import Hydra.Htlc qualified as Htlc
 import Logging (LogLevel (..), newLogger)
 import Relay.HtlcWatcher qualified as HtlcWatcher
 import Test.Hspec
 import TestUtils
 
--- | The HTLC script hash used in tests
+-- | The HTLC script hash used in tests — same as the production constant
+-- so the bech32 derivation in the watcher round-trips.
 testScriptHash :: Text
-testScriptHash = "81b00e96189dc6dc1d492c469442d0fce05367e946a1b59de13a17df"
+testScriptHash = Htlc.htlcScriptHashHex
 
--- | An address that embeds the test script hash (mimics a script address)
+-- | The real bech32 Preview script address derived from the test hash.
+-- The watcher does string equality against this; constructing fakes via
+-- substring concatenation no longer works (and that's the regression we
+-- guard against below).
 testScriptAddress :: Text
-testScriptAddress = "addr1w" <> testScriptHash <> "rest"
+testScriptAddress = case Htlc.htlcScriptAddress "Preview" of
+  Right a -> a
+  Left e -> error $ "test setup: " <> show e
 
 testPaymentHash :: Text
 testPaymentHash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
@@ -127,6 +134,58 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       hops <- Db.getRouteHops pool "route-1"
       let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
       hop1.hopHtlcStatus `shouldBe` "pending"
+
+    -- Regression for a bug observed in the manual e2e on 2026-04-30:
+    -- the watcher used to do a substring check of the *hex* script hash
+    -- against the bech32 address, which is structurally impossible to
+    -- match (bech32 uses base32, not hex). The old check tolerated
+    -- synthetic test addresses where the hash happened to appear in the
+    -- string verbatim, masking the bug. With the equality-on-bech32
+    -- check, an address that merely embeds the hex hash but isn't the
+    -- real derived script address is correctly rejected.
+    it "does not match an address that merely embeds the hex hash" $ \pool -> do
+      setupTestPayment pool "head-A" "addr_alice" "addr_bob"
+
+      let fakeAddr = "addr1w" <> testScriptHash <> "rest"
+          fakeUtxo =
+            HydraUtxoEntry
+              { txHash = "lock-tx-fake"
+              , outputIndex = 0
+              , address = fakeAddr
+              , lovelace = 50000000
+              , nativeAssets = Map.empty
+              , datumHash = Nothing
+              , inlineDatum = Just (mkHtlcDatum testPaymentHash)
+              , referenceScript = Nothing
+              }
+      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash [fakeUtxo]
+
+      hops <- Db.getRouteHops pool "route-1"
+      let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
+      hop1.hopHtlcStatus `shouldBe` "pending"
+
+    it "matches the real bech32 script address on Mainnet too" $ \pool -> do
+      setupTestPayment pool "head-A" "addr_alice" "addr_bob"
+      mainnetAddr <- case Htlc.htlcScriptAddress "Mainnet" of
+        Right a -> pure a
+        Left e -> expectationFailure (show e) >> error "unreachable"
+
+      let mainnetUtxo =
+            HydraUtxoEntry
+              { txHash = "lock-tx-mainnet"
+              , outputIndex = 0
+              , address = mainnetAddr
+              , lovelace = 50000000
+              , nativeAssets = Map.empty
+              , datumHash = Nothing
+              , inlineDatum = Just (mkHtlcDatum testPaymentHash)
+              , referenceScript = Nothing
+              }
+      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash [mainnetUtxo]
+
+      hops <- Db.getRouteHops pool "route-1"
+      let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
+      hop1.hopHtlcStatus `shouldBe` "locked"
 
   describe "processUtxoSnapshot — claim detection" $ do
     it "detects a claim when locked HTLC UTxO disappears" $ \pool -> do
