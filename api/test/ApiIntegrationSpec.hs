@@ -72,7 +72,7 @@ spec = with makeTestApp $ describe "API (integration)" $ do
 
   describe "POST /api/v1/heads/register" $ do
     it "returns 400 for unreachable host" $ do
-      let body = encode $ RegisterHead "unreachable-host.invalid" 9999 Nothing Nothing
+      let body = encode $ RegisterHead "unreachable-host.invalid" 9999
       request methodPost "/api/v1/heads/register" [("Content-Type", "application/json")] body
         `shouldRespondWith` 400
 

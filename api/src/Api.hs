@@ -749,33 +749,15 @@ routeToResponse :: Pool -> Text -> Text -> Text -> Int64 -> Text -> UTCTime -> T
 routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash expiresAt network route = do
   rid <- liftIO $ UUID.toText <$> UUID.nextRandom
   -- Expand the dijkstra path into one HTLC per head along the route.
-  -- For E edges we get E+1 heads:
-  --   heads = src : map hopHeadId routeHops
-  -- and E+1 HTLCs:
-  --   hop_0:   in heads[0],   sender = senderAddr,        receiver = bridges[0]
-  --   hop_i:   in heads[i],   sender = bridges[i-1],      receiver = bridges[i]
-  --   hop_E:   in heads[E],   sender = bridges[E-1],      receiver = receiverAddr
-  -- where bridges[i] = the bridging participant (= edge.hopBridgeAddress)
-  -- on edge i. All HTLCs share the same timeout (the invoice expiry).
-  let edgeHops = route.routeHops
-      headSeq = route.routeSrcHead : map (\h -> h.hopHeadId) edgeHops
-      bridges = map (\h -> h.hopBridgeAddress) edgeHops
-      numHtlcs = length headSeq
-      htlcSender i
-        | i == 0 = senderAddr
-        | otherwise = bridges !! (i - 1)
-      htlcReceiver i
-        | i == numHtlcs - 1 = receiverAddr
-        | otherwise = bridges !! i
-      htlcs =
+  -- See Relay.Graph.expandRouteToHtlcs for the contract.
+  let htlcs = Graph.expandRouteToHtlcs senderAddr receiverAddr route
+      hopResponses =
         [ RouteHopResponse
-            { headId = headSeq !! i
-            , bridgeAddress = if i == numHtlcs - 1 then receiverAddr else bridges !! i
-            , fee = case edgeHops of
-                [] -> 0
-                _ -> if i < length edgeHops then (edgeHops !! i).hopFee else 0
+            { headId = h.htlcHopHeadId
+            , bridgeAddress = h.htlcHopReceiver
+            , fee = h.htlcHopFee
             }
-        | i <- [0 .. numHtlcs - 1]
+        | h <- htlcs
         ]
   -- Persist the route
   liftIO $
@@ -787,7 +769,7 @@ routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash expire
       receiverAddr
       amount
       "requested"
-      (Aeson.toJSON htlcs)
+      (Aeson.toJSON hopResponses)
       route.routeTotalFee
       network
   -- Compute timeout slot from invoice expiry
@@ -796,32 +778,28 @@ routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash expire
     Just slot -> pure slot
   hopRows <- liftIO $
     mapM
-      ( \i -> do
+      ( \(i, h) -> do
           hid <- UUID.toText <$> UUID.nextRandom
-          let bridgeAddr = if i == numHtlcs - 1 then receiverAddr else bridges !! i
-              hopFee = case edgeHops of
-                [] -> 0
-                _ -> if i < length edgeHops then (edgeHops !! i).hopFee else 0
           pure
             ( hid
             , rid
             , i
-            , headSeq !! i
-            , bridgeAddr
-            , htlcSender i
-            , htlcReceiver i
+            , h.htlcHopHeadId
+            , h.htlcHopReceiver
+            , h.htlcHopSender
+            , h.htlcHopReceiver
             , "pending"
             , paymentHash
             , timeoutSlot
-            , hopFee
+            , h.htlcHopFee
             )
       )
-      [0 .. numHtlcs - 1]
+      (zip [0 ..] htlcs)
   liftIO $ Db.insertRouteHops pool hopRows
   pure
     RouteResponse
       { routeId = rid
-      , hops = htlcs
+      , hops = hopResponses
       , totalFee = route.routeTotalFee
       }
 

@@ -65,6 +65,52 @@ data RouteHop = RouteHop
   }
   deriving stock (Eq, Ord, Show)
 
+-- | One HTLC in one head, after a graph 'Route' has been expanded into
+-- the per-head sequence the protocol actually executes.
+data HtlcHop = HtlcHop
+  { htlcHopHeadId :: Text
+  , htlcHopSender :: Text
+  , htlcHopReceiver :: Text
+  , htlcHopFee :: Int64
+  }
+  deriving stock (Eq, Ord, Show)
+
+-- | Expand a graph 'Route' into the per-head HTLC sequence the
+-- bridge/sender actually need to lock. A route of @E@ edges visits
+-- @E+1@ heads and produces @E+1@ HTLCs:
+--
+-- * @hop[0]@   in @routeSrcHead@,            sender = @senderAddr@,        receiver = first bridge
+-- * @hop[i]@   in @hop[i-1].hopHeadId@,      sender = previous bridge,     receiver = next bridge
+-- * @hop[E]@   in last edge's @hopHeadId@,   sender = last bridge,         receiver = @receiverAddr@
+--
+-- The degenerate @E == 0@ case (sender and receiver in the same head)
+-- yields one HTLC with @sender = senderAddr@, @receiver = receiverAddr@,
+-- @fee = 0@.
+expandRouteToHtlcs :: Text -> Text -> Route -> [HtlcHop]
+expandRouteToHtlcs senderAddr receiverAddr route =
+  let edgeHops = route.routeHops
+      headSeq = route.routeSrcHead : map (.hopHeadId) edgeHops
+      bridges = map (.hopBridgeAddress) edgeHops
+      fees = map (.hopFee) edgeHops
+      n = length headSeq
+   in [ HtlcHop
+          { htlcHopHeadId = headSeq !! i
+          , htlcHopSender =
+              if i == 0
+                then senderAddr
+                else bridges !! (i - 1)
+          , htlcHopReceiver =
+              if i == n - 1
+                then receiverAddr
+                else bridges !! i
+          , htlcHopFee =
+              if i < length fees
+                then fees !! i
+                else 0
+          }
+      | i <- [0 .. n - 1]
+      ]
+
 -- | Build a relay graph from the component data.
 --
 -- Parameters:

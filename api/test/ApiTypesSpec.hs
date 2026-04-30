@@ -12,7 +12,7 @@ spec :: Spec
 spec = describe "Api.Types" $ do
   describe "JSON roundtrips" $ do
     it "RegisterHead roundtrips" $ do
-      let val = RegisterHead "localhost" 4001 Nothing Nothing
+      let val = RegisterHead "localhost" 4001
       roundtrip val `shouldBe` Just val
 
     it "RegisterHeadResponse roundtrips" $ do
@@ -160,6 +160,9 @@ spec = describe "Api.Types" $ do
               , totalUtxos = 100
               , headsByStatus = mempty
               , explorerHeadCount = 42
+              , uniqueParticipants = 0
+              , headsByNetwork = mempty
+              , totalCommittedLovelace = 0
               }
       roundtrip val `shouldBe` Just val
 
