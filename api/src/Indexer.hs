@@ -4,10 +4,9 @@ import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Control.Monad (forever)
 import Data.Aeson (toJSON)
-import Data.Int (Int64)
 import Data.Text (Text)
 import Db qualified
-import Db.Schema qualified as Schema
+import Db.Schema (Head (..))
 import Hasql.Pool (Pool)
 import Hydra.Client
 import Logging
@@ -33,11 +32,12 @@ processEvent logger pool mHtlcScriptHash = \case
     Db.replaceUtxos pool greeterHeadId greeterUtxos
     Db.updateLastMessageAt pool greeterHeadId
     -- Mirror the head's participants into head_participants so the relay
-    -- graph picks up bridge relationships between locally-registered heads
-    -- without depending on the external hydra-explorer sidecar. We use the
-    -- onChainId hex as the join key (the @address@ column) since the
-    -- WS Greetings doesn't tell us each participant's funding address —
-    -- this still lets the graph builder detect "two heads share a party".
+    -- graph picks up shared-participant relationships between
+    -- locally-registered heads without depending on the public
+    -- hydra-explorer sidecar. The OnChainId hex (pkh of each
+    -- participant's @--cardano-signing-key@) goes into the @address@
+    -- column; routing matches it against the same form supplied by
+    -- senders/receivers when finding a route.
     case greeterParticipants of
       [] -> pure ()
       pids ->
@@ -71,8 +71,8 @@ processEvent logger pool mHtlcScriptHash = \case
     Db.updateHeadStatus pool lostHeadId "unreachable"
 
 -- | Register a new head: validate, store in DB, start listening
-registerHead :: Logger -> Pool -> TQueue HydraEvent -> Text -> Int -> Bool -> Maybe Int64 -> IO (Either Text HydraEvent)
-registerHead logger pool eventQueue hostAddr portNum isBridge bridgeFee = do
+registerHead :: Logger -> Pool -> TQueue HydraEvent -> Text -> Int -> IO (Either Text HydraEvent)
+registerHead logger pool eventQueue hostAddr portNum = do
   result <- validateHydraNode logger hostAddr portNum
   case result of
     Left err -> pure $ Left err
@@ -81,10 +81,10 @@ registerHead logger pool eventQueue hostAddr portNum isBridge bridgeFee = do
       case existing of
         Just _ -> pure $ Left $ "Head " <> greeterHeadId <> " is already registered"
         Nothing -> do
-          Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus isBridge bridgeFee
+          Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus
           Db.replaceUtxos pool greeterHeadId greeterUtxos
           connectToHead logger greeterHeadId hostAddr portNum eventQueue
-          logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr), ("bridge", toJSON isBridge)]
+          logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr)]
           pure $ Right evt
     Right _ -> pure $ Left "Unexpected event during validation"
 

@@ -26,7 +26,6 @@ data SidecarConfig = SidecarConfig
   { explorerUrl :: Text
   , pollIntervalSeconds :: Int
   , relayGraphVar :: TVar Graph.RelayGraph
-  , sidecarHtlcScriptHash :: Maybe Text
   }
 
 -- | Start the explorer sidecar polling loop.
@@ -36,10 +35,21 @@ startSidecar logger pool config = do
   manager <- HTTP.newTlsManager
   logInfo logger "Explorer sidecar started" [("url", toJSON config.explorerUrl), ("interval_s", toJSON config.pollIntervalSeconds)]
   forever $ do
-    result <- try @SomeException $ pollExplorer logger pool manager config
-    case result of
+    -- Polling the public hydra-explorer can fail (DNS, TLS, parse, ...)
+    -- but graph rebuild only depends on local DB state — heads,
+    -- participants, bridges — so it must run every tick regardless of
+    -- whether the explorer was reachable. Otherwise locally-registered
+    -- heads never get an entry in the precomputed graph and findRoutes
+    -- keeps returning empty.
+    pollResult <- try @SomeException $ pollExplorer logger pool manager config
+    case pollResult of
       Left err ->
         logError logger "Explorer sidecar poll failed" [("error", toJSON (show err))]
+      Right () -> pure ()
+    rebuildResult <- try @SomeException $ rebuildRelayGraph logger pool config
+    case rebuildResult of
+      Left err ->
+        logError logger "Relay graph rebuild failed" [("error", toJSON (show err))]
       Right () -> pure ()
     threadDelay (config.pollIntervalSeconds * 1_000_000)
 
@@ -58,7 +68,6 @@ pollExplorer logger pool manager config = do
       mapM_ (syncExplorerHead logger pool) entries
       mapM_ (syncParticipants logger pool) entries
       reconcileStatuses logger pool entries
-      rebuildRelayGraph logger pool config
 
 -- | Resolve the actual network name from networkMagic.
 -- The hydra-explorer reports "Testnet" for both Preview and Preprod.
@@ -109,9 +118,23 @@ syncParticipants logger pool entry = do
 rebuildRelayGraph :: Logger -> Pool -> SidecarConfig -> IO ()
 rebuildRelayGraph logger pool config = do
   explorerHeads <- Db.getAllExplorerHeads pool
+  registeredHeads <- Db.getAllHeads pool
   let getEhId (ExplorerHead{explorerHeadId = hid}) = hid
       getEhNet (ExplorerHead{explorerNetwork = net}) = net
-      heads = [(getEhId eh, getEhNet eh) | eh <- explorerHeads]
+      explorerHeadsList = [(getEhId eh, getEhNet eh) | eh <- explorerHeads]
+      explorerById = Set.fromList [hid | (hid, _) <- explorerHeadsList]
+      -- Locally-registered open heads that the explorer hasn't picked up
+      -- yet still need to participate in the graph; we don't know their
+      -- network, so we assume "Preview" (the network most local testnet
+      -- runs use). Once the explorer indexes them, the explorer's
+      -- network value takes precedence on the next rebuild.
+      registeredOnlyList =
+        [ (h.headId, "Preview" :: Text)
+        | h <- registeredHeads
+        , h.headStatus == "Open"
+        , not (Set.member h.headId explorerById)
+        ]
+      heads = explorerHeadsList <> registeredOnlyList
 
   -- Get all participants
   let getParticipantAddr (HeadParticipant{participantAddress = addr}) = addr
@@ -119,20 +142,7 @@ rebuildRelayGraph logger pool config = do
     ps <- Db.getParticipantsForHead pool hid
     pure [(hid, getParticipantAddr hp) | hp <- ps]) heads
 
-  -- Get bridge heads
-  let getHId (Head{headId = hid}) = hid
-      getBridgeFee (Head{headBridgeFeeLovelace = fee}) = fee
-  bridgeHeadsDb <- Db.getBridgeHeads pool
-  let bridgeHeadIds = Set.fromList [getHId h | h <- bridgeHeadsDb]
-      bridgeFees = Map.fromList
-        [(getHId h, maybe 0 id (getBridgeFee h)) | h <- bridgeHeadsDb]
-
-  -- Get heads with HTLC script
-  htlcHeadIds <- case config.sidecarHtlcScriptHash of
-    Nothing -> pure Set.empty
-    Just scriptHash -> Set.fromList <$> Db.getHeadsWithScript pool scriptHash
-
-  let graph = Graph.buildGraph heads allParticipants bridgeHeadIds bridgeFees htlcHeadIds
+  let graph = Graph.buildGraph heads allParticipants
   atomically $ writeTVar config.relayGraphVar graph
   logInfo logger "Relay graph rebuilt"
     [ ("nodes", toJSON (Map.size graph.graphNodes))

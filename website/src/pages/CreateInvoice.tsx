@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { createInvoice, type InvoiceResponse } from '../api/client'
 
 export default function CreateInvoice() {
-  const [receiverAddress, setReceiverAddress] = useState('')
+  const [receiverKeyHash, setReceiverKeyHash] = useState('')
   const [paymentHash, setPaymentHash] = useState('')
   const [amountAda, setAmountAda] = useState('')
   const [memo, setMemo] = useState('')
@@ -12,8 +12,19 @@ export default function CreateInvoice() {
   const [result, setResult] = useState<InvoiceResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const resetForm = () => {
+    setReceiverKeyHash('')
+    setPaymentHash('')
+    setAmountAda('')
+    setMemo('')
+    setExpiresMinutes('60')
+    setResult(null)
+    setError(null)
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (loading || result) return
     setLoading(true)
     setError(null)
     setResult(null)
@@ -31,9 +42,15 @@ export default function CreateInvoice() {
       return
     }
 
+    if (!receiverKeyHash.match(/^[0-9a-fA-F]{56}$/)) {
+      setError('Receiver key hash must be a 56-character hex string (28-byte vkey hash)')
+      setLoading(false)
+      return
+    }
+
     try {
       const res = await createInvoice({
-        receiverAddress,
+        receiverOnChainId: receiverKeyHash,
         paymentHash,
         amountLovelace,
         memo: memo || undefined,
@@ -80,15 +97,25 @@ export default function CreateInvoice() {
 
         <form className="register-form" onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="receiverAddress">Your Address (Receiver)</label>
+            <label htmlFor="receiverKeyHash">Your Cardano Key Hash (28 bytes hex)</label>
             <input
-              id="receiverAddress"
+              id="receiverKeyHash"
               type="text"
-              placeholder="addr1q..."
-              value={receiverAddress}
-              onChange={e => setReceiverAddress(e.target.value)}
+              placeholder="56-char hex"
+              value={receiverKeyHash}
+              onChange={e => setReceiverKeyHash(e.target.value)}
               required
+              disabled={loading || result !== null}
             />
+            <span className="form-hint">
+              Hash of your hydra-node's <code>--cardano-signing-key</code> verification
+              key — i.e. your participant identity in the head. Routing matches
+              this to find the receiving head. Derive with:
+              <pre className="code-block" style={{ marginTop: '0.4rem' }}>
+                cardano-cli address key-hash \{'\n'}
+                {'  '}--payment-verification-key-file &lt;your-actor&gt;.vk
+              </pre>
+            </span>
           </div>
           <div className="form-group">
             <label htmlFor="paymentHash">Payment Hash</label>
@@ -99,10 +126,12 @@ export default function CreateInvoice() {
               value={paymentHash}
               onChange={e => setPaymentHash(e.target.value)}
               required
+              disabled={loading || result !== null}
             />
             <span className="form-hint">
               Generate a secret offline (e.g. <code>openssl rand -hex 32</code>),
-              then hash it (<code>echo -n SECRET | b2sum -l 256</code>).
+              then hash it
+              (<code>echo -n SECRET | xxd -r -p | b2sum -l 256</code>).
               Paste only the hash here.
             </span>
           </div>
@@ -116,6 +145,7 @@ export default function CreateInvoice() {
                 value={amountAda}
                 onChange={e => setAmountAda(e.target.value)}
                 required
+                disabled={loading || result !== null}
               />
             </div>
             <div className="form-group">
@@ -126,6 +156,7 @@ export default function CreateInvoice() {
                 min="1"
                 value={expiresMinutes}
                 onChange={e => setExpiresMinutes(e.target.value)}
+                disabled={loading || result !== null}
               />
             </div>
           </div>
@@ -137,11 +168,14 @@ export default function CreateInvoice() {
               placeholder="Payment for..."
               value={memo}
               onChange={e => setMemo(e.target.value)}
+              disabled={loading || result !== null}
             />
           </div>
-          <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-            {loading ? 'Creating...' : 'Create Invoice'}
-          </button>
+          {result === null && (
+            <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
+              {loading ? 'Creating…' : 'Create Invoice'}
+            </button>
+          )}
         </form>
 
         {result && (
@@ -173,6 +207,14 @@ export default function CreateInvoice() {
             <p className="invoice-share-hint">
               Share the <strong>invoice ID</strong> with the sender so they can find a route and pay.
             </p>
+            <button
+              type="button"
+              className="btn btn-primary btn-full"
+              style={{ marginTop: '1rem' }}
+              onClick={resetForm}
+            >
+              Create another invoice
+            </button>
           </motion.div>
         )}
 

@@ -6,6 +6,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
+import Hydra.Htlc qualified as Htlc
 
 -- | A node in the relay graph
 data GraphNode = GraphNode
@@ -42,9 +43,17 @@ emptyGraph =
     , graphAddressToHeads = Map.empty
     }
 
--- | A route found by pathfinding
+-- | A route found by pathfinding.
+--
+-- @routeSrcHead@ is the head where the dijkstra started — i.e. the
+-- sender's source head. @routeHops@ are the graph edges (each pointing
+-- to a destination head + bridging participant). Together they describe
+-- the head sequence as @routeSrcHead : map hopHeadId routeHops@. That
+-- sequence has @length routeHops + 1@ heads, which is also the number
+-- of HTLCs that must be locked along the path (one per head).
 data Route = Route
-  { routeHops :: [RouteHop]
+  { routeSrcHead :: Text
+  , routeHops :: [RouteHop]
   , routeTotalFee :: Int64
   }
   deriving stock (Eq, Show)
@@ -59,19 +68,20 @@ data RouteHop = RouteHop
 -- | Build a relay graph from the component data.
 --
 -- Parameters:
---   - heads: [(headId, network)] — all explorer heads
+--   - heads: [(headId, network)] — all explorer + locally-registered heads
 --   - participants: [(headId, address)] — address→head membership
---   - bridgeHeadIds: Set of head_ids that are registered as bridges
---   - bridgeFees: headId → fee in lovelace
---   - htlcHeadIds: Set of head_ids that have the HTLC script
+--
+-- Any participant present in two or more heads of the same network forms
+-- an edge between every pair of those heads — that participant is the
+-- implicit bridge. We no longer require an explicit \"is bridge\"
+-- declaration at registration time; running a node in two heads is the
+-- declaration. Fees are not encoded in the graph anymore — they belong
+-- to a per-payment quote between sender and bridge agent (TBD).
 buildGraph ::
   [(Text, Text)] ->
   [(Text, Text)] ->
-  Set Text ->
-  Map Text Int64 ->
-  Set Text ->
   RelayGraph
-buildGraph heads participants bridgeHeadIds bridgeFees htlcHeadIds =
+buildGraph heads participants =
   let -- Build nodes
       nodes =
         Map.fromList
@@ -79,38 +89,53 @@ buildGraph heads participants bridgeHeadIds bridgeFees htlcHeadIds =
             , GraphNode
                 { nodeHeadId = hid
                 , nodeNetwork = net
-                , nodeHasHtlc = Set.member hid htlcHeadIds
+                , nodeHasHtlc = False
                 }
             )
           | (hid, net) <- heads
           ]
 
-      -- Build address→heads map
+      -- Build the full address→heads map. Participants come in two
+      -- flavours:
+      --   * bech32 Cardano addresses (from the explorer sidecar)
+      --   * raw 28-byte vkey-hash hex (from our Indexer's Greetings parsing)
+      -- We index both forms so callers can look up by either: bech32 →
+      -- also index under derived hex pkh; hex → just itself (we can't
+      -- derive bech32 without knowing the network header byte). This
+      -- map serves sender/receiver lookup in @findRoutes@ and is kept
+      -- unfiltered so popular keys (alice, bob, etc. used by many
+      -- testers on Preview) still locate the right heads.
       addrToHeads =
-        Map.fromListWith Set.union $
-          [(addr, Set.singleton hid) | (hid, addr) <- participants]
+        Map.fromListWith Set.union
+          [ (key, Set.singleton hid)
+          | (hid, addr) <- participants
+          , key <- normalizeAddrKeys addr
+          ]
 
-      -- Build edges: for each address in 2+ heads where at least one head is a bridge,
-      -- create edges between all pairs of those heads
+      -- Bridge candidates: addresses that appear in a small group of
+      -- heads. The upper bound matters because popular default actor
+      -- keys can land in 50+ heads, and treating each as a bridge
+      -- between every pair of those heads creates a combinatorial
+      -- explosion (millions of edges, Dijkstra hangs). We cap at 10
+      -- to discard "everyone has this test key" noise while keeping
+      -- real bridges (typically 2–4 head overlap).
+      bridgeAddrToHeads =
+        Map.filter (\s -> let n = Set.size s in n >= 2 && n <= 10) addrToHeads
+
+      -- For each bridge candidate, create edges between every pair of
+      -- heads it sits in (same network only).
       edges =
         [ GraphEdge
             { edgeFromHead = h1
             , edgeToHead = h2
             , edgeBridgeAddress = addr
-            , edgeFee = Map.findWithDefault 0 h1 bridgeFees
+            , edgeFee = 0
             }
-        | (addr, headSet) <- Map.toList addrToHeads
-        , Set.size headSet >= 2
+        | (addr, headSet) <- Map.toList bridgeAddrToHeads
         , h1 <- Set.toList headSet
         , h2 <- Set.toList headSet
         , h1 /= h2
-        , -- At least one of the heads must be a bridge
-          Set.member h1 bridgeHeadIds || Set.member h2 bridgeHeadIds
-        , -- Both heads must have the HTLC script
-          Set.member h1 htlcHeadIds
-        , Set.member h2 htlcHeadIds
-        , -- Same network
-          maybe False (\n1 -> maybe False (\n2 -> n1.nodeNetwork == n2.nodeNetwork) (Map.lookup h2 nodes)) (Map.lookup h1 nodes)
+        , maybe False (\n1 -> maybe False (\n2 -> n1.nodeNetwork == n2.nodeNetwork) (Map.lookup h2 nodes)) (Map.lookup h1 nodes)
         ]
 
       -- Build adjacency list
@@ -124,14 +149,24 @@ buildGraph heads participants bridgeHeadIds bridgeFees htlcHeadIds =
         , graphAddressToHeads = addrToHeads
         }
 
+-- | Generate the lookup keys for a participant address. Bech32 inputs are
+-- also indexed under their derived 28-byte payment vkey hash hex so
+-- queries against either form match. Hex inputs are returned as-is.
+normalizeAddrKeys :: Text -> [Text]
+normalizeAddrKeys addr = case Htlc.addressOrPkhToBytes addr of
+  Right bytes -> [addr, Htlc.hexEncode bytes]
+  Left _ -> [addr]
+
 -- | Find up to N cheapest routes from sender to receiver using Dijkstra.
 --
 -- The sender and receiver are addresses. We look up which heads they're in
 -- and find paths between those head sets.
 findRoutes :: RelayGraph -> Text -> Text -> Text -> Int -> [Route]
 findRoutes graph senderAddr receiverAddr network maxRoutes =
-  let senderHeads = filterByNetwork $ Map.findWithDefault Set.empty senderAddr graph.graphAddressToHeads
-      receiverHeads = filterByNetwork $ Map.findWithDefault Set.empty receiverAddr graph.graphAddressToHeads
+  let lookupAll a =
+        Set.unions [Map.findWithDefault Set.empty k graph.graphAddressToHeads | k <- normalizeAddrKeys a]
+      senderHeads = filterByNetwork (lookupAll senderAddr)
+      receiverHeads = filterByNetwork (lookupAll receiverAddr)
       -- Try all combinations of sender head → receiver head
       allRoutes =
         [ route
@@ -156,7 +191,7 @@ findRoutes graph senderAddr receiverAddr network maxRoutes =
 -- | Simple Dijkstra from one head to another. Returns at most one route.
 dijkstra :: RelayGraph -> Text -> Text -> [Route]
 dijkstra graph src dst
-  | src == dst = [Route [] 0]
+  | src == dst = [Route src [] 0]
   | otherwise = go initFrontier Set.empty Map.empty
  where
   initFrontier :: Set (Int64, Text, [RouteHop])
@@ -172,7 +207,7 @@ dijkstra graph src dst
     | otherwise =
         let ((cost, current, path), rest) = Set.deleteFindMin frontier
          in if current == dst
-              then [Route (reverse path) cost]
+              then [Route src (reverse path) cost]
               else
                 if Set.member current visited
                   then go rest visited bestCost

@@ -69,9 +69,13 @@ parseHydraMessage = \case
         let utxoEntries = case KM.lookup "snapshotUtxo" obj of
               Just v -> parseUtxoMap v
               _ -> []
-        let parts = case KM.lookup "participants" obj of
-              Just (Array arr) ->
-                [s | String s <- foldr (:) [] arr]
+        -- The Greetings message nests participants under @env@, not at
+        -- the top level. The list is hydra OnChainId hex strings (28-byte
+        -- payment vkey hashes) for every party in the head.
+        let parts = case KM.lookup "env" obj of
+              Just (Object envObj) -> case KM.lookup "participants" envObj of
+                Just (Array arr) -> [s | String s <- foldr (:) [] arr]
+                _ -> []
               _ -> []
         Just $ HeadGreetings hid hstatus utxoEntries parts
       "SnapshotConfirmed" -> do

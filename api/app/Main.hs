@@ -56,7 +56,6 @@ main = do
           { explorerUrl = config.explorerUrl
           , pollIntervalSeconds = config.explorerPollIntervalSeconds
           , relayGraphVar = relayGraphVar
-          , sidecarHtlcScriptHash = config.htlcScriptHash
           }
   sidecarAsync <- async $ Sidecar.startSidecar logger pool sidecarConfig
   logInfo logger "Explorer sidecar started" [("url", toJSON config.explorerUrl), ("interval_s", toJSON config.explorerPollIntervalSeconds)]
@@ -94,6 +93,7 @@ main = do
           , staticDir = config.staticDir
           , relayGraph = relayGraphVar
           , htlcScriptHash = config.htlcScriptHash
+          , htlcScriptCbor = config.htlcScriptCbor
           }
 
   -- Build middleware stack

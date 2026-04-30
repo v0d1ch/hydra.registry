@@ -9,12 +9,17 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
+import Data.ByteString.Base16 qualified as Base16
 import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
+import Data.List qualified as List
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Encoding qualified as T (encodeUtf8)
 import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.UUID.V4 qualified as UUID
@@ -22,6 +27,7 @@ import Db qualified
 import Db.Schema (ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraEvent (..), validateHydraNode)
+import Hydra.Htlc qualified as Htlc
 import Indexer qualified
 import Logging (Logger)
 import Metrics (Metrics, renderMetrics)
@@ -63,6 +69,11 @@ type ApiV1Routes =
     :<|> "relay" :> "routes" :> Capture "routeId" Text :> "execute" :> Post '[JSON] PaymentStatusResponse
     :<|> "relay" :> "payments" :> Capture "paymentId" Text :> Get '[JSON] PaymentStatusResponse
     :<|> "relay" :> "preimage" :> Capture "paymentHash" Text :> ReqBody '[JSON] SubmitPreimageRequest :> Post '[JSON] MessageResponse
+    -- HTLC tx blueprints
+    :<|> "htlc" :> "validator" :> Get '[JSON] HtlcValidatorResponse
+    :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "lock-tx" :> Post '[JSON] LockTxBlueprint
+    :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "claim-tx" :> ReqBody '[JSON] ClaimTxRequest :> Post '[JSON] ClaimTxBlueprint
+    :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "refund-tx" :> Post '[JSON] RefundTxBlueprint
 
 -- | Full API type
 type API =
@@ -92,6 +103,7 @@ data AppEnv = AppEnv
   , staticDir :: FilePath
   , relayGraph :: TVar Graph.RelayGraph
   , htlcScriptHash :: Maybe Text
+  , htlcScriptCbor :: Maybe Text
   }
 
 -- | Create the Servant server
@@ -129,6 +141,10 @@ apiV1Server env =
     :<|> handleExecuteRoute env.pool
     :<|> handleGetPayment env.pool
     :<|> handleSubmitPreimage env.pool
+    :<|> handleHtlcValidator env.htlcScriptCbor
+    :<|> handleLockTx env.pool
+    :<|> handleClaimTx env.pool
+    :<|> handleRefundTx env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
 corsMiddleware :: Middleware
@@ -185,9 +201,7 @@ handleCheckHead logger pool mHost mPort = do
 -- | POST /api/v1/heads/register
 handleRegister :: Logger -> Pool -> TQueue HydraEvent -> RegisterHead -> Handler RegisterHeadResponse
 handleRegister logger pool eventQueue req = do
-  let isBridge = maybe False id req.bridge
-      bridgeFee = fromIntegral @Int @Int64 <$> req.feeLovelace
-  result <- liftIO $ Indexer.registerHead logger pool eventQueue req.host req.port isBridge bridgeFee
+  result <- liftIO $ Indexer.registerHead logger pool eventQueue req.host req.port
   case result of
     Left err ->
       throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
@@ -571,9 +585,19 @@ handleRelayGraph pool mHtlcHash mNetwork = do
   explorerHeads <- liftIO $ Db.getAllExplorerHeads pool
   participants <- liftIO $ Db.getAllParticipants pool
   htlcIds <- liftIO $ getHtlcHeadIds pool mHtlcHash
-  let -- Filter heads by network
+  -- Locally-registered heads with WS status=Open are eligible to participate
+  -- in the graph even when the public hydra-explorer hasn't indexed them yet.
+  -- We trust the user's network selection (the @network@ query param) for
+  -- these — there's no way to derive the network from a hydra-node WS
+  -- Greetings message.
+  registeredHeads <- liftIO $ Db.getAllHeads pool
+  let registeredOpenIds = Set.fromList [h.headId | h <- registeredHeads, h.headStatus == "Open"]
+      -- Filter heads by network
       networkHeads = [eh | eh <- explorerHeads, eh.explorerNetwork == network', eh.explorerStatus == "Open"]
-      headIds = Set.fromList [eh.explorerHeadId | eh <- networkHeads]
+      explorerOpenIds = Set.fromList [eh.explorerHeadId | eh <- networkHeads]
+      -- A head qualifies if EITHER the explorer sees it Open in the
+      -- requested network OR we have it locally registered as Open.
+      headIds = explorerOpenIds `Set.union` registeredOpenIds
       -- Build address→heads map from participants (only small groups to avoid explosion)
       addrToHeads :: Map.Map Text (Set.Set Text)
       addrToHeads =
@@ -620,30 +644,47 @@ handleRelayGraph pool mHtlcHash mNetwork = do
           | p <- participants
           , Set.member p.participantHeadId connectedIds
           ]
+  let explorerNodeIds = Set.fromList [eh.explorerHeadId | eh <- networkHeads]
+      explorerNodes =
+        [ SubgraphNode
+            { headId = eh.explorerHeadId
+            , network = eh.explorerNetwork
+            , hasHtlc = Set.member eh.explorerHeadId htlcIds
+            , isUserHead = False
+            , participants = Map.findWithDefault [] eh.explorerHeadId headParticipants
+            , committedLovelace = Map.findWithDefault 0 eh.explorerHeadId headLovelace
+            }
+        | eh <- networkHeads
+        , Set.member eh.explorerHeadId connectedIds
+        ]
+      -- For registered-only heads (not yet seen by the public explorer),
+      -- synthesize a node entry. Network = requested filter (we have no
+      -- better signal); isUserHead = True so the UI can highlight them.
+      registeredOnlyNodes =
+        [ SubgraphNode
+            { headId = h.headId
+            , network = network'
+            , hasHtlc = Set.member h.headId htlcIds
+            , isUserHead = True
+            , participants = Map.findWithDefault [] h.headId headParticipants
+            , committedLovelace = Map.findWithDefault 0 h.headId headLovelace
+            }
+        | h <- registeredHeads
+        , h.headStatus == "Open"
+        , Set.member h.headId connectedIds
+        , not (Set.member h.headId explorerNodeIds)
+        ]
   pure
     SubgraphResponse
-      { nodes =
-          [ SubgraphNode
-              { headId = eh.explorerHeadId
-              , network = eh.explorerNetwork
-              , hasHtlc = Set.member eh.explorerHeadId htlcIds
-              , isUserHead = False
-              , participants = Map.findWithDefault [] eh.explorerHeadId headParticipants
-              , committedLovelace = Map.findWithDefault 0 eh.explorerHeadId headLovelace
-              }
-          | eh <- networkHeads
-          , Set.member eh.explorerHeadId connectedIds
-          ]
+      { nodes = explorerNodes <> registeredOnlyNodes
       , edges = dedupedEdges
       }
 
 -- | POST /api/v1/relay/invoices
 handleCreateInvoice :: Pool -> CreateInvoiceRequest -> Handler InvoiceResponse
 handleCreateInvoice pool req = do
-  case validateAddress req.receiverAddress of
-    Left err ->
-      throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
-    Right _ -> pure ()
+  when (T.length req.receiverOnChainId /= 56 || not (T.all isHex req.receiverOnChainId)) $
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "receiverOnChainId must be 56 hex chars (28-byte vkey hash)"}
   when (req.amountLovelace <= 0) $
     throwError $ err400{errBody = Aeson.encode $ ErrorResponse "amount must be positive"}
   when (T.null req.paymentHash) $
@@ -652,11 +693,11 @@ handleCreateInvoice pool req = do
   iid <- liftIO $ UUID.toText <$> UUID.nextRandom
   let expirySeconds = maybe 3600 id req.expiresInSeconds
       expiresAt = addUTCTime (fromIntegral expirySeconds) now
-  liftIO $ Db.insertInvoice pool iid req.receiverAddress req.paymentHash req.amountLovelace req.memo "pending" expiresAt
+  liftIO $ Db.insertInvoice pool iid req.receiverOnChainId req.paymentHash req.amountLovelace req.memo "pending" expiresAt
   pure
     InvoiceResponse
       { invoiceId = iid
-      , receiverAddress = req.receiverAddress
+      , receiverOnChainId = req.receiverOnChainId
       , paymentHash = req.paymentHash
       , amountLovelace = req.amountLovelace
       , memo = req.memo
@@ -664,6 +705,8 @@ handleCreateInvoice pool req = do
       , expiresAt = expiresAt
       , createdAt = now
       }
+  where
+    isHex c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 
 -- | GET /api/v1/relay/invoices/:invoiceId
 handleGetInvoice :: Pool -> Text -> Handler InvoiceResponse
@@ -676,7 +719,7 @@ handleGetInvoice pool iid = do
       pure
         InvoiceResponse
           { invoiceId = inv.invoiceId
-          , receiverAddress = inv.invoiceReceiverAddress
+          , receiverOnChainId = inv.invoiceReceiverOnChainId
           , paymentHash = inv.invoicePaymentHash
           , amountLovelace = inv.invoiceAmountLovelace
           , memo = inv.invoiceMemo
@@ -695,19 +738,44 @@ handleFindRoutes pool graphVar req = do
       throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Invoice not found"}
     Just inv -> do
       graph <- liftIO $ readTVarIO graphVar
-      let routes = Graph.findRoutes graph req.senderAddress inv.invoiceReceiverAddress req.network 3
-      mapM (routeToResponse pool req.invoiceId req.senderAddress inv.invoiceReceiverAddress inv.invoiceAmountLovelace inv.invoicePaymentHash inv.invoiceExpiresAt req.network) routes
+      -- Routing keys off Cardano key hashes (= hydra-node OnChainIds):
+      -- sender's identity from the request, receiver's from the invoice.
+      -- The receiver picks where claimed funds ultimately land at
+      -- claim-tx build time.
+      let routes = Graph.findRoutes graph req.senderOnChainId inv.invoiceReceiverOnChainId req.network 3
+      mapM (routeToResponse pool req.invoiceId req.senderOnChainId inv.invoiceReceiverOnChainId inv.invoiceAmountLovelace inv.invoicePaymentHash inv.invoiceExpiresAt req.network) routes
 
 routeToResponse :: Pool -> Text -> Text -> Text -> Int64 -> Text -> UTCTime -> Text -> Graph.Route -> Handler RouteResponse
 routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash expiresAt network route = do
   rid <- liftIO $ UUID.toText <$> UUID.nextRandom
-  let hops =
+  -- Expand the dijkstra path into one HTLC per head along the route.
+  -- For E edges we get E+1 heads:
+  --   heads = src : map hopHeadId routeHops
+  -- and E+1 HTLCs:
+  --   hop_0:   in heads[0],   sender = senderAddr,        receiver = bridges[0]
+  --   hop_i:   in heads[i],   sender = bridges[i-1],      receiver = bridges[i]
+  --   hop_E:   in heads[E],   sender = bridges[E-1],      receiver = receiverAddr
+  -- where bridges[i] = the bridging participant (= edge.hopBridgeAddress)
+  -- on edge i. All HTLCs share the same timeout (the invoice expiry).
+  let edgeHops = route.routeHops
+      headSeq = route.routeSrcHead : map (\h -> h.hopHeadId) edgeHops
+      bridges = map (\h -> h.hopBridgeAddress) edgeHops
+      numHtlcs = length headSeq
+      htlcSender i
+        | i == 0 = senderAddr
+        | otherwise = bridges !! (i - 1)
+      htlcReceiver i
+        | i == numHtlcs - 1 = receiverAddr
+        | otherwise = bridges !! i
+      htlcs =
         [ RouteHopResponse
-            { headId = h.hopHeadId
-            , bridgeAddress = h.hopBridgeAddress
-            , fee = h.hopFee
+            { headId = headSeq !! i
+            , bridgeAddress = if i == numHtlcs - 1 then receiverAddr else bridges !! i
+            , fee = case edgeHops of
+                [] -> 0
+                _ -> if i < length edgeHops then (edgeHops !! i).hopFee else 0
             }
-        | h <- route.routeHops
+        | i <- [0 .. numHtlcs - 1]
         ]
   -- Persist the route
   liftIO $
@@ -719,42 +787,41 @@ routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash expire
       receiverAddr
       amount
       "requested"
-      (Aeson.toJSON hops)
+      (Aeson.toJSON htlcs)
       route.routeTotalFee
       network
   -- Compute timeout slot from invoice expiry
   timeoutSlot <- case Slot.utcTimeToSlot network expiresAt of
     Nothing -> throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Unsupported network for slot conversion"}
     Just slot -> pure slot
-  -- Persist hops with pre-calculated sender/receiver per hop.
-  -- Each hop is one HTLC in one head:
-  --   hop[0]:    sender = route sender,           receiver = hop[0].bridge
-  --   hop[i]:    sender = hop[i-1].bridge,        receiver = hop[i].bridge
-  --   hop[last]: sender = hop[last-1].bridge,     receiver = route receiver
-  -- All hops share the same timeout slot (the invoice expiry).
-  let indexedHops = zip [0 ..] route.routeHops
-      numHops = length route.routeHops
-      hopSenderReceiver idx h =
-        let sender = if idx == 0
-              then senderAddr
-              else (route.routeHops !! (idx - 1)).hopBridgeAddress
-            receiver = if idx == numHops - 1
-              then receiverAddr
-              else h.hopBridgeAddress
-        in (sender, receiver)
   hopRows <- liftIO $
     mapM
-      ( \(idx, h) -> do
+      ( \i -> do
           hid <- UUID.toText <$> UUID.nextRandom
-          let (hopSender, hopReceiver) = hopSenderReceiver idx h
-          pure (hid, rid, idx, h.hopHeadId, h.hopBridgeAddress, hopSender, hopReceiver, "pending", paymentHash, timeoutSlot, h.hopFee)
+          let bridgeAddr = if i == numHtlcs - 1 then receiverAddr else bridges !! i
+              hopFee = case edgeHops of
+                [] -> 0
+                _ -> if i < length edgeHops then (edgeHops !! i).hopFee else 0
+          pure
+            ( hid
+            , rid
+            , i
+            , headSeq !! i
+            , bridgeAddr
+            , htlcSender i
+            , htlcReceiver i
+            , "pending"
+            , paymentHash
+            , timeoutSlot
+            , hopFee
+            )
       )
-      indexedHops
+      [0 .. numHtlcs - 1]
   liftIO $ Db.insertRouteHops pool hopRows
   pure
     RouteResponse
       { routeId = rid
-      , hops = hops
+      , hops = htlcs
       , totalFee = route.routeTotalFee
       }
 
@@ -823,3 +890,150 @@ handleSubmitPreimage pool paymentHash req = do
   -- The on-chain script is the ultimate validator anyway.
   liftIO $ Db.setPreimageByHash pool paymentHash req.preimage
   pure $ MessageResponse "Preimage stored — bridge operators can now claim their hops"
+
+-- ─── HTLC tx blueprint handlers ───
+--
+-- Slots reserved on either side of @timeoutSlot@ so that lock/claim
+-- validity ranges leave room for ledger latency and clock skew. The
+-- on-chain validator only checks @valid_before timeout@ for claims and
+-- @valid_after timeout@ for refunds, so as long as we keep the bound
+-- strict and not too tight, the hop is safe to execute.
+htlcSafetyMarginSlots :: Int64
+htlcSafetyMarginSlots = 60
+
+-- | GET /api/v1/htlc/validator
+handleHtlcValidator :: Maybe Text -> Handler HtlcValidatorResponse
+handleHtlcValidator mCbor = do
+  cbor <- case mCbor of
+    Nothing ->
+      throwError $ err500{errBody = Aeson.encode $ ErrorResponse "HTLC validator CBOR is not configured"}
+    Just c -> pure c
+  pure
+    HtlcValidatorResponse
+      { scriptHash = Htlc.htlcScriptHashHex
+      , scriptCborHex = cbor
+      , scriptType = "PlutusV3"
+      }
+
+-- | Look up route + sorted hops + sanity-check the hop index.
+-- Returns the route, the hop, and the sorted list of hops (in case the
+-- caller needs to compute downstream fees).
+loadHop :: Pool -> Text -> Int -> Handler (PaymentRoute Identity, RouteHop Identity, [RouteHop Identity])
+loadHop pool rid idx = do
+  mRoute <- liftIO $ Db.getPaymentRoute pool rid
+  route <- case mRoute of
+    Nothing -> throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Route not found"}
+    Just r -> pure r
+  rawHops <- liftIO $ Db.getRouteHops pool rid
+  let sorted = List.sortOn (\h -> h.hopIndex) rawHops
+  case List.find (\h -> fromIntegral h.hopIndex == idx) sorted of
+    Nothing ->
+      throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Hop not found in route"}
+    Just hop -> pure (route, hop, sorted)
+
+-- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/lock-tx
+handleLockTx :: Pool -> Text -> Int -> Handler LockTxBlueprint
+handleLockTx pool rid idx = do
+  (route, hop, sorted) <- loadHop pool rid idx
+  scriptAddr <- case Htlc.htlcScriptAddress route.routeNetwork of
+    Left e ->
+      throwError $ err400{errBody = Aeson.encode $ ErrorResponse e}
+    Right a -> pure a
+  hashBytes <- decodeHopHash hop.hopSecretHash
+  senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
+  receiverPkh <- decodeAddrPkh "receiver" hop.hopReceiverAddress
+  -- The HTLC validator's @referenceScript@ bytes ride along in the lock
+  -- output. We don't store them server-side per-route — they're the same
+  -- validator for every hop on every network — so callers can either
+  -- inline the CBOR returned here or fetch it once from /htlc/validator.
+  -- We don't attach it to the lock blueprint to keep responses lean.
+  let timeout = hop.hopTimeoutSlot
+      datumBytes = Htlc.mkDatumCbor hashBytes timeout senderPkh receiverPkh
+      -- amount the locker funds the hop with: invoice amount plus the
+      -- fees of every downstream hop (the bridges shave their cut as
+      -- payment cascades forward).
+      downstreamFees =
+        sum
+          [ h.hopFeeLovelace
+          | h <- sorted
+          , fromIntegral h.hopIndex > idx
+          ]
+      lockAmount = route.routeAmountLovelace + downstreamFees
+  pure
+    LockTxBlueprint
+      { headId = hop.hopHeadId
+      , scriptAddress = scriptAddr
+      , scriptHash = Htlc.htlcScriptHashHex
+      , datum =
+          HtlcDatumView
+            { paymentHash = hop.hopSecretHash
+            , timeoutSlot = timeout
+            , senderPkh = Htlc.hexEncode senderPkh
+            , receiverPkh = Htlc.hexEncode receiverPkh
+            }
+      , datumCborHex = Htlc.hexEncode datumBytes
+      , validatorRefScriptCborHex = "" -- caller fetches once via /htlc/validator
+      , lockAmountLovelace = lockAmount
+      , validityUpperSlot = max 0 (timeout - htlcSafetyMarginSlots)
+      , requiredSignerPkh = Htlc.hexEncode senderPkh
+      }
+
+-- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/claim-tx
+handleClaimTx :: Pool -> Text -> Int -> ClaimTxRequest -> Handler ClaimTxBlueprint
+handleClaimTx pool rid idx req = do
+  (_route, hop, _) <- loadHop pool rid idx
+  htlcTxHash <- requireHtlcTx hop
+  receiverPkh <- decodeAddrPkh "receiver" hop.hopReceiverAddress
+  preimageBytes <- case Base16.decode (T.encodeUtf8 req.preimage) of
+    Left e ->
+      throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ "preimage hex decode failed: " <> T.pack e}
+    Right b -> pure b
+  let redeemer = Htlc.mkClaimRedeemerCbor preimageBytes
+      timeout = hop.hopTimeoutSlot
+  pure
+    ClaimTxBlueprint
+      { headId = hop.hopHeadId
+      , htlcInputTxHash = htlcTxHash
+      , htlcInputIndex = 0
+      , redeemerCborHex = Htlc.hexEncode redeemer
+      , validityUpperSlot = max 0 (timeout - htlcSafetyMarginSlots)
+      , requiredSignerPkh = Htlc.hexEncode receiverPkh
+      }
+
+-- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/refund-tx
+handleRefundTx :: Pool -> Text -> Int -> Handler RefundTxBlueprint
+handleRefundTx pool rid idx = do
+  (_route, hop, _) <- loadHop pool rid idx
+  htlcTxHash <- requireHtlcTx hop
+  senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
+  let timeout = hop.hopTimeoutSlot
+  pure
+    RefundTxBlueprint
+      { headId = hop.hopHeadId
+      , htlcInputTxHash = htlcTxHash
+      , htlcInputIndex = 0
+      , redeemerCborHex = Htlc.hexEncode Htlc.refundRedeemerCbor
+      , validityLowerSlot = timeout + htlcSafetyMarginSlots
+      , requiredSignerPkh = Htlc.hexEncode senderPkh
+      }
+
+decodeAddrPkh :: Text -> Text -> Handler ByteString
+decodeAddrPkh role addr = case Htlc.addressOrPkhToBytes addr of
+  Left e ->
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ role <> " address: " <> e}
+  Right b -> pure b
+
+decodeHopHash :: Text -> Handler ByteString
+decodeHopHash s = case Base16.decode (T.encodeUtf8 s) of
+  Left e ->
+    throwError $ err500{errBody = Aeson.encode $ ErrorResponse $ "secret hash hex decode failed: " <> T.pack e}
+  Right b
+    | BS.length b == 32 -> pure b
+    | otherwise ->
+        throwError $ err500{errBody = Aeson.encode $ ErrorResponse $ "secret hash must be 32 bytes, got " <> T.pack (show (BS.length b))}
+
+requireHtlcTx :: RouteHop Identity -> Handler Text
+requireHtlcTx hop = case hop.hopHtlcTxHash of
+  Nothing ->
+    throwError $ err409{errBody = Aeson.encode $ ErrorResponse "Hop has not been locked yet (htlc_tx_hash is null)"}
+  Just t -> pure t

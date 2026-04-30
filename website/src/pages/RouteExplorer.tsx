@@ -20,7 +20,6 @@ interface RegisteredHead {
   headId: string
   host: string
   port: number
-  isBridge?: boolean
   registeredAt?: string
 }
 
@@ -42,7 +41,7 @@ export default function RouteExplorer() {
   const [headIdInput, setHeadIdInput] = useState(headIdFilter)
   const registeredHeads = useMemo(loadRegisteredHeads, [])
   const [invoiceId, setInvoiceId] = useState('')
-  const [senderAddress, setSenderAddress] = useState('')
+  const [senderOnChainId, setSenderOnChainId] = useState('')
   const [loading, setLoading] = useState(false)
   const [routes, setRoutes] = useState<RouteResponse[] | null>(null)
   const [executing, setExecuting] = useState<string | null>(null)
@@ -169,7 +168,7 @@ export default function RouteExplorer() {
     try {
       const res = await findRoutes({
         invoiceId,
-        senderAddress,
+        senderOnChainId,
         network,
       })
       setRoutes(res)
@@ -243,15 +242,24 @@ export default function RouteExplorer() {
             />
           </div>
           <div className="form-group">
-            <label htmlFor="senderAddress">Your Address (Sender)</label>
+            <label htmlFor="senderKeyHash">Your Cardano Key Hash (28 bytes hex)</label>
             <input
-              id="senderAddress"
+              id="senderKeyHash"
               type="text"
-              placeholder="addr1q..."
-              value={senderAddress}
-              onChange={e => setSenderAddress(e.target.value)}
+              placeholder="56-char hex"
+              value={senderOnChainId}
+              onChange={e => setSenderOnChainId(e.target.value)}
               required
             />
+            <span className="form-hint">
+              Hash of your hydra-node's <code>--cardano-signing-key</code> verification
+              key — your participant identity in the head. Routing matches this
+              against head participants. Derive with:
+              <pre className="code-block" style={{ marginTop: '0.4rem' }}>
+                cardano-cli address key-hash \{'\n'}
+                {'  '}--payment-verification-key-file &lt;your-actor&gt;.vk
+              </pre>
+            </span>
           </div>
           <div className="form-group">
             <label>Network</label>
@@ -390,7 +398,7 @@ export default function RouteExplorer() {
             <datalist id="registered-heads">
               {registeredHeads.map(h => (
                 <option key={h.headId} value={h.headId}>
-                  {h.host}:{h.port}{h.isBridge ? ' (bridge)' : ''}
+                  {h.host}:{h.port}
                 </option>
               ))}
             </datalist>

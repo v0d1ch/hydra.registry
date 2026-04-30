@@ -10,6 +10,9 @@ set -m
 #   Head 1: Alice + Ida   (API :4001, :4011)
 #   Head 2: Bob   + Ida   (API :4002, :4012)
 #
+# Ida is the same actor in both heads; that shared participation is what
+# the registry uses to discover relay routes between Head 1 and Head 2.
+#
 # Usage:
 #   ./testnet/hydra.sh [preview|preprod]   (default: preview)
 
@@ -231,9 +234,9 @@ if [ ! -d "$HYDRA_CLUSTER_CREDS" ]; then
 fi
 
 # Map our role → hydra-cluster actor:
-#   Alice (Head 1 user)  → alice
-#   Ida   (bridge)       → carol  (used in both heads)
-#   Bob   (Head 2 user)  → bob
+#   Alice (Head 1)            → alice
+#   Ida   (in both heads)     → carol
+#   Bob   (Head 2)            → bob
 provision_actor() {
   local dir="$1"
   local actor="$2"
@@ -325,96 +328,48 @@ wipe_persistence() {
 }
 wipe_persistence
 
+# Each hydra-node has the same shape — only the keys, ports, and
+# persistence dir differ between the four invocations. start_node packs
+# that up so the launches below stay readable.
+#
+#   $1 prefix  $2 colour  $3 node-id
+#   $4 api-port  $5 own listen-port  $6 peer listen-port
+#   $7 self-dir  $8 peer-dir  $9 persistence-dir
+start_node() {
+  run_with_prefix "$1" "$2" \
+    hydra-node \
+      --node-id "$3" \
+      --api-host 0.0.0.0 \
+      --api-port "$4" \
+      --listen "127.0.0.1:$5" \
+      --peer "127.0.0.1:$6" \
+      --network "$NETWORK" \
+      --hydra-signing-key "$7/hydra.sk" \
+      --cardano-signing-key "$7/cardano.sk" \
+      --hydra-verification-key "$8/hydra.vk" \
+      --cardano-verification-key "$8/cardano.vk" \
+      --ledger-protocol-parameters "$PROTOCOL_PARAMS" \
+      --deposit-period 300s \
+      --contestation-period 300s \
+      --testnet-magic "$MAGIC" \
+      --node-socket "$NODE_SOCKET" \
+      --persistence-dir "$9"
+}
+
 # ── Head 1: Alice + Ida ──
-log "Starting Head 1: Alice (peer: :$ALICE_HYDRA_PORT) + Ida (peer: :$IDA_H1_HYDRA_PORT)..."
-
-run_with_prefix "alice" "$GREEN" \
-  hydra-node \
-    --node-id alice \
-    --api-host 0.0.0.0 \
-    --api-port "$ALICE_API_PORT" \
-    --listen "127.0.0.1:$ALICE_HYDRA_PORT" \
-    --peer "127.0.0.1:$IDA_H1_HYDRA_PORT" \
-    --network "$NETWORK" \
-    --hydra-signing-key "$ALICE_DIR/hydra.sk" \
-    --cardano-signing-key "$ALICE_DIR/cardano.sk" \
-    --hydra-verification-key "$IDA_DIR/hydra.vk" \
-    --cardano-verification-key "$IDA_DIR/cardano.vk" \
-    --ledger-protocol-parameters "$PROTOCOL_PARAMS" \
-    --deposit-period 300s \
-    --contestation-period 300s \
-    --testnet-magic "$MAGIC" \
-    --node-socket "$NODE_SOCKET" \
-    --persistence-dir "$ALICE_DIR/hydra-state"
-
-# Brief stagger so peer's etcd is listening before we try to join
-sleep 2
-
-run_with_prefix "ida-h1" "$YELLOW" \
-  hydra-node \
-    --node-id ida-h1 \
-    --api-host 0.0.0.0 \
-    --api-port "$IDA_H1_API_PORT" \
-    --listen "127.0.0.1:$IDA_H1_HYDRA_PORT" \
-    --peer "127.0.0.1:$ALICE_HYDRA_PORT" \
-    --network "$NETWORK" \
-    --hydra-signing-key "$IDA_DIR/hydra.sk" \
-    --cardano-signing-key "$IDA_DIR/cardano.sk" \
-    --hydra-verification-key "$ALICE_DIR/hydra.vk" \
-    --cardano-verification-key "$ALICE_DIR/cardano.vk" \
-    --ledger-protocol-parameters "$PROTOCOL_PARAMS" \
-    --deposit-period 300s \
-    --contestation-period 300s \
-    --testnet-magic "$MAGIC" \
-    --node-socket "$NODE_SOCKET" \
-    --persistence-dir "$IDA_DIR/hydra-state-head1"
+log "Starting Head 1: Alice + Ida..."
+start_node alice  "$GREEN"  alice  "$ALICE_API_PORT"  "$ALICE_HYDRA_PORT"  "$IDA_H1_HYDRA_PORT"  "$ALICE_DIR" "$IDA_DIR"   "$ALICE_DIR/hydra-state"
+sleep 2  # let alice's etcd start before the peer joins
+start_node ida-h1 "$YELLOW" ida-h1 "$IDA_H1_API_PORT" "$IDA_H1_HYDRA_PORT" "$ALICE_HYDRA_PORT"   "$IDA_DIR"   "$ALICE_DIR" "$IDA_DIR/hydra-state-head1"
 
 # Let Head 1's etcd cluster fully form before bringing up Head 2
 sleep 4
 
 # ── Head 2: Bob + Ida ──
-log "Starting Head 2: Bob (peer: :$BOB_HYDRA_PORT) + Ida (peer: :$IDA_H2_HYDRA_PORT)..."
-
-run_with_prefix "bob" "$CYAN" \
-  hydra-node \
-    --node-id bob \
-    --api-host 0.0.0.0 \
-    --api-port "$BOB_API_PORT" \
-    --listen "127.0.0.1:$BOB_HYDRA_PORT" \
-    --peer "127.0.0.1:$IDA_H2_HYDRA_PORT" \
-    --network "$NETWORK" \
-    --hydra-signing-key "$BOB_DIR/hydra.sk" \
-    --cardano-signing-key "$BOB_DIR/cardano.sk" \
-    --hydra-verification-key "$IDA_DIR/hydra.vk" \
-    --cardano-verification-key "$IDA_DIR/cardano.vk" \
-    --ledger-protocol-parameters "$PROTOCOL_PARAMS" \
-    --deposit-period 300s \
-    --contestation-period 300s \
-    --testnet-magic "$MAGIC" \
-    --node-socket "$NODE_SOCKET" \
-    --persistence-dir "$BOB_DIR/hydra-state"
-
-# Brief stagger so peer's etcd is listening before we try to join
+log "Starting Head 2: Bob + Ida..."
+start_node bob    "$CYAN"   bob    "$BOB_API_PORT"    "$BOB_HYDRA_PORT"    "$IDA_H2_HYDRA_PORT"  "$BOB_DIR"   "$IDA_DIR"   "$BOB_DIR/hydra-state"
 sleep 2
-
-run_with_prefix "ida-h2" "$RED" \
-  hydra-node \
-    --node-id ida-h2 \
-    --api-host 0.0.0.0 \
-    --api-port "$IDA_H2_API_PORT" \
-    --listen "127.0.0.1:$IDA_H2_HYDRA_PORT" \
-    --peer "127.0.0.1:$BOB_HYDRA_PORT" \
-    --network "$NETWORK" \
-    --hydra-signing-key "$IDA_DIR/hydra.sk" \
-    --cardano-signing-key "$IDA_DIR/cardano.sk" \
-    --hydra-verification-key "$BOB_DIR/hydra.vk" \
-    --cardano-verification-key "$BOB_DIR/cardano.vk" \
-    --ledger-protocol-parameters "$PROTOCOL_PARAMS" \
-    --deposit-period 300s \
-    --contestation-period 300s \
-    --testnet-magic "$MAGIC" \
-    --node-socket "$NODE_SOCKET" \
-    --persistence-dir "$IDA_DIR/hydra-state-head2"
+start_node ida-h2 "$RED"    ida-h2 "$IDA_H2_API_PORT" "$IDA_H2_HYDRA_PORT" "$BOB_HYDRA_PORT"     "$IDA_DIR"   "$BOB_DIR"   "$IDA_DIR/hydra-state-head2"
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
@@ -461,8 +416,8 @@ fi
 echo ""
 echo -e "  ${YELLOW}Next steps:${NC}"
 echo -e "  1. Start the registry: ./dev.sh"
-echo -e "  2. Register heads at http://localhost:5173/register"
-echo -e "     (host: 127.0.0.1, port: $IDA_H1_API_PORT for Head 1, $BOB_API_PORT for Head 2)"
+echo -e "  2. Register both heads at http://localhost:5173/register"
+echo -e "     (any one port from each head — e.g. $ALICE_API_PORT for Head 1, $BOB_API_PORT for Head 2)"
 echo -e "  3. Test the relay flow on http://localhost:5173"
 echo ""
 echo -e "  Press Ctrl+C to gracefully Close + Fanout heads, then stop hydra-nodes."

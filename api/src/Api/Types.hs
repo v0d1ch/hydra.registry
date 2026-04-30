@@ -11,8 +11,6 @@ import GHC.Generics (Generic)
 data RegisterHead = RegisterHead
   { host :: Text
   , port :: Int
-  , bridge :: Maybe Bool
-  , feeLovelace :: Maybe Int
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -282,9 +280,14 @@ data SubgraphResponse = SubgraphResponse
 
 -- ─── Relay types ───
 
--- | Create invoice request
+-- | Create invoice request.
+-- @receiverOnChainId@ is the 28-byte hex pkh of the receiver's
+-- hydra-node @--cardano-signing-key@; the route-finder matches it
+-- against @head_participants@ to locate the destination head, and the
+-- same key signs the final HTLC claim. The receiver picks where
+-- claimed funds land at claim-tx build time.
 data CreateInvoiceRequest = CreateInvoiceRequest
-  { receiverAddress :: Text
+  { receiverOnChainId :: Text
   , paymentHash :: Text
   , amountLovelace :: Int64
   , memo :: Maybe Text
@@ -296,7 +299,7 @@ data CreateInvoiceRequest = CreateInvoiceRequest
 -- | Invoice response
 data InvoiceResponse = InvoiceResponse
   { invoiceId :: Text
-  , receiverAddress :: Text
+  , receiverOnChainId :: Text
   , paymentHash :: Text
   , amountLovelace :: Int64
   , memo :: Maybe Text
@@ -307,10 +310,12 @@ data InvoiceResponse = InvoiceResponse
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
--- | Find routes request
+-- | Find routes request. @senderOnChainId@ identifies the sender's
+-- participation in some head (graph lookup); the lock tx for hop 0
+-- comes from a UTxO the sender chooses at lock-build time.
 data FindRoutesRequest = FindRoutesRequest
   { invoiceId :: Text
-  , senderAddress :: Text
+  , senderOnChainId :: Text
   , network :: Text
   }
   deriving stock (Eq, Show, Generic)
@@ -380,6 +385,86 @@ data SubmitPreimageRequest = SubmitPreimageRequest
 -- | Generic success message response
 data MessageResponse = MessageResponse
   { message :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- ─── HTLC tx blueprints ───
+--
+-- The registry doesn't assemble full Conway-era L2 transactions — that
+-- requires the head's protocol parameters (cost models, exec units),
+-- which the registry doesn't track. Instead it returns a /blueprint/
+-- with every protocol-specific field already computed: the validator
+-- address, the HTLC datum CBOR, the redeemer CBOR, validity slots, and
+-- the required signer pkh. Callers (typically a bridge agent or a sender
+-- client) plug those into a tx body skeleton built by their own
+-- hydra-node helpers, then sign and submit via @NewTx@.
+
+-- | The HTLC validator script — same content for every network.
+data HtlcValidatorResponse = HtlcValidatorResponse
+  { scriptHash :: Text -- ^ 28-byte hex
+  , scriptCborHex :: Text -- ^ Plutus V3 validator bytes, hex-encoded
+  , scriptType :: Text -- ^ "PlutusV3"
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Decoded view of the HTLC datum, alongside its CBOR encoding.
+data HtlcDatumView = HtlcDatumView
+  { paymentHash :: Text -- ^ 32-byte hex (matches the invoice)
+  , timeoutSlot :: Int64
+  , senderPkh :: Text -- ^ 28-byte hex
+  , receiverPkh :: Text -- ^ 28-byte hex
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Lock-tx blueprint: everything needed to construct the L2 tx that
+-- locks hop @i@ of the route into the HTLC validator. The caller
+-- chooses input UTxOs from their head's snapshot, balances the tx, and
+-- signs.
+data LockTxBlueprint = LockTxBlueprint
+  { headId :: Text
+  , scriptAddress :: Text -- ^ HTLC validator address (bech32) for the route's network
+  , scriptHash :: Text
+  , datum :: HtlcDatumView
+  , datumCborHex :: Text -- ^ inline this in the HTLC output
+  , validatorRefScriptCborHex :: Text -- ^ inline this as the output's @reference_script@
+  , lockAmountLovelace :: Int64 -- ^ amount + fees of remaining downstream hops
+  , validityUpperSlot :: Int64 -- ^ upper bound for tx validity (must be < timeoutSlot)
+  , requiredSignerPkh :: Text -- ^ locker's vkey hash (sender of this hop)
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Body for the claim endpoint: the receiver supplies the preimage that
+-- hashes to the invoice's payment hash.
+data ClaimTxRequest = ClaimTxRequest
+  { preimage :: Text -- ^ hex-encoded preimage bytes
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Claim-tx blueprint.
+data ClaimTxBlueprint = ClaimTxBlueprint
+  { headId :: Text
+  , htlcInputTxHash :: Text -- ^ from @route_hops.htlc_tx_hash@
+  , htlcInputIndex :: Int -- ^ output index of the HTLC UTxO inside that tx
+  , redeemerCborHex :: Text -- ^ @Claim(preimage)@ as Plutus Data CBOR
+  , validityUpperSlot :: Int64
+  , requiredSignerPkh :: Text -- ^ claimer pkh = receiver of this hop
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Refund-tx blueprint.
+data RefundTxBlueprint = RefundTxBlueprint
+  { headId :: Text
+  , htlcInputTxHash :: Text
+  , htlcInputIndex :: Int
+  , redeemerCborHex :: Text -- ^ @Refund@ as Plutus Data CBOR
+  , validityLowerSlot :: Int64 -- ^ lower bound for tx validity (must be > timeoutSlot)
+  , requiredSignerPkh :: Text -- ^ refunder pkh = sender of this hop
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

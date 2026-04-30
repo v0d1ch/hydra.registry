@@ -15,11 +15,19 @@ export default function Docs() {
         <h1 className="section-title">HTLC Lock & Claim Reference</h1>
         <p className="register-desc">
           A payment hops through one HTLC per Hydra head along the route. The
-          registry coordinates discovery, watches for state changes, and (soon)
-          builds the lock and claim transactions for you. This page is the
-          ground-truth reference for what those transactions actually look like
-          on the wire — useful if you operate a bridge, build your own client,
-          or want to audit what the helper endpoints emit.
+          registry coordinates discovery, watches for state changes, and emits
+          tx blueprints that callers (typically a bridge agent) assemble and
+          submit via their hydra-node WebSocket. This page is the ground-truth
+          reference for what those transactions look like on the wire.
+        </p>
+        <p className="register-desc">
+          Routing keys off <strong>Cardano key hashes</strong> — the 28-byte
+          pkh of each participant's hydra-node{' '}
+          <code>--cardano-signing-key</code>. That's the head's
+          <em> OnChainId</em>, the participant identity in
+          <code>head_participants</code>, and the receiver in every HTLC
+          datum. Wallet addresses don't enter the protocol; the receiver
+          picks the final claim's output destination at claim-tx build time.
         </p>
       </motion.section>
 
@@ -95,65 +103,70 @@ export default function Docs() {
       >
         <h2 className="section-title">The payment cascade</h2>
         <p className="register-desc">
-          For an N-hop route, every hop locks the value{' '}
-          <code>amount + fees_remaining_downstream</code> in its head, all keyed
-          to the same payment hash. The receiver reveals the preimage on the
-          last hop; bridge operators see the reveal in their head and use it to
-          claim the upstream hop they were named in.
+          A route is a sequence of heads connected by shared participants
+          (the implicit bridges). For <code>E</code> graph edges we have{' '}
+          <code>E+1</code> heads in the path and <code>E+1</code> HTLC locks
+          — one per head. Every lock uses the same payment hash and timeout;
+          the receiver claims the final HTLC and the preimage cascades back
+          to the sender's head.
         </p>
 
         <div className="next-steps">
           <div className="next-step">
             <span className="next-num">1</span>
             <p>
-              <strong>Receiver creates the invoice.</strong> They pick a 32-byte
-              secret offline, compute <code>h = blake2b_256(secret)</code>, and
-              post an invoice to <code>POST /api/v1/relay/invoices</code> with{' '}
-              <code>h</code>, <code>amount</code>, and an expiry. The secret
-              never leaves their machine.
+              <strong>Receiver creates the invoice.</strong> They pick a
+              32-byte secret offline, compute{' '}
+              <code>h = blake2b_256(secret)</code>, and post to{' '}
+              <code>POST /api/v1/relay/invoices</code> with <code>h</code>,
+              their <strong>Cardano key hash</strong>, an amount and expiry.
+              The secret never leaves their machine.
             </p>
           </div>
           <div className="next-step">
             <span className="next-num">2</span>
             <p>
               <strong>Sender finds a route.</strong>{' '}
-              <code>POST /api/v1/relay/routes</code> returns up to 3 ranked
-              routes with hops, fees, and head IDs. The route is persisted with
-              a shared timeout slot derived from the invoice expiry.
+              <code>POST /api/v1/relay/routes</code> takes the invoice id +
+              the sender's Cardano key hash + network. Returns up to 3 ranked
+              routes; each one is persisted as <code>E+1</code> hops with a
+              shared timeout slot derived from the invoice expiry.
             </p>
           </div>
           <div className="next-step">
             <span className="next-num">3</span>
             <p>
-              <strong>Sender locks hop 0.</strong> Inside the head at{' '}
-              <code>route.hops[0].headId</code>, the sender produces an HTLC
-              output with <code>datum.hash = h</code>,{' '}
+              <strong>Sender locks hop 0.</strong> Inside the sender's head,
+              produce an HTLC output with <code>datum.hash = h</code>,{' '}
               <code>datum.timeout = route.timeoutSlot</code>,{' '}
-              <code>datum.sender = senderPkh</code>,{' '}
-              <code>datum.receiver = bridge0Pkh</code>, and the validator
+              <code>datum.sender = senderKeyHash</code>,{' '}
+              <code>datum.receiver = bridge[0]KeyHash</code>, validator
               attached as a reference script.
             </p>
           </div>
           <div className="next-step">
             <span className="next-num">4</span>
             <p>
-              <strong>Each bridge locks the next hop.</strong> Bridge operator{' '}
-              <code>i</code> sees its incoming HTLC inside head <code>i</code>{' '}
-              (via the registry's HTLC watcher), then locks an outgoing HTLC in
+              <strong>Each bridge locks the next hop.</strong> Bridge{' '}
+              <code>i</code> sees its incoming HTLC in head <code>i</code>{' '}
+              (via the registry's HTLC watcher) and locks an outgoing HTLC in
               head <code>i+1</code> with the same <code>hash</code> and{' '}
               <code>timeout</code> but{' '}
-              <code>sender = bridge[i]Pkh, receiver = bridge[i+1]Pkh</code>.
-              Last hop's receiver is the invoice receiver.
+              <code>sender = bridge[i]KeyHash, receiver = bridge[i+1]KeyHash</code>.
+              The last hop's receiver is the invoice's receiver key hash.
             </p>
           </div>
           <div className="next-step">
             <span className="next-num">5</span>
             <p>
               <strong>Receiver claims the final hop</strong> with{' '}
-              <code>Claim(preimage)</code>. They also{' '}
+              <code>Claim(preimage)</code>, signing with their
+              <code>--cardano-signing-key</code> and outputting the value to
+              whatever address they choose (typically their wallet bech32).
+              They also{' '}
               <code>POST /api/v1/relay/preimage/&#123;paymentHash&#125;</code>{' '}
-              so bridges that aren't watching their head's UTxO set directly
-              still learn the secret.
+              so bridges not watching their head's UTxO set directly still
+              learn the secret.
             </p>
           </div>
           <div className="next-step">
@@ -162,7 +175,7 @@ export default function Docs() {
               <strong>Preimage cascades back.</strong> Each bridge claims its
               upstream HTLC in turn. If any hop is unclaimed by{' '}
               <code>timeout</code>, the locker submits a <code>Refund</code>{' '}
-              transaction in that head and recovers their funds.
+              transaction in that head and recovers the funds.
             </p>
           </div>
         </div>
@@ -264,39 +277,110 @@ required_signers:
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.35, duration: 0.5 }}
       >
-        <h2 className="section-title">Helper endpoints (coming soon)</h2>
+        <h2 className="section-title">Helper endpoints</h2>
         <p className="register-desc">
           The registry already stores everything needed to assemble the
           transactions above — head, bridge address, sender/receiver per hop,
-          payment hash, timeout slot, fees. The next milestone exposes that as
-          three POST endpoints that return unsigned tx CBOR for the caller to
-          sign and submit via their hydra-node.
+          payment hash, timeout slot, fees. The endpoints below expose that as{' '}
+          <strong>blueprints</strong>: every protocol-specific field is
+          pre-computed (datum CBOR, redeemer CBOR, script address, validity
+          slot, required signer pkh, lock amount). Callers plug those into a
+          tx body skeleton built by their own hydra-node helpers, then sign
+          and submit via <code>NewTx</code>.
         </p>
+        <p className="register-desc">
+          Why not full unsigned tx CBOR? A complete Conway tx needs Plutus
+          cost models and exec units pulled from the head's protocol
+          parameters, which the registry doesn't track. Returning blueprints
+          keeps the boundary clean and avoids a giant transitive dep on{' '}
+          <code>cardano-api</code>.
+        </p>
+
         <div className="setup-steps">
-          <div className="setup-step">
-            <strong>POST /api/v1/relay/payments/{'{routeId}'}/hops/{'{hopIndex}'}/lock-tx</strong>
-            <p>
-              Returns the unsigned Conway-era L2 transaction that locks hop{' '}
-              <code>hopIndex</code> of the given route. Body provides the
-              locker's vkey hash and a list of L2 UTxOs to spend; response is{' '}
-              <code>{'{ cborHex, txId }'}</code>.
-            </p>
-          </div>
-          <div className="setup-step">
-            <strong>POST /api/v1/relay/payments/{'{routeId}'}/hops/{'{hopIndex}'}/claim-tx</strong>
-            <p>
-              Returns the unsigned claim transaction for the given hop. Body
-              provides the preimage and the claimer's change address.
-            </p>
-          </div>
-          <div className="setup-step">
-            <strong>POST /api/v1/relay/payments/{'{routeId}'}/hops/{'{hopIndex}'}/refund-tx</strong>
-            <p>
-              Returns the unsigned refund transaction. Only valid after{' '}
-              <code>timeout</code>; the response embeds the appropriate validity
-              lower bound.
-            </p>
-          </div>
+          <h3>GET /api/v1/htlc/validator</h3>
+          <p className="register-desc">
+            Returns the HTLC validator bytes (Plutus V3 CBOR), its 28-byte
+            script hash, and the script type. Cache it once per network — the
+            same validator is reused on every lock output as a reference
+            script.
+          </p>
+          <pre className="code-block">{`{ "scriptHash":   "81b00e96...13a17df",
+  "scriptCborHex": "5903d40101...",
+  "scriptType":    "PlutusV3" }`}</pre>
+        </div>
+
+        <div className="setup-steps">
+          <h3>POST /api/v1/relay/payments/{'{routeId}'}/hops/{'{hopIndex}'}/lock-tx</h3>
+          <p className="register-desc">
+            Builds a lock-tx blueprint for hop <code>hopIndex</code> (one of
+            the route's <code>E+1</code> hops). No request body. The locker
+            is the hop's <em>sender</em>: the original payer for hop 0, the
+            bridge of the previous hop otherwise.
+          </p>
+          <pre className="code-block">{`{ "headId":             "...",
+  "scriptAddress":      "addr_test1wq...",
+  "scriptHash":         "81b00e96...13a17df",
+  "datum": {
+    "paymentHash": "<32 bytes hex>",
+    "timeoutSlot": 12345678,
+    "senderPkh":   "<28 bytes hex>",
+    "receiverPkh": "<28 bytes hex>"
+  },
+  "datumCborHex":              "d87984...",
+  "validatorRefScriptCborHex": "",
+  "lockAmountLovelace":  1500000,
+  "validityUpperSlot":   12345618,
+  "requiredSignerPkh":   "<28 bytes hex>" }`}</pre>
+          <p className="register-desc">
+            <code>lockAmountLovelace</code> = invoice amount + sum of fees of
+            every downstream hop, so each bridge can shave its cut as the
+            payment cascades forward. Inline <code>datumCborHex</code> in the
+            HTLC output and attach the validator (from{' '}
+            <code>/htlc/validator</code>) as the output's reference script.
+            <code>validatorRefScriptCborHex</code> is left empty in the
+            response to keep payloads small; fetch the validator once and
+            cache it.
+          </p>
+        </div>
+
+        <div className="setup-steps">
+          <h3>POST /api/v1/relay/payments/{'{routeId}'}/hops/{'{hopIndex}'}/claim-tx</h3>
+          <p className="register-desc">
+            Builds a claim-tx blueprint. Body:{' '}
+            <code>{'{ "preimage": "<hex>" }'}</code>. Returns 409 if the hop
+            hasn't been locked yet (no <code>htlc_tx_hash</code> recorded).
+          </p>
+          <pre className="code-block">{`{ "headId":            "...",
+  "htlcInputTxHash":   "<txid hex>",
+  "htlcInputIndex":    0,
+  "redeemerCborHex":   "d87981...",
+  "validityUpperSlot": 12345618,
+  "requiredSignerPkh": "<receiver pkh hex>" }`}</pre>
+          <p className="register-desc">
+            The on-chain validator already knows the datum (it's inline on
+            the HTLC UTxO) — you only need to feed it the redeemer and a
+            tx that satisfies <code>validity.upper &lt; timeout</code> and is
+            signed by <code>requiredSignerPkh</code>.
+          </p>
+        </div>
+
+        <div className="setup-steps">
+          <h3>POST /api/v1/relay/payments/{'{routeId}'}/hops/{'{hopIndex}'}/refund-tx</h3>
+          <p className="register-desc">
+            Builds a refund-tx blueprint. No request body. Same 409 behavior
+            if the hop wasn't locked.
+          </p>
+          <pre className="code-block">{`{ "headId":            "...",
+  "htlcInputTxHash":   "<txid hex>",
+  "htlcInputIndex":    0,
+  "redeemerCborHex":   "d87a80",
+  "validityLowerSlot": 12345738,
+  "requiredSignerPkh": "<sender pkh hex>" }`}</pre>
+          <p className="register-desc">
+            The refund is only acceptable to the validator once{' '}
+            <code>validity.lower &gt; timeout</code>; the registry adds a
+            small slot safety margin so submission has slack.
+          </p>
         </div>
       </motion.section>
     </div>

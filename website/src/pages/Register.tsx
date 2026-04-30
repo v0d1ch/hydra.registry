@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { registerHead, checkHead } from '../api/client'
 
@@ -10,8 +11,6 @@ interface WizardState {
   selectedNetwork: string
   host: string
   port: string
-  isBridge: boolean
-  bridgeFee: string
 }
 
 function loadWizardState(): Partial<WizardState> {
@@ -33,13 +32,12 @@ const NETWORKS = ['Mainnet', 'Preview', 'Preprod'] as const
 const STEPS = ['Connection', 'Register']
 
 export default function Register() {
+  const location = useLocation()
   const saved = loadWizardState()
   const [step, setStep] = useState(saved.step ?? 0)
   const [selectedNetwork, setSelectedNetwork] = useState<string>(saved.selectedNetwork ?? NETWORKS[1])
   const [host, setHost] = useState(saved.host ?? '')
   const [port, setPort] = useState(saved.port ?? '')
-  const [isBridge, setIsBridge] = useState(saved.isBridge ?? false)
-  const [bridgeFee, setBridgeFee] = useState(saved.bridgeFee ?? '')
 
   // Connection step error
   const [connectError, setConnectError] = useState<string | null>(null)
@@ -54,10 +52,10 @@ export default function Register() {
 
   useEffect(() => {
     const data: WizardState = {
-      step, selectedNetwork, host, port, isBridge, bridgeFee,
+      step, selectedNetwork, host, port,
     }
     try { localStorage.setItem(WIZARD_STORAGE_KEY, JSON.stringify(data)) } catch { /* ignore */ }
-  }, [step, selectedNetwork, host, port, isBridge, bridgeFee])
+  }, [step, selectedNetwork, host, port])
 
   useEffect(() => {
     if (regResult) {
@@ -65,13 +63,29 @@ export default function Register() {
     }
   }, [regResult])
 
+  // Clicking the navbar "Register" link while already on /register doesn't
+  // change the URL, but React Router still issues a fresh `location.key`
+  // for the same-path navigation. If we're showing a success card from a
+  // previous registration when that fires, reset the form so the next
+  // click feels like a fresh start.
+  useEffect(() => {
+    if (regResult) {
+      setStep(0)
+      setHost('')
+      setPort('')
+      setConnectError(null)
+      setRegResult(null)
+      setRegError(null)
+    }
+    // intentionally only on location.key change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
+
   const resetWizard = () => {
     try { localStorage.removeItem(WIZARD_STORAGE_KEY) } catch { /* ignore */ }
     setStep(0)
     setHost('')
     setPort('')
-    setIsBridge(false)
-    setBridgeFee('')
     setConnectError(null)
     setRegResult(null)
     setRegError(null)
@@ -81,12 +95,8 @@ export default function Register() {
     if (!host.trim()) return 'Host is required'
     const portNum = parseInt(port, 10)
     if (isNaN(portNum) || portNum < 1 || portNum > 65535) return 'Port must be a number between 1 and 65535'
-    if (isBridge && bridgeFee) {
-      const fee = parseFloat(bridgeFee)
-      if (isNaN(fee) || fee < 0) return 'Bridge fee must be a non-negative number'
-    }
     return null
-  }, [host, port, isBridge, bridgeFee])
+  }, [host, port])
 
   const [checkLoading, setCheckLoading] = useState(false)
 
@@ -120,16 +130,12 @@ export default function Register() {
     setRegResult(null)
 
     const portNum = parseInt(port, 10)
-    let feeLovelace: number | undefined
-    if (isBridge && bridgeFee) {
-      feeLovelace = Math.round(parseFloat(bridgeFee) * 1_000_000)
-    }
 
     try {
-      const res = await registerHead(host, portNum, isBridge || undefined, feeLovelace)
+      const res = await registerHead(host, portNum)
       setRegResult(res)
       const stored = JSON.parse(localStorage.getItem('registeredHeads') ?? '[]')
-      stored.push({ headId: res.headId, host, port: portNum, isBridge, registeredAt: new Date().toISOString() })
+      stored.push({ headId: res.headId, host, port: portNum, registeredAt: new Date().toISOString() })
       localStorage.setItem('registeredHeads', JSON.stringify(stored))
     } catch (err) {
       setRegError(err instanceof Error ? err.message : 'Registration failed')
@@ -224,42 +230,6 @@ export default function Register() {
                 </div>
               </div>
 
-              <div className="form-group bridge-toggle">
-                <label className="toggle-label">
-                  <input
-                    type="checkbox"
-                    checked={isBridge}
-                    onChange={e => setIsBridge(e.target.checked)}
-                  />
-                  <span className="toggle-text">Register as bridge operator</span>
-                </label>
-                <span className="form-hint">
-                  Bridge operators relay payments between heads and earn fees per hop.
-                </span>
-              </div>
-
-              {isBridge && (
-                <motion.div
-                  className="form-group"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <label htmlFor="bridgeFee">Bridge Fee (ADA per hop)</label>
-                  <input
-                    id="bridgeFee"
-                    type="text"
-                    placeholder="e.g. 0.5"
-                    value={bridgeFee}
-                    onChange={e => setBridgeFee(e.target.value)}
-                  />
-                  <span className="form-hint">
-                    Fee charged per payment relayed through this head. Leave empty for 0.
-                  </span>
-                </motion.div>
-              )}
-
               {connectError && (
                 <div className="register-result error" style={{ marginBottom: '1rem' }}>
                   <p>{connectError}</p>
@@ -302,12 +272,6 @@ export default function Register() {
                   <span className="result-label">Network</span>
                   <span className="result-value">{selectedNetwork}</span>
                 </div>
-                {isBridge && (
-                  <div className="result-row">
-                    <span className="result-label">Bridge Fee</span>
-                    <span className="result-value">{bridgeFee || '0'} ADA/hop</span>
-                  </div>
-                )}
               </div>
 
               <button
@@ -337,6 +301,14 @@ export default function Register() {
                       <span className="result-value">{regResult.status}</span>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-full"
+                    style={{ marginTop: '1rem' }}
+                    onClick={resetWizard}
+                  >
+                    Register another head
+                  </button>
                 </motion.div>
               )}
 

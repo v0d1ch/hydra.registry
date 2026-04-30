@@ -62,7 +62,7 @@ export interface ParticipantHeadInfo {
 // ─── Relay types ───
 
 export interface CreateInvoiceRequest {
-  receiverAddress: string
+  receiverOnChainId: string
   paymentHash: string
   amountLovelace: number
   memo?: string
@@ -71,7 +71,7 @@ export interface CreateInvoiceRequest {
 
 export interface InvoiceResponse {
   invoiceId: string
-  receiverAddress: string
+  receiverOnChainId: string
   paymentHash: string
   amountLovelace: number
   memo: string | null
@@ -82,7 +82,7 @@ export interface InvoiceResponse {
 
 export interface FindRoutesRequest {
   invoiceId: string
-  senderAddress: string
+  senderOnChainId: string
   network: string
 }
 
@@ -169,15 +169,10 @@ export function getHeads(count?: number, page?: number): Promise<HeadInfo[]> {
   return request<HeadInfo[]>(`/api/v1/heads${qs ? `?${qs}` : ''}`)
 }
 
-export function registerHead(
-  host: string,
-  port: number,
-  bridge?: boolean,
-  feeLovelace?: number
-): Promise<RegisterHeadResponse> {
+export function registerHead(host: string, port: number): Promise<RegisterHeadResponse> {
   return request<RegisterHeadResponse>('/api/v1/heads/register', {
     method: 'POST',
-    body: JSON.stringify({ host, port, bridge, feeLovelace }),
+    body: JSON.stringify({ host, port }),
   })
 }
 
@@ -239,6 +234,74 @@ export function submitPreimage(paymentHash: string, preimage: string): Promise<{
   return request<{ message: string }>(`/api/v1/relay/preimage/${paymentHash}`, {
     method: 'POST',
     body: JSON.stringify({ preimage }),
+  })
+}
+
+// ─── HTLC tx blueprints ───
+
+export interface HtlcValidatorResponse {
+  scriptHash: string
+  scriptCborHex: string
+  scriptType: string
+}
+
+export interface HtlcDatumView {
+  paymentHash: string
+  timeoutSlot: number
+  senderPkh: string
+  receiverPkh: string
+}
+
+export interface LockTxBlueprint {
+  headId: string
+  scriptAddress: string
+  scriptHash: string
+  datum: HtlcDatumView
+  datumCborHex: string
+  validatorRefScriptCborHex: string
+  lockAmountLovelace: number
+  validityUpperSlot: number
+  requiredSignerPkh: string
+}
+
+export interface ClaimTxBlueprint {
+  headId: string
+  htlcInputTxHash: string
+  htlcInputIndex: number
+  redeemerCborHex: string
+  validityUpperSlot: number
+  requiredSignerPkh: string
+}
+
+export interface RefundTxBlueprint {
+  headId: string
+  htlcInputTxHash: string
+  htlcInputIndex: number
+  redeemerCborHex: string
+  validityLowerSlot: number
+  requiredSignerPkh: string
+}
+
+export function getHtlcValidator(): Promise<HtlcValidatorResponse> {
+  return request<HtlcValidatorResponse>('/api/v1/htlc/validator')
+}
+
+export function getLockTxBlueprint(routeId: string, hopIndex: number): Promise<LockTxBlueprint> {
+  return request<LockTxBlueprint>(`/api/v1/relay/payments/${routeId}/hops/${hopIndex}/lock-tx`, {
+    method: 'POST',
+  })
+}
+
+export function getClaimTxBlueprint(routeId: string, hopIndex: number, preimage: string): Promise<ClaimTxBlueprint> {
+  return request<ClaimTxBlueprint>(`/api/v1/relay/payments/${routeId}/hops/${hopIndex}/claim-tx`, {
+    method: 'POST',
+    body: JSON.stringify({ preimage }),
+  })
+}
+
+export function getRefundTxBlueprint(routeId: string, hopIndex: number): Promise<RefundTxBlueprint> {
+  return request<RefundTxBlueprint>(`/api/v1/relay/payments/${routeId}/hops/${hopIndex}/refund-tx`, {
+    method: 'POST',
   })
 }
 

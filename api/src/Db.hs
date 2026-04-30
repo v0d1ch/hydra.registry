@@ -99,7 +99,7 @@ initDb pool =
       \CREATE INDEX IF NOT EXISTS idx_head_participants_address ON head_participants (address);\
       \CREATE TABLE IF NOT EXISTS invoices (\
       \  invoice_id TEXT PRIMARY KEY,\
-      \  receiver_address TEXT NOT NULL,\
+      \  receiver_on_chain_id TEXT NOT NULL DEFAULT '',\
       \  payment_hash TEXT NOT NULL,\
       \  amount_lovelace BIGINT NOT NULL,\
       \  memo TEXT,\
@@ -107,6 +107,8 @@ initDb pool =
       \  expires_at TIMESTAMPTZ NOT NULL,\
       \  created_at TIMESTAMPTZ NOT NULL DEFAULT now()\
       \);\
+      \ALTER TABLE invoices ADD COLUMN IF NOT EXISTS receiver_on_chain_id TEXT NOT NULL DEFAULT '';\
+      \ALTER TABLE invoices DROP COLUMN IF EXISTS receiver_address;\
       \CREATE TABLE IF NOT EXISTS payment_routes (\
       \  route_id TEXT PRIMARY KEY,\
       \  invoice_id TEXT NOT NULL,\
@@ -137,11 +139,28 @@ initDb pool =
       \  locked_at TIMESTAMPTZ,\
       \  claimed_at TIMESTAMPTZ\
       \);\
-      \CREATE INDEX IF NOT EXISTS idx_route_hops_route_id ON route_hops (route_id);"
+      \CREATE INDEX IF NOT EXISTS idx_route_hops_route_id ON route_hops (route_id);\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS sender_address TEXT NOT NULL DEFAULT '';\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS receiver_address TEXT NOT NULL DEFAULT '';\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS htlc_status TEXT NOT NULL DEFAULT 'pending';\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS htlc_tx_hash TEXT;\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS secret_hash TEXT NOT NULL DEFAULT '';\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS preimage TEXT;\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS timeout_slot BIGINT NOT NULL DEFAULT 0;\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS fee_lovelace BIGINT NOT NULL DEFAULT 0;\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ;\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;"
 
--- | Insert a new head or update on conflict
-upsertHead :: Pool -> Text -> Text -> Int -> Text -> Bool -> Maybe Int64 -> IO ()
-upsertHead pool hid hostAddr portNum status' isBridge bridgeFee = do
+-- | Insert a new head or update on conflict.
+--
+-- Bridge status used to be captured here as a per-head flag, but the
+-- relay graph now treats every shared-participant pair as a potential
+-- bridge automatically — there's no longer a registration-time bridge
+-- declaration. The columns @is_bridge@ and @bridge_fee_lovelace@ stay in
+-- the schema so older rows aren't disturbed; new inserts always write
+-- the defaults.
+upsertHead :: Pool -> Text -> Text -> Int -> Text -> IO ()
+upsertHead pool hid hostAddr portNum status' = do
   now <- getCurrentTime
   runSession pool $
     Session.statement () $
@@ -160,8 +179,8 @@ upsertHead pool hid hostAddr portNum status' isBridge bridgeFee = do
                       , createdAt = lit now
                       , updatedAt = lit now
                       , lastMessageAt = lit (Just now)
-                      , headIsBridge = lit isBridge
-                      , headBridgeFeeLovelace = lit bridgeFee
+                      , headIsBridge = lit False
+                      , headBridgeFeeLovelace = lit Nothing
                       }
                   ]
             , onConflict =
@@ -667,17 +686,6 @@ getParticipantsForHead pool hid =
           Rel8.where_ (p.participantHeadId ==. lit hid)
           pure p
 
--- | Get all bridge heads (optionally filtered by network via explorer_heads join)
-getBridgeHeads :: Pool -> IO [Head Identity]
-getBridgeHeads pool =
-  runSession pool $
-    Session.statement () $
-      Rel8.run $
-        Rel8.select $ do
-          h <- Rel8.each headSchema
-          Rel8.where_ (h.headIsBridge ==. lit True)
-          pure h
-
 -- | Get heads that have a specific reference script hash in their UTxOs
 getHeadsWithScript :: Pool -> Text -> IO [Text]
 getHeadsWithScript pool scriptHash =
@@ -695,7 +703,7 @@ getHeadsWithScript pool scriptHash =
 
 -- | Insert a new invoice
 insertInvoice :: Pool -> Text -> Text -> Text -> Int64 -> Maybe Text -> Text -> UTCTime -> IO ()
-insertInvoice pool iid receiverAddr payHash amount memo status' expiresAt = do
+insertInvoice pool iid receiverOnChainId payHash amount memo status' expiresAt = do
   now <- getCurrentTime
   runSession pool $
     Session.statement () $
@@ -707,7 +715,7 @@ insertInvoice pool iid receiverAddr payHash amount memo status' expiresAt = do
                 Rel8.values
                   [ Invoice
                       { invoiceId = lit iid
-                      , invoiceReceiverAddress = lit receiverAddr
+                      , invoiceReceiverOnChainId = lit receiverOnChainId
                       , invoicePaymentHash = lit payHash
                       , invoiceAmountLovelace = lit amount
                       , invoiceMemo = lit memo

@@ -124,10 +124,17 @@ headParticipantSchema =
           }
     }
 
--- | Invoices for relay payment requests
+-- | Invoices for relay payment requests.
+--
+-- The receiver is identified by their 28-byte Cardano key hash (the pkh
+-- of the hydra-node @--cardano-signing-key@). Routing matches it against
+-- @head_participants@ to find the destination head, and the same key
+-- signs the final HTLC claim. Where claimed funds ultimately land is
+-- the receiver's choice at claim-tx build time (an output to their
+-- wallet, or wherever).
 data Invoice f = Invoice
   { invoiceId :: Column f Text
-  , invoiceReceiverAddress :: Column f Text
+  , invoiceReceiverOnChainId :: Column f Text
   , invoicePaymentHash :: Column f Text
   , invoiceAmountLovelace :: Column f Int64
   , invoiceMemo :: Column f (Maybe Text)
@@ -148,7 +155,7 @@ invoiceSchema =
     , columns =
         Invoice
           { invoiceId = "invoice_id"
-          , invoiceReceiverAddress = "receiver_address"
+          , invoiceReceiverOnChainId = "receiver_on_chain_id"
           , invoicePaymentHash = "payment_hash"
           , invoiceAmountLovelace = "amount_lovelace"
           , invoiceMemo = "memo"
