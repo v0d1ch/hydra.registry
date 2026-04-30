@@ -7,8 +7,8 @@ set -m
 # Generates participant keys (Alice, Ida, Bob), fetches protocol parameters,
 # then starts four hydra-node processes wired into two heads:
 #
-#   Head 1: Alice + Ida   (API :4001, :4011)
-#   Head 2: Bob   + Ida   (API :4002, :4012)
+#   Head 1: Alice + Ida   (API :14001, :14011)
+#   Head 2: Bob   + Ida   (API :14002, :14012)
 #
 # Ida is the same actor in both heads; that shared participation is what
 # the registry uses to discover relay routes between Head 1 and Head 2.
@@ -56,8 +56,8 @@ PIDS=()
 # We send Close/Fanout from a node whose --cardano-signing-key has fuel:
 #   Head 1: ida-h1 port (carol.sk → fuel)
 #   Head 2: bob   port (bob.sk   → fuel)
-HEAD1_CLOSE_PORT=4011
-HEAD2_CLOSE_PORT=4002
+HEAD1_CLOSE_PORT=14011
+HEAD2_CLOSE_PORT=14002
 
 # Send Close + Fanout to a single head, polling the WS Greetings for the
 # expected status transitions. Skips if the head is Idle / already
@@ -185,7 +185,7 @@ preflight_cleanup() {
     pkill -KILL -f -- "$DATA_DIR/.*hydra-state.*/bin/etcd" 2>/dev/null || true
     local waited=0
     while [ "$waited" -lt 30 ]; do
-      if ! ss -tln 2>/dev/null | grep -qE ":(4001|4002|4011|4012|5001|5002|5011|5012|2379|2380|2389|2390)\b"; then
+      if ! ss -tln 2>/dev/null | grep -qE ":(14001|14002|14011|14012|15001|15002|15011|15012|2379|2380|2389|2390)\b"; then
         log "Preflight: ports clear after ${waited}s"
         return 0
       fi
@@ -298,15 +298,17 @@ if [ ! -f "$PROTOCOL_PARAMS" ]; then
 fi
 
 # ── Hydra-node ports ──
-ALICE_HYDRA_PORT=5001
-ALICE_API_PORT=4001
-IDA_H1_HYDRA_PORT=5011
-IDA_H1_API_PORT=4011
+# Bumped out of the 4xxx/5xxx range to avoid colliding with hydra-cluster
+# tests in other repos (which default to API :4001, peer :5001, etc).
+ALICE_HYDRA_PORT=15001
+ALICE_API_PORT=14001
+IDA_H1_HYDRA_PORT=15011
+IDA_H1_API_PORT=14011
 
-BOB_HYDRA_PORT=5002
-BOB_API_PORT=4002
-IDA_H2_HYDRA_PORT=5012
-IDA_H2_API_PORT=4012
+BOB_HYDRA_PORT=15002
+BOB_API_PORT=14002
+IDA_H2_HYDRA_PORT=15012
+IDA_H2_API_PORT=14012
 
 preflight_cleanup
 

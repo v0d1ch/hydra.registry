@@ -56,10 +56,10 @@ warn() { echo -e "${YELLOW}==>${NC} $1"; }
 err()  { echo -e "${RED}==>${NC} $1"; }
 
 # ── Hydra-node ports (must match hydra.sh) ──
-ALICE_API_PORT=4001
-IDA_H1_API_PORT=4011
-BOB_API_PORT=4002
-IDA_H2_API_PORT=4012
+ALICE_API_PORT=14001
+IDA_H1_API_PORT=14011
+BOB_API_PORT=14002
+IDA_H2_API_PORT=14012
 
 # ── WebSocket helpers ──
 # Read the Greetings message and return its headStatus. Tolerant of timeouts
