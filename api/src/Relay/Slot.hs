@@ -1,12 +1,13 @@
 module Relay.Slot
   ( utcTimeToSlot
+  , slotToPosixMs
   )
 where
 
 import Data.Int (Int64)
 import Data.Text (Text)
 import Data.Time (UTCTime, diffUTCTime)
-import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
 
 -- | Convert a UTCTime to an L1 slot number for the given Cardano network.
 --
@@ -20,6 +21,18 @@ utcTimeToSlot network utcTime = do
   let elapsed = utcTime `diffUTCTime` shelleyStart
       slotsSinceShelley = floor elapsed :: Int64
   pure (shelleySlot + slotsSinceShelley)
+
+-- | Convert an L1 slot number to a POSIX-time-in-milliseconds for the given
+-- network. Plutus script contexts represent @tx.validity_range@ as a
+-- @POSIXTime@ in milliseconds, so any field a script compares against the
+-- validity range — like the HTLC validator's @datum.timeout@ — must be in
+-- the same unit.
+slotToPosixMs :: Text -> Int64 -> Maybe Int64
+slotToPosixMs network slot = do
+  (shelleyStart, shelleySlot) <- shelleyGenesis network
+  let shelleyStartMs = floor (utcTimeToPOSIXSeconds shelleyStart) * 1000 :: Int64
+      slotsSinceShelley = slot - shelleySlot
+  pure (shelleyStartMs + slotsSinceShelley * 1000)
 
 -- | Shelley era genesis parameters per network.
 -- Returns (shelleyStartTime, shelleyStartSlot).

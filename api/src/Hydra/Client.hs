@@ -8,6 +8,7 @@ import Control.Monad (forever, void)
 import Data.Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
+import Data.Int (Int64)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -39,6 +40,11 @@ data HydraEvent
         -- @head_participants@ so the relay graph can detect bridge
         -- relationships between locally-registered heads.
         greeterParticipants :: [Text]
+      , -- | The hydra-node's view of the L1 chain tip slot, parsed from
+        -- @currentSlot@ in the Greetings JSON. Used by the registry to
+        -- derive route timeouts from chain time rather than the
+        -- registry's possibly-skewed system clock.
+        greeterCurrentSlot :: Int64
       }
   | HeadSnapshotConfirmed
       { snapHeadId :: Text
@@ -77,7 +83,10 @@ parseHydraMessage = \case
                 Just (Array arr) -> [s | String s <- foldr (:) [] arr]
                 _ -> []
               _ -> []
-        Just $ HeadGreetings hid hstatus utxoEntries parts
+        let curSlot = case KM.lookup "currentSlot" obj of
+              Just (Number n) -> round n
+              _ -> 0
+        Just $ HeadGreetings hid hstatus utxoEntries parts curSlot
       "SnapshotConfirmed" -> do
         hid <- case KM.lookup "headId" obj of
           Just (String s) -> Just s

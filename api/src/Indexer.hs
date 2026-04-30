@@ -4,6 +4,7 @@ import Control.Concurrent.STM
 import Control.Exception (SomeException, try)
 import Control.Monad (forever)
 import Data.Aeson (toJSON)
+import Data.Int (Int64)
 import Data.Text (Text)
 import Db qualified
 import Db.Schema (Head (..))
@@ -14,20 +15,25 @@ import Relay.HtlcWatcher qualified as HtlcWatcher
 
 -- | Run the indexer loop that processes events from all Hydra head connections.
 -- This function blocks forever — run it in a separate thread.
-startIndexer :: Logger -> Pool -> Maybe Text -> TQueue HydraEvent -> IO ()
-startIndexer logger pool mHtlcScriptHash eventQueue = forever $ do
+--
+-- @latestChainSlot@ is bumped on every Greetings/snapshot event that
+-- carries a slot — handlers (e.g. @handleFindRoutes@) read it to derive
+-- timeouts from chain time rather than the registry's system clock.
+startIndexer :: Logger -> Pool -> TVar Int64 -> Maybe Text -> TQueue HydraEvent -> IO ()
+startIndexer logger pool chainSlotVar mHtlcScriptHash eventQueue = forever $ do
   event <- atomically $ readTQueue eventQueue
-  result <- try @SomeException $ processEvent logger pool mHtlcScriptHash event
+  result <- try @SomeException $ processEvent logger pool chainSlotVar mHtlcScriptHash event
   case result of
     Left err ->
       logError logger "Error processing indexer event" [("error", toJSON (show err))]
     Right () -> pure ()
 
 -- | Process a single Hydra event
-processEvent :: Logger -> Pool -> Maybe Text -> HydraEvent -> IO ()
-processEvent logger pool mHtlcScriptHash = \case
-  HeadGreetings{greeterHeadId, greeterHeadStatus, greeterUtxos, greeterParticipants} -> do
+processEvent :: Logger -> Pool -> TVar Int64 -> Maybe Text -> HydraEvent -> IO ()
+processEvent logger pool chainSlotVar mHtlcScriptHash = \case
+  HeadGreetings{greeterHeadId, greeterHeadStatus, greeterUtxos, greeterParticipants, greeterCurrentSlot} -> do
     logInfo logger "Head greeting received" [("headId", toJSON greeterHeadId), ("status", toJSON greeterHeadStatus)]
+    bumpChainSlot chainSlotVar greeterCurrentSlot
     Db.updateHeadStatus pool greeterHeadId greeterHeadStatus
     Db.replaceUtxos pool greeterHeadId greeterUtxos
     Db.updateLastMessageAt pool greeterHeadId
@@ -97,3 +103,12 @@ reconnectAllHeads logger pool eventQueue = do
  where
   reconnect h =
     connectToHead logger h.headId h.headHost (fromIntegral h.headPort) eventQueue
+
+-- | Update the registry's view of L1 chain time, monotonically.
+-- Greetings/snapshot events from any head's WS bring chain ticks; we
+-- keep the highest seen so handlers can compute slot-relative deadlines
+-- without depending on the registry's local system clock.
+bumpChainSlot :: TVar Int64 -> Int64 -> IO ()
+bumpChainSlot var newSlot
+  | newSlot <= 0 = pure ()
+  | otherwise = atomically $ modifyTVar' var (max newSlot)

@@ -20,7 +20,7 @@ import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T (encodeUtf8)
-import Data.Time (UTCTime, addUTCTime, getCurrentTime)
+import Data.Time (UTCTime, addUTCTime, diffUTCTime, getCurrentTime)
 import Data.UUID qualified as UUID
 import Data.UUID.V4 qualified as UUID
 import Db qualified
@@ -102,6 +102,11 @@ data AppEnv = AppEnv
   , addressCache :: Cache [UtxoResponse]
   , staticDir :: FilePath
   , relayGraph :: TVar Graph.RelayGraph
+  , -- | Highest L1 chain slot seen across any registered head's
+    -- Greetings. Bumped by the Indexer; read by handlers that need to
+    -- derive timeouts/validity bounds from chain time rather than the
+    -- registry's local system clock.
+    latestChainSlot :: TVar Int64
   , htlcScriptHash :: Maybe Text
   , htlcScriptCbor :: Maybe Text
   }
@@ -137,14 +142,14 @@ apiV1Server env =
     :<|> handleRelayGraph env.pool env.htlcScriptHash
     :<|> handleCreateInvoice env.pool
     :<|> handleGetInvoice env.pool
-    :<|> handleFindRoutes env.pool env.relayGraph
+    :<|> handleFindRoutes env.pool env.relayGraph env.latestChainSlot
     :<|> handleExecuteRoute env.pool
     :<|> handleGetPayment env.pool
     :<|> handleSubmitPreimage env.pool
     :<|> handleHtlcValidator env.htlcScriptCbor
-    :<|> handleLockTx env.pool
-    :<|> handleClaimTx env.pool
-    :<|> handleRefundTx env.pool
+    :<|> handleLockTx env.pool env.latestChainSlot
+    :<|> handleClaimTx env.pool env.latestChainSlot
+    :<|> handleRefundTx env.pool env.latestChainSlot
 
 -- | CORS middleware that allows the frontend to talk to the API
 corsMiddleware :: Middleware
@@ -729,8 +734,8 @@ handleGetInvoice pool iid = do
           }
 
 -- | POST /api/v1/relay/routes
-handleFindRoutes :: Pool -> TVar Graph.RelayGraph -> FindRoutesRequest -> Handler [RouteResponse]
-handleFindRoutes pool graphVar req = do
+handleFindRoutes :: Pool -> TVar Graph.RelayGraph -> TVar Int64 -> FindRoutesRequest -> Handler [RouteResponse]
+handleFindRoutes pool graphVar chainSlotVar req = do
   -- Look up the invoice
   mInvoice <- liftIO $ Db.getInvoice pool req.invoiceId
   case mInvoice of
@@ -738,15 +743,16 @@ handleFindRoutes pool graphVar req = do
       throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Invoice not found"}
     Just inv -> do
       graph <- liftIO $ readTVarIO graphVar
+      chainSlot <- liftIO $ readTVarIO chainSlotVar
       -- Routing keys off Cardano key hashes (= hydra-node OnChainIds):
       -- sender's identity from the request, receiver's from the invoice.
       -- The receiver picks where claimed funds ultimately land at
       -- claim-tx build time.
       let routes = Graph.findRoutes graph req.senderOnChainId inv.invoiceReceiverOnChainId req.network 3
-      mapM (routeToResponse pool req.invoiceId req.senderOnChainId inv.invoiceReceiverOnChainId inv.invoiceAmountLovelace inv.invoicePaymentHash inv.invoiceExpiresAt req.network) routes
+      mapM (routeToResponse pool chainSlot req.invoiceId req.senderOnChainId inv.invoiceReceiverOnChainId inv.invoiceAmountLovelace inv.invoicePaymentHash inv.invoiceExpiresAt req.network) routes
 
-routeToResponse :: Pool -> Text -> Text -> Text -> Int64 -> Text -> UTCTime -> Text -> Graph.Route -> Handler RouteResponse
-routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash expiresAt network route = do
+routeToResponse :: Pool -> Int64 -> Text -> Text -> Text -> Int64 -> Text -> UTCTime -> Text -> Graph.Route -> Handler RouteResponse
+routeToResponse pool chainSlot invoiceId senderAddr receiverAddr amount paymentHash expiresAt network route = do
   rid <- liftIO $ UUID.toText <$> UUID.nextRandom
   -- Expand the dijkstra path into one HTLC per head along the route.
   -- See Relay.Graph.expandRouteToHtlcs for the contract.
@@ -772,10 +778,21 @@ routeToResponse pool invoiceId senderAddr receiverAddr amount paymentHash expire
       (Aeson.toJSON hopResponses)
       route.routeTotalFee
       network
-  -- Compute timeout slot from invoice expiry
-  timeoutSlot <- case Slot.utcTimeToSlot network expiresAt of
-    Nothing -> throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Unsupported network for slot conversion"}
-    Just slot -> pure slot
+  -- Derive timeout slot from chain tip + remaining seconds on the
+  -- invoice's @expiresAt@. Falling back to a system-clock conversion
+  -- when no chain tip is known yet (e.g. very fresh process before any
+  -- Greetings landed). Chain-tip-based math avoids the failure mode
+  -- where the registry's local system clock drifts behind chain time
+  -- and produces deadlines already in the past from the head's view.
+  now <- liftIO getCurrentTime
+  let secondsRemaining = max 60 (round (diffUTCTime expiresAt now)) :: Int64
+  timeoutSlot <-
+    if chainSlot > 0
+      then pure (chainSlot + secondsRemaining)
+      else case Slot.utcTimeToSlot network expiresAt of
+        Just slot -> pure slot
+        Nothing ->
+          throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ "Unsupported network for slot conversion: " <> network}
   hopRows <- liftIO $
     mapM
       ( \(i, h) -> do
@@ -879,6 +896,34 @@ handleSubmitPreimage pool paymentHash req = do
 htlcSafetyMarginSlots :: Int64
 htlcSafetyMarginSlots = 60
 
+-- | How far ahead of the chain tip we're willing to set a script-tx
+-- validity bound. The head ledger refuses to translate slots that lie
+-- past its known era horizon (typically @chainTip + safezone@,
+-- ≈ 16h on Preview/Preprod/Mainnet); 4 hours leaves comfortable
+-- headroom while still letting routes survive a reasonable submit
+-- delay.
+eraSafeWindowSlots :: Int64
+eraSafeWindowSlots = 14400
+
+-- | Minimum ADA we put on the HTLC lock output. The output carries the
+-- inline HTLC datum and (for now) the inline reference script, so its
+-- ledger-mandated minimum is roughly 5.6 ADA on preview/preprod params.
+-- 7 ADA gives breathing room. When we move the validator to a shared
+-- per-head ref-script UTxO, this floor drops back to ≈ 2 ADA.
+htlcLockMinAdaLovelace :: Int64
+htlcLockMinAdaLovelace = 7_000_000
+
+-- | Clamp a script-tx validity-upper to both the HTLC's timeout
+-- (with safety margin) and the head ledger's era horizon (chain tip
+-- plus a safe window). If neither chain tip is known nor the timeout
+-- is reachable, we return @0@ so the tx is rejected as invalid rather
+-- than silently signing a ticking time bomb.
+clampValidityUpper :: Int64 -> Int64 -> Int64
+clampValidityUpper chainSlot timeoutSlot =
+  let timeoutBound = timeoutSlot - htlcSafetyMarginSlots
+      horizonBound = if chainSlot > 0 then chainSlot + eraSafeWindowSlots else timeoutBound
+   in max 0 (min timeoutBound horizonBound)
+
 -- | GET /api/v1/htlc/validator
 handleHtlcValidator :: Maybe Text -> Handler HtlcValidatorResponse
 handleHtlcValidator mCbor = do
@@ -910,9 +955,10 @@ loadHop pool rid idx = do
     Just hop -> pure (route, hop, sorted)
 
 -- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/lock-tx
-handleLockTx :: Pool -> Text -> Int -> Handler LockTxBlueprint
-handleLockTx pool rid idx = do
+handleLockTx :: Pool -> TVar Int64 -> Text -> Int -> Handler LockTxBlueprint
+handleLockTx pool chainSlotVar rid idx = do
   (route, hop, sorted) <- loadHop pool rid idx
+  chainSlot <- liftIO $ readTVarIO chainSlotVar
   scriptAddr <- case Htlc.htlcScriptAddress route.routeNetwork of
     Left e ->
       throwError $ err400{errBody = Aeson.encode $ ErrorResponse e}
@@ -925,18 +971,28 @@ handleLockTx pool rid idx = do
   -- validator for every hop on every network — so callers can either
   -- inline the CBOR returned here or fetch it once from /htlc/validator.
   -- We don't attach it to the lock blueprint to keep responses lean.
-  let timeout = hop.hopTimeoutSlot
-      datumBytes = Htlc.mkDatumCbor hashBytes timeout senderPkh receiverPkh
-      -- amount the locker funds the hop with: invoice amount plus the
+  let timeoutSlot = hop.hopTimeoutSlot
+  -- The HTLC validator compares @datum.timeout@ against the tx's
+  -- @validity_range@, which Plutus exposes as a 'POSIXTime' in
+  -- milliseconds. So @datum.timeout@ has to be POSIX-ms too — not the
+  -- slot we use elsewhere.
+  timeoutMs <- case Slot.slotToPosixMs route.routeNetwork timeoutSlot of
+    Just ms -> pure ms
+    Nothing ->
+      throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ "Unsupported network for slot conversion: " <> route.routeNetwork}
+  let datumBytes = Htlc.mkDatumCbor hashBytes timeoutMs senderPkh receiverPkh
+      -- Amount the locker funds the hop with: invoice amount plus the
       -- fees of every downstream hop (the bridges shave their cut as
-      -- payment cascades forward).
+      -- payment cascades forward). Floored at @htlcLockMinAdaLovelace@
+      -- because the inline reference script pushes the output's
+      -- ledger-mandated min-ada past small invoice amounts.
       downstreamFees =
         sum
           [ h.hopFeeLovelace
           | h <- sorted
           , fromIntegral h.hopIndex > idx
           ]
-      lockAmount = route.routeAmountLovelace + downstreamFees
+      lockAmount = max htlcLockMinAdaLovelace (route.routeAmountLovelace + downstreamFees)
   pure
     LockTxBlueprint
       { headId = hop.hopHeadId
@@ -945,21 +1001,22 @@ handleLockTx pool rid idx = do
       , datum =
           HtlcDatumView
             { paymentHash = hop.hopSecretHash
-            , timeoutSlot = timeout
+            , timeoutSlot = timeoutSlot
             , senderPkh = Htlc.hexEncode senderPkh
             , receiverPkh = Htlc.hexEncode receiverPkh
             }
       , datumCborHex = Htlc.hexEncode datumBytes
       , validatorRefScriptCborHex = "" -- caller fetches once via /htlc/validator
       , lockAmountLovelace = lockAmount
-      , validityUpperSlot = max 0 (timeout - htlcSafetyMarginSlots)
+      , validityUpperSlot = clampValidityUpper chainSlot timeoutSlot
       , requiredSignerPkh = Htlc.hexEncode senderPkh
       }
 
 -- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/claim-tx
-handleClaimTx :: Pool -> Text -> Int -> ClaimTxRequest -> Handler ClaimTxBlueprint
-handleClaimTx pool rid idx req = do
+handleClaimTx :: Pool -> TVar Int64 -> Text -> Int -> ClaimTxRequest -> Handler ClaimTxBlueprint
+handleClaimTx pool chainSlotVar rid idx req = do
   (_route, hop, _) <- loadHop pool rid idx
+  chainSlot <- liftIO $ readTVarIO chainSlotVar
   htlcTxHash <- requireHtlcTx hop
   receiverPkh <- decodeAddrPkh "receiver" hop.hopReceiverAddress
   preimageBytes <- case Base16.decode (T.encodeUtf8 req.preimage) of
@@ -974,14 +1031,16 @@ handleClaimTx pool rid idx req = do
       , htlcInputTxHash = htlcTxHash
       , htlcInputIndex = 0
       , redeemerCborHex = Htlc.hexEncode redeemer
-      , validityUpperSlot = max 0 (timeout - htlcSafetyMarginSlots)
+      , validityUpperSlot = clampValidityUpper chainSlot timeout
       , requiredSignerPkh = Htlc.hexEncode receiverPkh
       }
 
 -- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/refund-tx
-handleRefundTx :: Pool -> Text -> Int -> Handler RefundTxBlueprint
-handleRefundTx pool rid idx = do
+handleRefundTx :: Pool -> TVar Int64 -> Text -> Int -> Handler RefundTxBlueprint
+handleRefundTx pool chainSlotVar rid idx = do
   (_route, hop, _) <- loadHop pool rid idx
+  _ <- liftIO $ readTVarIO chainSlotVar  -- reserved for future clamp; refund-side
+                                          -- has different semantics than claim
   htlcTxHash <- requireHtlcTx hop
   senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
   let timeout = hop.hopTimeoutSlot

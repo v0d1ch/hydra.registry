@@ -19,6 +19,7 @@ spec = describe "Hydra.Client" $ do
             , greeterHeadStatus = "Open"
             , greeterUtxos = []
             , greeterParticipants = []
+            , greeterCurrentSlot = 0
             }
 
     it "parses Greetings with empty headId (Idle state)" $ do

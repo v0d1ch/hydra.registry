@@ -10,6 +10,7 @@ import Control.Concurrent.STM
 import Control.Exception (finally)
 import Control.Monad (forever, void)
 import Data.Aeson (toJSON)
+import Data.Int (Int64)
 import Db qualified
 import Explorer.Sidecar qualified as Sidecar
 import Hydra.Client (HydraEvent)
@@ -39,8 +40,12 @@ main = do
   -- Create event queue
   eventQueue <- newTQueueIO @HydraEvent
 
+  -- Track L1 chain tip seen via Greetings; used to derive route timeouts
+  -- without trusting the registry's local system clock.
+  chainSlotVar <- newTVarIO (0 :: Int64)
+
   -- Start the indexer (runs forever in its own thread)
-  indexerAsync <- async $ Indexer.startIndexer logger pool config.htlcScriptHash eventQueue
+  indexerAsync <- async $ Indexer.startIndexer logger pool chainSlotVar config.htlcScriptHash eventQueue
   logInfo logger "Indexer started" []
 
   -- Reconnect to registered heads
@@ -92,6 +97,7 @@ main = do
           , addressCache = addrCache
           , staticDir = config.staticDir
           , relayGraph = relayGraphVar
+          , latestChainSlot = chainSlotVar
           , htlcScriptHash = config.htlcScriptHash
           , htlcScriptCbor = config.htlcScriptCbor
           }

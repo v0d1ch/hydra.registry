@@ -99,6 +99,7 @@ makeTestApp = do
     metrics <- newMetrics
     addrCache <- newCache 30
     relayGraphVar <- newTVarIO Graph.emptyGraph
+    chainSlotVar <- newTVarIO 0
     let logger = newLogger Logging.Info
         env =
           AppEnv
@@ -109,6 +110,7 @@ makeTestApp = do
             , addressCache = addrCache
             , staticDir = "./website/dist"
             , relayGraph = relayGraphVar
+            , latestChainSlot = chainSlotVar
             , htlcScriptHash = Nothing
             , htlcScriptCbor = Nothing
             }
