@@ -423,13 +423,22 @@ data HtlcDatumView = HtlcDatumView
 -- locks hop @i@ of the route into the HTLC validator. The caller
 -- chooses input UTxOs from their head's snapshot, balances the tx, and
 -- signs.
+--
+-- @refScriptUtxo@ is set when the head has a published shared
+-- ref-script UTxO ('headRefScriptUtxo' on the row). When set, the lock
+-- output omits the inline reference script and the consumer's claim/
+-- refund tx spends the script via @--spending-tx-in-reference@. When
+-- unset (the bridge agent hasn't published one yet), the consumer must
+-- inline the validator on the lock output and source it again at claim
+-- time — which the @lockAmountLovelace@ floor is sized for.
 data LockTxBlueprint = LockTxBlueprint
   { headId :: Text
   , scriptAddress :: Text -- ^ HTLC validator address (bech32) for the route's network
   , scriptHash :: Text
   , datum :: HtlcDatumView
   , datumCborHex :: Text -- ^ inline this in the HTLC output
-  , validatorRefScriptCborHex :: Text -- ^ inline this as the output's @reference_script@
+  , validatorRefScriptCborHex :: Text -- ^ inline this as the output's @reference_script@ when @refScriptUtxo@ is null
+  , refScriptUtxo :: Maybe Text -- ^ @"txhash#ix"@ to use as @--spending-tx-in-reference@ at claim time, when published
   , lockAmountLovelace :: Int64 -- ^ amount + fees of remaining downstream hops
   , validityUpperSlot :: Int64 -- ^ upper bound for tx validity (must be < timeoutSlot)
   , requiredSignerPkh :: Text -- ^ locker's vkey hash (sender of this hop)
@@ -450,6 +459,7 @@ data ClaimTxBlueprint = ClaimTxBlueprint
   { headId :: Text
   , htlcInputTxHash :: Text -- ^ from @route_hops.htlc_tx_hash@
   , htlcInputIndex :: Int -- ^ output index of the HTLC UTxO inside that tx
+  , refScriptUtxo :: Maybe Text -- ^ @"txhash#ix"@ for @--spending-tx-in-reference@; if null, the HTLC UTxO must carry the validator inline
   , redeemerCborHex :: Text -- ^ @Claim(preimage)@ as Plutus Data CBOR
   , validityUpperSlot :: Int64
   , requiredSignerPkh :: Text -- ^ claimer pkh = receiver of this hop
@@ -462,9 +472,19 @@ data RefundTxBlueprint = RefundTxBlueprint
   { headId :: Text
   , htlcInputTxHash :: Text
   , htlcInputIndex :: Int
+  , refScriptUtxo :: Maybe Text -- ^ same role as in ClaimTxBlueprint
   , redeemerCborHex :: Text -- ^ @Refund@ as Plutus Data CBOR
   , validityLowerSlot :: Int64 -- ^ lower bound for tx validity (must be > timeoutSlot)
   , requiredSignerPkh :: Text -- ^ refunder pkh = sender of this hop
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Body for the @POST /heads/{id}/ref-script@ endpoint: operator (or
+-- bridge agent) tells the registry where they published the head's
+-- shared HTLC reference-script UTxO.
+data SetRefScriptRequest = SetRefScriptRequest
+  { utxo :: Text -- ^ @"txhash#ix"@ format
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

@@ -87,6 +87,7 @@ initDb pool =
       \CREATE INDEX IF NOT EXISTS idx_explorer_heads_network ON explorer_heads (network);\
       \ALTER TABLE heads ADD COLUMN IF NOT EXISTS is_bridge BOOLEAN NOT NULL DEFAULT false;\
       \ALTER TABLE heads ADD COLUMN IF NOT EXISTS bridge_fee_lovelace BIGINT;\
+      \ALTER TABLE heads ADD COLUMN IF NOT EXISTS ref_script_utxo TEXT;\
       \CREATE TABLE IF NOT EXISTS head_participants (\
       \  head_id TEXT NOT NULL,\
       \  address TEXT NOT NULL,\
@@ -181,6 +182,7 @@ upsertHead pool hid hostAddr portNum status' = do
                       , lastMessageAt = lit (Just now)
                       , headIsBridge = lit False
                       , headBridgeFeeLovelace = lit Nothing
+                      , headRefScriptUtxo = lit Nothing
                       }
                   ]
             , onConflict =
@@ -188,8 +190,14 @@ upsertHead pool hid hostAddr portNum status' = do
                   Upsert
                     { index = (.headId)
                     , predicate = Nothing
-                    , set = \new _old ->
-                        new{updatedAt = lit now, lastMessageAt = lit (Just now)}
+                    , set = \new old ->
+                        -- Don't clobber a published ref_script_utxo on
+                        -- subsequent re-registrations of the same head.
+                        new
+                          { updatedAt = lit now
+                          , lastMessageAt = lit (Just now)
+                          , headRefScriptUtxo = old.headRefScriptUtxo
+                          }
                     , updateWhere = \_ _ -> lit True
                     }
             , returning = NoReturning
@@ -248,6 +256,24 @@ updateLastMessageAt pool hid = do
             { target = headSchema
             , from = pure ()
             , set = \_ row -> row{lastMessageAt = lit (Just now)}
+            , updateWhere = \_ row -> row.headId ==. lit hid
+            , returning = NoReturning
+            }
+
+-- | Set (or unset, via 'Nothing') the head's published reference-script
+-- UTxO. Subsequent lock blueprints for hops in this head will skip the
+-- inline-ref-script and reference this UTxO instead.
+setHeadRefScriptUtxo :: Pool -> Text -> Maybe Text -> IO ()
+setHeadRefScriptUtxo pool hid mUtxo = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = headSchema
+            , from = pure ()
+            , set = \_ row -> row{headRefScriptUtxo = lit mUtxo, updatedAt = lit now}
             , updateWhere = \_ row -> row.headId ==. lit hid
             , returning = NoReturning
             }

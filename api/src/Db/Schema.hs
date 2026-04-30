@@ -20,6 +20,13 @@ data Head f = Head
   , lastMessageAt :: Column f (Maybe UTCTime)
   , headIsBridge :: Column f Bool
   , headBridgeFeeLovelace :: Column f (Maybe Int64)
+  , -- | @"txhash#ix"@ pointing at an L2 UTxO inside this head that
+    -- carries the HTLC validator as an inline reference script. When
+    -- set, lock outputs no longer need to inline the validator (≈2 ADA
+    -- min-ada instead of ≈5.6) and claim/refund txs spend the script
+    -- via @--spending-tx-in-reference@. Operators publish the UTxO
+    -- once and register it via @POST /heads/{id}/ref-script@.
+    headRefScriptUtxo :: Column f (Maybe Text)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -43,6 +50,7 @@ headSchema =
           , lastMessageAt = "last_message_at"
           , headIsBridge = "is_bridge"
           , headBridgeFeeLovelace = "bridge_fee_lovelace"
+          , headRefScriptUtxo = "ref_script_utxo"
           }
     }
 

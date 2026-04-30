@@ -21,6 +21,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as T (encodeUtf8)
 import Data.Time (UTCTime, addUTCTime, diffUTCTime, getCurrentTime)
+import Text.Read (readMaybe)
 import Data.UUID qualified as UUID
 import Data.UUID.V4 qualified as UUID
 import Db qualified
@@ -47,6 +48,7 @@ type ApiV1Routes =
   "health" :> Get '[JSON] HealthResponse
     :<|> "heads" :> "check" :> QueryParam "host" Text :> QueryParam "port" Int :> Get '[JSON] CheckHeadResponse
     :<|> "heads" :> "register" :> ReqBody '[JSON] RegisterHead :> Post '[JSON] RegisterHeadResponse
+    :<|> "heads" :> Capture "headId" Text :> "ref-script" :> ReqBody '[JSON] SetRefScriptRequest :> Post '[JSON] MessageResponse
     :<|> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> Get '[JSON] [HeadInfo]
     :<|> "heads" :> Capture "headId" Text :> Get '[JSON] EnrichedHeadDetail
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Get '[JSON] [Text]
@@ -126,6 +128,7 @@ apiV1Server env =
   handleHealth env.pool
     :<|> handleCheckHead env.logger env.pool
     :<|> handleRegister env.logger env.pool env.eventQueue
+    :<|> handleSetRefScript env.pool
     :<|> handleListHeads env.pool
     :<|> handleHeadDetail env.pool
     :<|> handleHeadAddresses env.pool
@@ -214,6 +217,30 @@ handleRegister logger pool eventQueue req = do
       pure $ RegisterHeadResponse greeterHeadId "connected"
     Right _ ->
       throwError $ err500{errBody = Aeson.encode $ ErrorResponse "Unexpected response"}
+
+-- | POST /api/v1/heads/:headId/ref-script
+-- Operator (or bridge agent) reports the @"txhash#ix"@ of the L2 UTxO
+-- inside this head that holds the HTLC validator as an inline reference
+-- script. Future lock blueprints for hops in this head omit the inline
+-- script and point claims at this UTxO via @--spending-tx-in-reference@.
+handleSetRefScript :: Pool -> Text -> SetRefScriptRequest -> Handler MessageResponse
+handleSetRefScript pool hid req = do
+  -- Validate "txhash#ix" shape: 64 hex chars, '#', non-negative int.
+  case T.splitOn "#" req.utxo of
+    [txh, ixT]
+      | T.length txh == 64
+      , T.all isHex txh
+      , Just (_ :: Int) <- readMaybe (T.unpack ixT) -> pure ()
+    _ -> throwError $ err400{errBody = Aeson.encode $ ErrorResponse "utxo must be in \"<txhash hex>#<index>\" form"}
+  mHead <- liftIO $ Db.getHead pool hid
+  case mHead of
+    Nothing ->
+      throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Head not found"}
+    Just _ -> do
+      liftIO $ Db.setHeadRefScriptUtxo pool hid (Just req.utxo)
+      pure $ MessageResponse $ "Ref-script UTxO recorded for head " <> hid
+  where
+    isHex c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 
 -- | GET /api/v1/heads (with optional pagination)
 handleListHeads :: Pool -> Maybe Int -> Maybe Int -> Handler [HeadInfo]
@@ -905,13 +932,20 @@ htlcSafetyMarginSlots = 60
 eraSafeWindowSlots :: Int64
 eraSafeWindowSlots = 14400
 
--- | Minimum ADA we put on the HTLC lock output. The output carries the
--- inline HTLC datum and (for now) the inline reference script, so its
--- ledger-mandated minimum is roughly 5.6 ADA on preview/preprod params.
--- 7 ADA gives breathing room. When we move the validator to a shared
--- per-head ref-script UTxO, this floor drops back to ≈ 2 ADA.
-htlcLockMinAdaLovelace :: Int64
-htlcLockMinAdaLovelace = 7_000_000
+-- | Minimum ADA we put on the HTLC lock output when the validator is
+-- inlined as the output's reference script. ≈ 5.6 ADA is the
+-- ledger-mandated floor for ~1 KB of ref script + 96-byte datum on
+-- Preview/Preprod params; 7 ADA gives a small cushion. Used only when
+-- the head has no shared ref-script UTxO published.
+htlcLockMinAdaInlineLovelace :: Int64
+htlcLockMinAdaInlineLovelace = 7_000_000
+
+-- | Minimum ADA when the lock output omits the inline ref script and
+-- the validator is referenced from the head's shared ref-script UTxO.
+-- Just script-addr + value + 96-byte datum → ≈ 1.5 ADA floor; 2 ADA
+-- is enough headroom for any reasonable parameter shift.
+htlcLockMinAdaSharedLovelace :: Int64
+htlcLockMinAdaSharedLovelace = 2_000_000
 
 -- | Clamp a script-tx validity-upper to both the HTLC's timeout
 -- (with safety margin) and the head ledger's era horizon (chain tip
@@ -966,12 +1000,14 @@ handleLockTx pool chainSlotVar rid idx = do
   hashBytes <- decodeHopHash hop.hopSecretHash
   senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
   receiverPkh <- decodeAddrPkh "receiver" hop.hopReceiverAddress
-  -- The HTLC validator's @referenceScript@ bytes ride along in the lock
-  -- output. We don't store them server-side per-route — they're the same
-  -- validator for every hop on every network — so callers can either
-  -- inline the CBOR returned here or fetch it once from /htlc/validator.
-  -- We don't attach it to the lock blueprint to keep responses lean.
-  let timeoutSlot = hop.hopTimeoutSlot
+  -- If the head has a published shared ref-script UTxO, the lock output
+  -- doesn't need to inline the validator — that drops the lock's
+  -- min-ada from ≈ 5.6 ADA to ≈ 1.5 ADA, which makes small invoices
+  -- viable. The bridge agent / operator publishes the UTxO once and
+  -- registers it via @POST /heads/{id}/ref-script@.
+  mHead <- liftIO $ Db.getHead pool hop.hopHeadId
+  let mRefScript = mHead >>= (.headRefScriptUtxo)
+      timeoutSlot = hop.hopTimeoutSlot
   -- The HTLC validator compares @datum.timeout@ against the tx's
   -- @validity_range@, which Plutus exposes as a 'POSIXTime' in
   -- milliseconds. So @datum.timeout@ has to be POSIX-ms too — not the
@@ -981,18 +1017,16 @@ handleLockTx pool chainSlotVar rid idx = do
     Nothing ->
       throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ "Unsupported network for slot conversion: " <> route.routeNetwork}
   let datumBytes = Htlc.mkDatumCbor hashBytes timeoutMs senderPkh receiverPkh
-      -- Amount the locker funds the hop with: invoice amount plus the
-      -- fees of every downstream hop (the bridges shave their cut as
-      -- payment cascades forward). Floored at @htlcLockMinAdaLovelace@
-      -- because the inline reference script pushes the output's
-      -- ledger-mandated min-ada past small invoice amounts.
       downstreamFees =
         sum
           [ h.hopFeeLovelace
           | h <- sorted
           , fromIntegral h.hopIndex > idx
           ]
-      lockAmount = max htlcLockMinAdaLovelace (route.routeAmountLovelace + downstreamFees)
+      minAdaFloor = case mRefScript of
+        Just _ -> htlcLockMinAdaSharedLovelace
+        Nothing -> htlcLockMinAdaInlineLovelace
+      lockAmount = max minAdaFloor (route.routeAmountLovelace + downstreamFees)
   pure
     LockTxBlueprint
       { headId = hop.hopHeadId
@@ -1007,6 +1041,7 @@ handleLockTx pool chainSlotVar rid idx = do
             }
       , datumCborHex = Htlc.hexEncode datumBytes
       , validatorRefScriptCborHex = "" -- caller fetches once via /htlc/validator
+      , refScriptUtxo = mRefScript
       , lockAmountLovelace = lockAmount
       , validityUpperSlot = clampValidityUpper chainSlot timeoutSlot
       , requiredSignerPkh = Htlc.hexEncode senderPkh
@@ -1023,7 +1058,9 @@ handleClaimTx pool chainSlotVar rid idx req = do
     Left e ->
       throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ "preimage hex decode failed: " <> T.pack e}
     Right b -> pure b
-  let redeemer = Htlc.mkClaimRedeemerCbor preimageBytes
+  mHead <- liftIO $ Db.getHead pool hop.hopHeadId
+  let mRefScript = mHead >>= (.headRefScriptUtxo)
+      redeemer = Htlc.mkClaimRedeemerCbor preimageBytes
       timeout = hop.hopTimeoutSlot
   pure
     ClaimTxBlueprint
@@ -1031,6 +1068,7 @@ handleClaimTx pool chainSlotVar rid idx req = do
       , htlcInputTxHash = htlcTxHash
       , htlcInputIndex = 0
       , redeemerCborHex = Htlc.hexEncode redeemer
+      , refScriptUtxo = mRefScript
       , validityUpperSlot = clampValidityUpper chainSlot timeout
       , requiredSignerPkh = Htlc.hexEncode receiverPkh
       }
@@ -1043,13 +1081,16 @@ handleRefundTx pool chainSlotVar rid idx = do
                                           -- has different semantics than claim
   htlcTxHash <- requireHtlcTx hop
   senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
-  let timeout = hop.hopTimeoutSlot
+  mHead <- liftIO $ Db.getHead pool hop.hopHeadId
+  let mRefScript = mHead >>= (.headRefScriptUtxo)
+      timeout = hop.hopTimeoutSlot
   pure
     RefundTxBlueprint
       { headId = hop.hopHeadId
       , htlcInputTxHash = htlcTxHash
       , htlcInputIndex = 0
       , redeemerCborHex = Htlc.hexEncode Htlc.refundRedeemerCbor
+      , refScriptUtxo = mRefScript
       , validityLowerSlot = timeout + htlcSafetyMarginSlots
       , requiredSignerPkh = Htlc.hexEncode senderPkh
       }
