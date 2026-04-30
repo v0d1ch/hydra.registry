@@ -9,6 +9,7 @@ import Hydra.Client (HydraEvent)
 import Logging (newLogger)
 import Logging qualified
 import Metrics (newMetrics)
+import Relay.EventBus qualified as EventBus
 import Relay.Graph qualified as Graph
 import Network.HTTP.Types
 import Network.Wai (Application)
@@ -100,6 +101,7 @@ makeTestApp = do
     addrCache <- newCache 30
     relayGraphVar <- newTVarIO Graph.emptyGraph
     chainSlotVar <- newTVarIO 0
+    bus <- EventBus.newEventBus
     let logger = newLogger Logging.Info
         env =
           AppEnv
@@ -111,6 +113,7 @@ makeTestApp = do
             , staticDir = "./website/dist"
             , relayGraph = relayGraphVar
             , latestChainSlot = chainSlotVar
+            , relayEventBus = bus
             , htlcScriptHash = Nothing
             , htlcScriptCbor = Nothing
             }

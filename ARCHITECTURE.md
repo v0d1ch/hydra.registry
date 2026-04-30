@@ -91,15 +91,19 @@ hydra.registry/
 │   │   │   └── Sidecar.hs     # poll loop + graph rebuild
 │   │   ├── Hydra/
 │   │   │   ├── Client.hs      # WS listener + HydraEvent ADT
-│   │   │   └── Htlc.hs        # CBOR encoding for datum/redeemer
+│   │   │   ├── Htlc.hs        # CBOR encoding for datum/redeemer
+│   │   │   └── Submit.hs      # one-shot WS forwarder for signed tx CBOR
+│   │   ├── Tx/
+│   │   │   └── Builder.hs     # cardano-cli shell-out: lock/claim/refund/publish
 │   │   ├── Indexer.hs         # event loop + reconnectAllHeads
 │   │   ├── Logging.hs         # structured JSON logging
 │   │   ├── Metrics.hs         # Prometheus counters
 │   │   ├── Middleware/RateLimit.hs
 │   │   └── Relay/
+│   │       ├── EventBus.hs    # STM broadcast TChan of RouteEvents
 │   │       ├── ExpirySweep.hs # invoice/route expiry
 │   │       ├── Graph.hs       # Dijkstra + route → HTLC expansion
-│   │       ├── HtlcWatcher.hs # detect lock/claim from snapshots
+│   │       ├── HtlcWatcher.hs # detect lock/claim from snapshots; publishes
 │   │       └── Slot.hs        # slot ↔ POSIX-ms per network
 │   └── test/                  # hspec test suite
 ├── website/                   # React/Vite SPA
@@ -202,6 +206,7 @@ The order is deliberate; each step depends on the state set up by the previous o
 | `eventQueue` | `TQueue HydraEvent` | per-head WebSocket listeners | indexer |
 | `chainSlotVar` | `TVar Int64` (monotonic) | indexer (via `bumpChainSlot`) | `handleFindRoutes`, `handleLockTx`, `handleClaimTx` (validity bounds, timeout derivation) |
 | `relayGraphVar` | `TVar Graph.RelayGraph` | sidecar | `handleFindRoutes`, `handleRelayGraph` |
+| `relayEventBus` | `EventBus` (`TChan RouteEvent` broadcast) | `HtlcWatcher` (lock/claim/completion), `handleSubmitPreimage` (preimage reveal) | per-route SSE handler at `GET /relay/payments/{r}/events` |
 | `pool` | `Hasql.Pool` | n/a | every handler + every background thread |
 | `addressCache` | `Cache [UtxoResponse]` | `handleAddressUtxos` (write-through) | same handler |
 | `metrics` | `Metrics` (IORef counters) | middleware | `handleMetrics` |
@@ -316,6 +321,9 @@ Servant type in `api/src/Api.hs:80`. Routes group thematically:
 | Relay graph & invoices | `GET /api/v1/relay/graph`, `POST /api/v1/relay/invoices`, `GET …/{id}` | graph response includes nodes + edges for the UI viz |
 | Routing & payments | `POST /api/v1/relay/routes`, `POST …/{id}/execute`, `GET /api/v1/relay/payments/{id}`, `POST /api/v1/relay/preimage/{hash}` | preimage broadcast unblocks bridge claims |
 | HTLC blueprints | `GET /api/v1/htlc/validator`, `POST /api/v1/relay/payments/{routeId}/hops/{i}/{lock,claim,refund}-tx` | returns CBOR + slot bounds; **caller signs and submits** |
+| Server-built tx (Conway envelope) | `POST /api/v1/relay/payments/{r}/hops/{i}/{lock,claim,refund}-tx-cbor`, `POST /api/v1/heads/{id}/publish-ref-script-tx-cbor` | server fetches head's `/protocol-parameters`, picks a wallet UTxO + collateral from the indexed snapshot, shells `cardano-cli build-raw`, returns Conway envelope JSON for the user to sign **offline** with their own keys |
+| Submit | `POST /api/v1/heads/{id}/submit` | accepts signed CBOR, forwards to head's WS as `NewTx`, reports `TxValid` / `TxInvalid` synchronously |
+| Live state | `GET /api/v1/relay/payments/{r}/events` (SSE), `GET /api/v1/relay/participants/{pkh}/routes` | SSE pushes lock/claim/preimage/completion events; participant routes feed shows roles + computed eligible actions per hop |
 | Static files | catch-all `Raw` | serves `website/dist/` |
 
 ### 4.7 HTLC payment cascade
@@ -517,6 +525,12 @@ These are tracked outside this doc (in conversation tasks and memory). At a glan
 *Last full review:* 2026-04-30. Update the date and the relevant sections together when significant structural change lands.
 
 *Recent updates:*
+- 2026-04-30 — Smooth-UX foundation: SSE event stream for live SPA timelines, server-side tx assembly via cardano-cli shell-out (the SPA never touches signing keys), and a per-pkh dashboard feed with computed action eligibility.
+  - `Relay.EventBus` — STM broadcast `TChan` of `HopLocked` / `HopClaimed` / `PreimageRevealed` / `RouteCompleted`. Watcher publishes; SSE handler at `GET /relay/payments/{r}/events` filters per route.
+  - `GET /relay/participants/{pkh}/routes` — dashboard feed with `roles` + `actions` computed by `participantActionsFor` (rules: locker can lock when upstream is ready; receiver can claim when preimage is in DB; sender can refund after timeout).
+  - `Tx.Builder` — wraps `cardano-cli conway transaction build-raw` for lock/claim/refund/publish-ref-script. Pure argv generation is exposed for unit tests; the IO wrapper writes datum/redeemer/protocol-params to a per-request temp dir, runs cardano-cli, returns Conway envelope JSON.
+  - `Hydra.Submit` — one-shot WS connect that forwards signed CBOR as `NewTx` and waits for `TxValid` / `TxInvalid` (15-second timeout, 200-message read budget).
+  - New endpoints: `POST /relay/payments/{r}/hops/{i}/{lock,claim,refund}-tx-cbor`, `POST /heads/{id}/publish-ref-script-tx-cbor`, `POST /heads/{id}/submit`.
 - 2026-04-30 — Manual e2e flushed out 5 latent bugs; all fixed with regression tests:
   - `HtlcWatcher` now compares bech32 script addresses (was a no-op hex substring on bech32).
   - `parseHydraMessage` merges `snapshot.utxo ∪ snapshot.utxoToCommit` (was missing incremental-commit deposits).

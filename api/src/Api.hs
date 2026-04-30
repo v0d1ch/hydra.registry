@@ -19,7 +19,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Text.Encoding qualified as T (encodeUtf8)
+import Data.Text.Encoding qualified as T (decodeUtf8, encodeUtf8)
 import Data.Time (UTCTime, addUTCTime, diffUTCTime, getCurrentTime)
 import Text.Read (readMaybe)
 import Data.UUID qualified as UUID
@@ -27,7 +27,8 @@ import Data.UUID.V4 qualified as UUID
 import Db qualified
 import Db.Schema (ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
 import Hasql.Pool (Pool)
-import Hydra.Client (HydraEvent (..), validateHydraNode)
+import Hydra.Client (HydraEvent (..), normalizeHost, validateHydraNode)
+import Hydra.Client qualified
 import Hydra.Htlc qualified as Htlc
 import Indexer qualified
 import Logging (Logger)
@@ -39,9 +40,20 @@ import Network.Wai.Middleware.Cors
   , simpleHeaders
   , simpleMethods
   )
+import Hydra.Submit qualified as Submit
+import Relay.EventBus (EventBus, RouteEvent (..))
+import Relay.EventBus qualified as Bus
 import Relay.Graph qualified as Graph
 import Relay.Slot qualified as Slot
 import Servant
+import Data.ByteString.Builder qualified as BB
+import Data.ByteString.Lazy qualified as BSL
+import Network.Wai (Application)
+import Network.Wai.EventSource (ServerEvent (..), eventSourceAppIO)
+import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
+import Network.HTTP.Types.Status (statusCode)
+import Tx.Builder qualified as Tx
+import Control.Exception (SomeException, try)
 
 -- | Our own endpoints that live under /api/v1/
 type ApiV1Routes =
@@ -49,6 +61,8 @@ type ApiV1Routes =
     :<|> "heads" :> "check" :> QueryParam "host" Text :> QueryParam "port" Int :> Get '[JSON] CheckHeadResponse
     :<|> "heads" :> "register" :> ReqBody '[JSON] RegisterHead :> Post '[JSON] RegisterHeadResponse
     :<|> "heads" :> Capture "headId" Text :> "ref-script" :> ReqBody '[JSON] SetRefScriptRequest :> Post '[JSON] MessageResponse
+    :<|> "heads" :> Capture "headId" Text :> "publish-ref-script-tx-cbor" :> ReqBody '[JSON] BuildTxFromWalletRequest :> Post '[JSON] Tx.BuildResult
+    :<|> "heads" :> Capture "headId" Text :> "submit" :> ReqBody '[JSON] SubmitTxRequest :> Post '[JSON] Submit.SubmitResult
     :<|> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> Get '[JSON] [HeadInfo]
     :<|> "heads" :> Capture "headId" Text :> Get '[JSON] EnrichedHeadDetail
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Get '[JSON] [Text]
@@ -65,17 +79,22 @@ type ApiV1Routes =
     :<|> "addresses" :> Capture "address" Text :> "heads" :> Get '[JSON] [ParticipantHeadInfo]
     -- Relay endpoints
     :<|> "relay" :> "graph" :> QueryParam "network" Text :> Get '[JSON] SubgraphResponse
+    :<|> "relay" :> "participants" :> Capture "pkh" Text :> "routes" :> Get '[JSON] [ParticipantRouteSummary]
     :<|> "relay" :> "invoices" :> ReqBody '[JSON] CreateInvoiceRequest :> Post '[JSON] InvoiceResponse
     :<|> "relay" :> "invoices" :> Capture "invoiceId" Text :> Get '[JSON] InvoiceResponse
     :<|> "relay" :> "routes" :> ReqBody '[JSON] FindRoutesRequest :> Post '[JSON] [RouteResponse]
     :<|> "relay" :> "routes" :> Capture "routeId" Text :> "execute" :> Post '[JSON] PaymentStatusResponse
     :<|> "relay" :> "payments" :> Capture "paymentId" Text :> Get '[JSON] PaymentStatusResponse
+    :<|> "relay" :> "payments" :> Capture "routeId" Text :> "events" :> Raw
     :<|> "relay" :> "preimage" :> Capture "paymentHash" Text :> ReqBody '[JSON] SubmitPreimageRequest :> Post '[JSON] MessageResponse
     -- HTLC tx blueprints
     :<|> "htlc" :> "validator" :> Get '[JSON] HtlcValidatorResponse
     :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "lock-tx" :> Post '[JSON] LockTxBlueprint
     :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "claim-tx" :> ReqBody '[JSON] ClaimTxRequest :> Post '[JSON] ClaimTxBlueprint
     :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "refund-tx" :> Post '[JSON] RefundTxBlueprint
+    :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "lock-tx-cbor" :> ReqBody '[JSON] BuildTxFromWalletRequest :> Post '[JSON] Tx.BuildResult
+    :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "claim-tx-cbor" :> ReqBody '[JSON] BuildClaimTxRequest :> Post '[JSON] Tx.BuildResult
+    :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "refund-tx-cbor" :> ReqBody '[JSON] BuildTxFromWalletRequest :> Post '[JSON] Tx.BuildResult
 
 -- | Full API type
 type API =
@@ -109,6 +128,11 @@ data AppEnv = AppEnv
     -- derive timeouts/validity bounds from chain time rather than the
     -- registry's local system clock.
     latestChainSlot :: TVar Int64
+  , -- | Fan-out broadcast for relay state transitions. The HTLC
+    -- watcher publishes lock/claim/completion events; the preimage
+    -- submission handler publishes preimage reveals; SSE subscribers
+    -- read filtered streams via 'subscribe'.
+    relayEventBus :: EventBus
   , htlcScriptHash :: Maybe Text
   , htlcScriptCbor :: Maybe Text
   }
@@ -129,6 +153,8 @@ apiV1Server env =
     :<|> handleCheckHead env.logger env.pool
     :<|> handleRegister env.logger env.pool env.eventQueue
     :<|> handleSetRefScript env.pool
+    :<|> handlePublishRefTxCbor env.pool env.htlcScriptCbor
+    :<|> handleSubmitTx env.pool
     :<|> handleListHeads env.pool
     :<|> handleHeadDetail env.pool
     :<|> handleHeadAddresses env.pool
@@ -143,16 +169,21 @@ apiV1Server env =
     :<|> handleExplorerStats env.pool
     :<|> handleAddressHeads env.pool
     :<|> handleRelayGraph env.pool env.htlcScriptHash
+    :<|> handleParticipantRoutes env.pool env.latestChainSlot
     :<|> handleCreateInvoice env.pool
     :<|> handleGetInvoice env.pool
     :<|> handleFindRoutes env.pool env.relayGraph env.latestChainSlot
     :<|> handleExecuteRoute env.pool
     :<|> handleGetPayment env.pool
-    :<|> handleSubmitPreimage env.pool
+    :<|> handlePaymentEventStream env.relayEventBus
+    :<|> handleSubmitPreimage env.pool env.relayEventBus
     :<|> handleHtlcValidator env.htlcScriptCbor
     :<|> handleLockTx env.pool env.latestChainSlot
     :<|> handleClaimTx env.pool env.latestChainSlot
     :<|> handleRefundTx env.pool env.latestChainSlot
+    :<|> handleLockTxCbor env.pool env.latestChainSlot env.htlcScriptCbor
+    :<|> handleClaimTxCbor env.pool env.latestChainSlot
+    :<|> handleRefundTxCbor env.pool env.latestChainSlot
 
 -- | CORS middleware that allows the frontend to talk to the API
 corsMiddleware :: Middleware
@@ -712,6 +743,154 @@ handleRelayGraph pool mHtlcHash mNetwork = do
       , edges = dedupedEdges
       }
 
+-- ─── Participant dashboard ───
+--
+-- Action-eligibility rules in one place so the SPA never has to
+-- second-guess them. The dashboard shows a card per route the pkh
+-- touches plus a (possibly empty) list of actions.
+
+-- | The chain-time-relative urgency of a hop deadline, expressed as
+-- a coarse bucket so the UI doesn't need to do slot math. Tiers
+-- mirror what feels natural for a 1-second-slot network: "expiring"
+-- inside 5 minutes, "soon" inside 30 minutes, "ok" otherwise.
+hopUrgency :: Int64 -> Int64 -> Text
+hopUrgency chainSlot timeoutSlot
+  | chainSlot <= 0 = "ok" -- chain tip not yet known; no point alarming
+  | chainSlot >= timeoutSlot = "expired"
+  | timeoutSlot - chainSlot <= 300 = "expiring"
+  | timeoutSlot - chainSlot <= 1800 = "soon"
+  | otherwise = "ok"
+
+-- | One role per route. We emit a list because in principle a pkh
+-- could play two roles in the same route (e.g. self-pay) — the
+-- dashboard renders the list.
+routeRolesFor :: Text -> PaymentRoute Identity -> [RouteHop Identity] -> [Text]
+routeRolesFor me route hops =
+  [ r
+  | (cond, r) <-
+      [ (route.routeSenderAddress == me, "sender")
+      , (route.routeReceiverAddress == me, "receiver")
+      ,
+        ( me /= route.routeSenderAddress
+            && me /= route.routeReceiverAddress
+            && any (\h -> h.hopSenderAddress == me || h.hopReceiverAddress == me) hops
+        , "bridge"
+        )
+      ]
+  , cond
+  ]
+
+-- exported for tests; the type stays the same as the call-site form
+-- so the spec can build minimal RouteHop fixtures.
+
+-- | Compute every action the participant can take on this route.
+-- Logic per hop H, given my pkh @me@:
+--
+-- * I am the locker (@H.sender == me@):
+--     * @H.status == "pending"@ AND upstream is locked-or-claimed → "lock"
+--     * @H.status == "locked"@  AND timeout passed AND no preimage → "refund"
+-- * I am the claimer (@H.receiver == me@):
+--     * @H.status == "locked"@  AND preimage is in DB → "claim"
+--
+-- The "upstream condition" for non-zero hops keeps a bridge from
+-- locking before the previous bridge (or sender) has locked. Hop 0
+-- has no upstream.
+participantActionsFor
+  :: Int64
+  -> Text
+  -> [RouteHop Identity]
+  -> [ParticipantAction]
+participantActionsFor chainSlot me hops =
+  let sortedHops = List.sortOn (.hopIndex) hops
+      indexed = zip [0 :: Int ..] sortedHops
+      hopAt idx = lookup idx indexed
+      upstreamReady i
+        | i == 0 = True
+        | otherwise = case hopAt (i - 1) of
+            Just h -> h.hopHtlcStatus == "locked" || h.hopHtlcStatus == "claimed"
+            Nothing -> False
+      mkAction h kind' =
+        ParticipantAction
+          { hopIndex = fromIntegral h.hopIndex
+          , kind = kind'
+          , urgency = hopUrgency chainSlot h.hopTimeoutSlot
+          }
+   in concat
+        [ -- Lock side (I am the sender of the hop).
+          [ mkAction h "lock"
+          | (i, h) <- indexed
+          , h.hopSenderAddress == me
+          , h.hopHtlcStatus == "pending"
+          , upstreamReady i
+          ]
+        , -- Refund side (I locked, timeout passed, never claimed).
+          [ mkAction h "refund"
+          | (_i, h) <- indexed
+          , h.hopSenderAddress == me
+          , h.hopHtlcStatus == "locked"
+          , chainSlot > 0
+          , chainSlot >= h.hopTimeoutSlot
+          , Nothing == h.hopPreimage
+          ]
+        , -- Claim side (I am the receiver of a still-locked hop and
+          -- the preimage is in the DB so the script will actually
+          -- pass).
+          [ mkAction h "claim"
+          | (_i, h) <- indexed
+          , h.hopReceiverAddress == me
+          , h.hopHtlcStatus == "locked"
+          , Just _ <- [h.hopPreimage]
+          ]
+        ]
+
+-- | GET /api/v1/relay/participants/:pkh/routes
+--
+-- Dashboard feed: every route this pkh touches (as sender, bridge,
+-- or receiver), each annotated with the participant's role(s) and
+-- a list of actions they can take right now.
+handleParticipantRoutes :: Pool -> TVar Int64 -> Text -> Handler [ParticipantRouteSummary]
+handleParticipantRoutes pool chainSlotVar pkh = do
+  pairs <- liftIO $ Db.getRoutesByParticipantPkh pool pkh
+  chainSlot <- liftIO $ readTVarIO chainSlotVar
+  pure $ map (toSummary chainSlot) pairs
+ where
+  toSummary chainSlot (r, hops) =
+    ParticipantRouteSummary
+      { route =
+          PaymentStatusResponse
+            { routeId = r.routeId
+            , invoiceId = r.routeInvoiceId
+            , senderAddress = r.routeSenderAddress
+            , receiverAddress = r.routeReceiverAddress
+            , amountLovelace = r.routeAmountLovelace
+            , status = r.routeStatus
+            , totalFee = r.routeTotalFee
+            , network = r.routeNetwork
+            , hops =
+                [ HopStatusResponse
+                    { hopIndex = fromIntegral h.hopIndex
+                    , headId = h.hopHeadId
+                    , bridgeAddress = h.hopBridgeAddress
+                    , senderAddress = h.hopSenderAddress
+                    , receiverAddress = h.hopReceiverAddress
+                    , htlcStatus = h.hopHtlcStatus
+                    , htlcTxHash = h.hopHtlcTxHash
+                    , secretHash = h.hopSecretHash
+                    , preimage = h.hopPreimage
+                    , timeoutSlot = h.hopTimeoutSlot
+                    , fee = h.hopFeeLovelace
+                    , lockedAt = h.hopLockedAt
+                    , claimedAt = h.hopClaimedAt
+                    }
+                | h <- List.sortOn (.hopIndex) hops
+                ]
+            , createdAt = r.routeCreatedAt
+            , updatedAt = r.routeUpdatedAt
+            }
+      , roles = routeRolesFor pkh r hops
+      , actions = participantActionsFor chainSlot pkh hops
+      }
+
 -- | POST /api/v1/relay/invoices
 handleCreateInvoice :: Pool -> CreateInvoiceRequest -> Handler InvoiceResponse
 handleCreateInvoice pool req = do
@@ -910,14 +1089,48 @@ buildPaymentStatus pool route = do
       , updatedAt = route.routeUpdatedAt
       }
 
+-- | GET /api/v1/relay/payments/:routeId/events  (text/event-stream)
+--
+-- Long-lived Server-Sent Events stream that pushes 'RouteEvent's
+-- relevant to a single payment route. Each line is one SSE record;
+-- the @event:@ name is the constructor tag (e.g. @HopLocked@) and the
+-- @data:@ payload is the JSON-encoded event.
+--
+-- The handler 'subscribe's to the bus and filters in-process — there
+-- is no DB read on every event. The browser's @EventSource@ handles
+-- reconnect; events 'publish'ed while a client was disconnected are
+-- not replayed (the client reconciles via a fresh @GET /payments/{r}@).
+handlePaymentEventStream :: EventBus -> Text -> Tagged Handler Application
+handlePaymentEventStream bus rid = Tagged $ \req respond -> do
+  busChan <- Bus.subscribe bus
+  let nextEvent :: IO ServerEvent
+      nextEvent = do
+        ev <- atomically (readTChan busChan)
+        if Bus.routeEventRouteId ev == rid
+          then
+            pure
+              ServerEvent
+                { eventName = Just (BB.byteString (T.encodeUtf8 (Bus.routeEventTag ev)))
+                , eventId = Nothing
+                , eventData = [BB.lazyByteString (Aeson.encode ev)]
+                }
+          else nextEvent
+  eventSourceAppIO nextEvent req respond
+
 -- | POST /api/v1/relay/preimage/:paymentHash
 -- Submit a revealed preimage so bridge operators can claim their hops.
-handleSubmitPreimage :: Pool -> Text -> SubmitPreimageRequest -> Handler MessageResponse
-handleSubmitPreimage pool paymentHash req = do
+handleSubmitPreimage :: Pool -> EventBus -> Text -> SubmitPreimageRequest -> Handler MessageResponse
+handleSubmitPreimage pool bus paymentHash req = do
   -- Validate: blake2b-256(preimage) must equal the payment hash
   -- For now, trust the caller — validation requires a blake2b binding.
   -- The on-chain script is the ultimate validator anyway.
   liftIO $ Db.setPreimageByHash pool paymentHash req.preimage
+  -- Fire one PreimageRevealed event per distinct route this payment
+  -- hash now unblocks. SSE subscribers on those routes will
+  -- light up the receiver's claim button (and, downstream, every
+  -- bridge's upstream claim button).
+  affected <- liftIO $ Db.getRouteIdsByPaymentHash pool paymentHash
+  liftIO $ mapM_ (\rid -> Bus.publish bus PreimageRevealed{routeId = rid, paymentHash}) affected
   pure $ MessageResponse "Preimage stored — bridge operators can now claim their hops"
 
 -- ─── HTLC tx blueprint handlers ───
@@ -1149,6 +1362,333 @@ handleRefundTx pool chainSlotVar rid idx = do
       , recommendedFeeLovelace = recommendedScriptFeeLovelace
       , collateralRequiredLovelace = recommendedCollateralLovelace
       }
+
+-- ─── Server-built tx CBOR (cardano-cli shell-out) ────────────────────
+--
+-- These four handlers and the @/heads/{id}/submit@ handler below
+-- are what powers the SPA's "download tx, sign offline, upload"
+-- flow. They produce a Conway-envelope JSON the user saves to a
+-- file and signs with their own keys; the registry never sees
+-- those keys.
+
+-- | Fetch the head's protocol parameters via its @/protocol-parameters@
+-- HTTP endpoint and return the JSON body verbatim. Caller passes it
+-- straight into 'Tx.Builder' which writes it to a temp file before
+-- @cardano-cli build-raw@ reads it.
+fetchProtocolParams :: Text -> Int -> IO (Either Text Text)
+fetchProtocolParams host portNum = do
+  res <- try @SomeException $ do
+    manager <- newManager defaultManagerSettings
+    let url = "http://" <> T.unpack (Hydra.Client.normalizeHost host) <> ":" <> show portNum <> "/protocol-parameters"
+    req <- parseRequest url
+    httpLbs req manager
+  case res of
+    Left e -> pure (Left ("protocol-parameters fetch failed: " <> T.pack (show e)))
+    Right resp -> case statusCode (responseStatus resp) of
+      200 -> pure $ Right $ T.decodeUtf8 (BSL.toStrict (responseBody resp))
+      n -> pure (Left ("protocol-parameters: HTTP " <> T.pack (show n)))
+
+-- | Pick the smallest pure-ADA UTxO at @walletAddr@ inside @headId@
+-- that holds at least @needed@ lovelace. Returns 409 to the caller
+-- when none is suitable so the SPA can show a clear "deposit more
+-- funds first" message.
+pickInputUtxo :: Pool -> Text -> Text -> Int64 -> Handler (Utxo Identity)
+pickInputUtxo pool hid walletAddr needed = do
+  utxos <- liftIO $ Db.findWalletPureAdaUtxos pool hid walletAddr
+  case List.find (\u -> u.utxoLovelace >= needed) utxos of
+    Just u -> pure u
+    Nothing ->
+      throwError $
+        err409
+          { errBody =
+              Aeson.encode $
+                ErrorResponse $
+                  "no pure-ADA UTxO at "
+                    <> walletAddr
+                    <> " in head "
+                    <> hid
+                    <> " with at least "
+                    <> T.pack (show needed)
+                    <> " lovelace"
+          }
+
+-- | Pick a pure-ADA UTxO suitable for collateral — at least
+-- @needed@ lovelace, and explicitly *different* from the input
+-- UTxO so we don't trip BabbageNonDisjointRefInputs / etc.
+pickCollateralUtxo :: Pool -> Text -> Text -> Int64 -> (Text, Int32) -> Handler (Utxo Identity)
+pickCollateralUtxo pool hid walletAddr needed (excludeTx, excludeIx) = do
+  utxos <- liftIO $ Db.findWalletPureAdaUtxos pool hid walletAddr
+  case List.find suitable utxos of
+    Just u -> pure u
+    Nothing ->
+      throwError $
+        err409
+          { errBody =
+              Aeson.encode $
+                ErrorResponse $
+                  "no separate pure-ADA UTxO at "
+                    <> walletAddr
+                    <> " in head "
+                    <> hid
+                    <> " for collateral (need ≥ "
+                    <> T.pack (show needed)
+                    <> " lovelace, distinct from input "
+                    <> excludeTx
+                    <> "#"
+                    <> T.pack (show excludeIx)
+                    <> ")"
+          }
+  where
+    suitable u =
+      u.utxoLovelace >= needed
+        && not (u.utxoTxHash == excludeTx && u.utxoOutputIndex == excludeIx)
+
+-- | Plutus V3 envelope JSON for an arbitrary script CBOR hex —
+-- shape that @cardano-cli@ expects in @--tx-out-reference-script-file@
+-- and friends.
+plutusEnvelopeJson :: Text -> Aeson.Value
+plutusEnvelopeJson cborHex =
+  Aeson.object
+    [ Key.fromString "type" Aeson..= ("PlutusScriptV3" :: Text)
+    , Key.fromString "description" Aeson..= ("HTLC validator" :: Text)
+    , Key.fromString "cborHex" Aeson..= cborHex
+    ]
+
+-- | Look up a head row, error 404 if not present.
+loadHeadRow :: Pool -> Text -> Handler (Head Identity)
+loadHeadRow pool hid = do
+  m <- liftIO $ Db.getHead pool hid
+  case m of
+    Nothing -> throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Head not found"}
+    Just h -> pure h
+
+-- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/lock-tx-cbor
+handleLockTxCbor
+  :: Pool
+  -> TVar Int64
+  -> Maybe Text -- htlcScriptCbor
+  -> Text
+  -> Int
+  -> BuildTxFromWalletRequest
+  -> Handler Tx.BuildResult
+handleLockTxCbor pool chainSlotVar mScriptCbor rid idx req = do
+  (route, hop, sorted) <- loadHop pool rid idx
+  chainSlot <- liftIO $ readTVarIO chainSlotVar
+  scriptAddr <- case Htlc.htlcScriptAddress route.routeNetwork of
+    Left e -> throwError $ err400{errBody = Aeson.encode $ ErrorResponse e}
+    Right a -> pure a
+  hashBytes <- decodeHopHash hop.hopSecretHash
+  senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
+  receiverPkh <- decodeAddrPkh "receiver" hop.hopReceiverAddress
+  headRow <- loadHeadRow pool hop.hopHeadId
+  let mRefScript = headRow.headRefScriptUtxo
+      timeoutSlot = hop.hopTimeoutSlot
+  timeoutMs <- case Slot.slotToPosixMs route.routeNetwork timeoutSlot of
+    Just ms -> pure ms
+    Nothing -> throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ "Unsupported network for slot conversion: " <> route.routeNetwork}
+  let datumBytes = Htlc.mkDatumCbor hashBytes timeoutMs senderPkh receiverPkh
+      downstreamFees = sum [h.hopFeeLovelace | h <- sorted, fromIntegral h.hopIndex > idx]
+      minAdaFloor = case mRefScript of
+        Just _ -> htlcLockMinAdaSharedLovelace
+        Nothing -> htlcLockMinAdaInlineLovelace
+      lockAmount = max minAdaFloor (route.routeAmountLovelace + downstreamFees)
+      fee = recommendedLockFeeLovelace
+      -- The lock tx needs: input ≥ lockAmount + fee + change-min-ada.
+      -- We don't know the change-min-ada precisely, so add a 2 ADA
+      -- cushion. The user's wallet should comfortably cover this.
+      neededInput = lockAmount + fee + 2_000_000
+  inputUtxo <- pickInputUtxo pool hop.hopHeadId req.walletAddress neededInput
+  ppText <- fetchPP headRow
+  envOpt <- case mRefScript of
+    Just _ -> pure Nothing
+    Nothing -> case mScriptCbor of
+      Nothing -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse "HTLC script CBOR not configured; cannot inline ref script"}
+      Just cbor -> pure $ Just (plutusEnvelopeJson cbor)
+  let lockArgs =
+        Tx.LockArgs
+          { inputUtxo = inputUtxo.utxoTxHash <> "#" <> T.pack (show inputUtxo.utxoOutputIndex)
+          , inputLovelace = inputUtxo.utxoLovelace
+          , walletAddress = req.walletAddress
+          , scriptAddress = scriptAddr
+          , datumCborHex = Htlc.hexEncode datumBytes
+          , sharedRefUtxo = mRefScript
+          , lockAmount = lockAmount
+          , validityUpperSlot = clampValidityUpper chainSlot timeoutSlot
+          , requiredSignerPkhHex = Htlc.hexEncode senderPkh
+          , feeLovelace = fee
+          , protocolParamsJson = ppText
+          , plutusEnvelope = envOpt
+          }
+  result <- liftIO $ Tx.buildLockTx lockArgs
+  case result of
+    Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
+    Right br -> pure br
+
+-- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/claim-tx-cbor
+handleClaimTxCbor
+  :: Pool
+  -> TVar Int64
+  -> Text
+  -> Int
+  -> BuildClaimTxRequest
+  -> Handler Tx.BuildResult
+handleClaimTxCbor pool chainSlotVar rid idx req = do
+  (_route, hop, _) <- loadHop pool rid idx
+  chainSlot <- liftIO $ readTVarIO chainSlotVar
+  htlcTxHash <- requireHtlcTx hop
+  receiverPkh <- decodeAddrPkh "receiver" hop.hopReceiverAddress
+  preimageBytes <- case Base16.decode (T.encodeUtf8 req.preimage) of
+    Left e -> throwError $ err400{errBody = Aeson.encode $ ErrorResponse $ "preimage hex decode failed: " <> T.pack e}
+    Right b -> pure b
+  headRow <- loadHeadRow pool hop.hopHeadId
+  refUtxo <- case headRow.headRefScriptUtxo of
+    Nothing ->
+      throwError $
+        err409
+          { errBody =
+              Aeson.encode $
+                ErrorResponse "head has no published HTLC ref-script UTxO; publish one first via /heads/{id}/publish-ref-script-tx-cbor and POST /heads/{id}/ref-script"
+          }
+    Just u -> pure u
+  let redeemer = Htlc.mkClaimRedeemerCbor preimageBytes
+      timeout = hop.hopTimeoutSlot
+      fee = recommendedScriptFeeLovelace
+      collateralNeeded = recommendedCollateralLovelace
+      -- The HTLC UTxO carries 'lockAmount' lovelace from the lock
+      -- side; we don't have that on the hop row directly. Read it
+      -- from the indexed utxos table.
+      htlcRef = (htlcTxHash, 0 :: Int32)
+  -- Find the locked HTLC UTxO so we know its lovelace value
+  mHtlcUtxo <- liftIO $ Db.findUtxoByRef pool hop.hopHeadId (fst htlcRef) (snd htlcRef)
+  htlcLovelace <- case mHtlcUtxo of
+    Just u -> pure u.utxoLovelace
+    Nothing ->
+      throwError $
+        err409
+          { errBody = Aeson.encode $ ErrorResponse $ "locked HTLC UTxO " <> htlcTxHash <> "#0 not found in head's snapshot"
+          }
+  collateralUtxo <- pickCollateralUtxo pool hop.hopHeadId req.walletAddress collateralNeeded htlcRef
+  ppText <- fetchPP headRow
+  let claimArgs =
+        Tx.ClaimArgs
+          { htlcInputTxHash = htlcTxHash
+          , htlcInputIndex = 0
+          , refScriptUtxo = refUtxo
+          , redeemerCborHex = Htlc.hexEncode redeemer
+          , collateralUtxo = collateralUtxo.utxoTxHash <> "#" <> T.pack (show collateralUtxo.utxoOutputIndex)
+          , collateralLovelace = collateralUtxo.utxoLovelace
+          , totalCollateralLovelace = collateralNeeded
+          , walletAddress = req.walletAddress
+          , htlcOutputLovelace = htlcLovelace
+          , validityUpperSlot = clampValidityUpper chainSlot timeout
+          , requiredSignerPkhHex = Htlc.hexEncode receiverPkh
+          , feeLovelace = fee
+          , protocolParamsJson = ppText
+          }
+  result <- liftIO $ Tx.buildClaimTx claimArgs
+  case result of
+    Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
+    Right br -> pure br
+
+-- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/refund-tx-cbor
+handleRefundTxCbor
+  :: Pool
+  -> TVar Int64
+  -> Text
+  -> Int
+  -> BuildTxFromWalletRequest
+  -> Handler Tx.BuildResult
+handleRefundTxCbor pool _chainSlotVar rid idx req = do
+  (_route, hop, _) <- loadHop pool rid idx
+  htlcTxHash <- requireHtlcTx hop
+  senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
+  headRow <- loadHeadRow pool hop.hopHeadId
+  refUtxo <- case headRow.headRefScriptUtxo of
+    Nothing ->
+      throwError $
+        err409
+          { errBody = Aeson.encode $ ErrorResponse "head has no published HTLC ref-script UTxO; publish one first"
+          }
+    Just u -> pure u
+  let timeout = hop.hopTimeoutSlot
+      fee = recommendedScriptFeeLovelace
+      collateralNeeded = recommendedCollateralLovelace
+      htlcRef = (htlcTxHash, 0 :: Int32)
+  mHtlcUtxo <- liftIO $ Db.findUtxoByRef pool hop.hopHeadId (fst htlcRef) (snd htlcRef)
+  htlcLovelace <- case mHtlcUtxo of
+    Just u -> pure u.utxoLovelace
+    Nothing -> throwError $ err409{errBody = Aeson.encode $ ErrorResponse $ "locked HTLC UTxO " <> htlcTxHash <> "#0 not found"}
+  collateralUtxo <- pickCollateralUtxo pool hop.hopHeadId req.walletAddress collateralNeeded htlcRef
+  ppText <- fetchPP headRow
+  let refundArgs =
+        Tx.RefundArgs
+          { htlcInputTxHash = htlcTxHash
+          , htlcInputIndex = 0
+          , refScriptUtxo = refUtxo
+          , redeemerCborHex = Htlc.hexEncode Htlc.refundRedeemerCbor
+          , collateralUtxo = collateralUtxo.utxoTxHash <> "#" <> T.pack (show collateralUtxo.utxoOutputIndex)
+          , collateralLovelace = collateralUtxo.utxoLovelace
+          , totalCollateralLovelace = collateralNeeded
+          , walletAddress = req.walletAddress
+          , htlcOutputLovelace = htlcLovelace
+          , validityLowerSlot = timeout + htlcSafetyMarginSlots
+          , requiredSignerPkhHex = Htlc.hexEncode senderPkh
+          , feeLovelace = fee
+          , protocolParamsJson = ppText
+          }
+  result <- liftIO $ Tx.buildRefundTx refundArgs
+  case result of
+    Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
+    Right br -> pure br
+
+-- | POST /api/v1/heads/:headId/publish-ref-script-tx-cbor
+handlePublishRefTxCbor
+  :: Pool
+  -> Maybe Text -- htlcScriptCbor
+  -> Text
+  -> BuildTxFromWalletRequest
+  -> Handler Tx.BuildResult
+handlePublishRefTxCbor pool mScriptCbor hid req = do
+  scriptCbor <- case mScriptCbor of
+    Nothing -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse "HTLC script CBOR not configured"}
+    Just c -> pure c
+  headRow <- loadHeadRow pool hid
+  let refOutVal = 6_000_000 :: Int64
+      fee = 300_000 :: Int64
+      neededInput = refOutVal + fee + 2_000_000
+  inputUtxo <- pickInputUtxo pool hid req.walletAddress neededInput
+  ppText <- fetchPP headRow
+  let pubArgs =
+        Tx.PublishRefArgs
+          { inputUtxo = inputUtxo.utxoTxHash <> "#" <> T.pack (show inputUtxo.utxoOutputIndex)
+          , inputLovelace = inputUtxo.utxoLovelace
+          , walletAddress = req.walletAddress
+          , refOutputLovelace = refOutVal
+          , feeLovelace = fee
+          , protocolParamsJson = ppText
+          , plutusEnvelope = plutusEnvelopeJson scriptCbor
+          }
+  result <- liftIO $ Tx.buildPublishRefTx pubArgs
+  case result of
+    Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
+    Right br -> pure br
+
+-- | POST /api/v1/heads/:headId/submit
+handleSubmitTx :: Pool -> Text -> SubmitTxRequest -> Handler Submit.SubmitResult
+handleSubmitTx pool hid req = do
+  headRow <- loadHeadRow pool hid
+  liftIO $ Submit.submitToHead headRow.headHost (fromIntegral headRow.headPort) req.signedCborHex
+
+-- | Fetch protocol params for a head and translate any error into
+-- an HTTP error so the handlers above don't have to repeat themselves.
+fetchPP :: Head Identity -> Handler Text
+fetchPP h = do
+  res <- liftIO $ fetchProtocolParams h.headHost (fromIntegral h.headPort)
+  case res of
+    Left e -> throwError $ err502{errBody = Aeson.encode $ ErrorResponse e}
+    Right t -> pure t
+
+-- ─── existing helpers ────────────────────────────────────────────────
 
 decodeAddrPkh :: Text -> Text -> Handler ByteString
 decodeAddrPkh role addr = case Htlc.addressOrPkhToBytes addr of

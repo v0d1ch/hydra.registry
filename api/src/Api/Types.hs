@@ -502,3 +502,78 @@ data SetRefScriptRequest = SetRefScriptRequest
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
+
+-- | Body for @POST /relay/payments/.../{lock,refund}-tx-cbor@ and
+-- @POST /heads/.../publish-ref-script-tx-cbor@. The wallet address
+-- says where the input UTxO comes from and where change goes; the
+-- server picks a suitable input from the head's indexed UTxO set.
+--
+-- Per the project's hard custody rule, we never ask for or
+-- reference signing keys — the user signs offline.
+data BuildTxFromWalletRequest = BuildTxFromWalletRequest
+  { walletAddress :: Text -- ^ bech32 address that owns the input UTxO
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Body for @POST /relay/payments/.../claim-tx-cbor@. Same as
+-- 'BuildTxFromWalletRequest' but also carries the preimage that
+-- will go into the @Claim(preimage)@ redeemer. The wallet address
+-- here is where the claim output lands and where collateral comes
+-- from.
+data BuildClaimTxRequest = BuildClaimTxRequest
+  { walletAddress :: Text
+  , preimage :: Text -- ^ hex-encoded preimage bytes
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Body for @POST /heads/{id}/submit@. The user has signed the
+-- envelope they downloaded from a build endpoint and now hands the
+-- signed CBOR back; the server forwards it to the head's WS as
+-- @NewTx@ and reports @TxValid@ / @TxInvalid@.
+data SubmitTxRequest = SubmitTxRequest
+  { signedCborHex :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | A single thing a participant can do *right now* on a specific
+-- hop — surfaced in the dashboard so the UI knows which buttons to
+-- show and which to grey out.
+--
+-- @kind@ is one of:
+--
+-- [@lock@] this user is the sender of the hop and the upstream
+--          condition is satisfied (or this hop is hop 0). The hop
+--          is still @pending@ in the DB.
+--
+-- [@claim@] this user is the receiver of a @locked@ hop and the
+--           preimage is in the DB (or, for the final hop, the user
+--           is the invoice's receiver and can reveal+claim).
+--
+-- [@refund@] this user is the sender of a @locked@ hop and the
+--            timeout has elapsed without a claim.
+--
+-- @urgency@ is a server-side derivation from
+-- @chainSlot vs hop.timeoutSlot@ so the UI doesn't have to reason
+-- about chain time.
+data ParticipantAction = ParticipantAction
+  { hopIndex :: Int
+  , kind :: Text -- ^ @lock@ | @claim@ | @refund@
+  , urgency :: Text -- ^ @ok@ | @soon@ | @expiring@ | @expired@
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | One row in the dashboard at @GET /relay/participants/{pkh}/routes@.
+-- Wraps the same 'PaymentStatusResponse' the route page uses, then
+-- annotates it with this participant's role(s) in the route and a
+-- (possibly empty) list of actions they can take right now.
+data ParticipantRouteSummary = ParticipantRouteSummary
+  { route :: PaymentStatusResponse
+  , roles :: [Text] -- ^ @sender@ | @bridge@ | @receiver@ — usually one
+  , actions :: [ParticipantAction] -- ^ empty when there's nothing to do
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)

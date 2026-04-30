@@ -1,5 +1,6 @@
 module RelayHtlcWatcherSpec (spec) where
 
+import Control.Concurrent.STM (atomically, isEmptyTChan, readTChan)
 import Data.Aeson (Value (..))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KM
@@ -13,6 +14,8 @@ import Hasql.Pool (Pool)
 import Hydra.Client (HydraUtxoEntry (..))
 import Hydra.Htlc qualified as Htlc
 import Logging (LogLevel (..), newLogger)
+import Relay.EventBus (RouteEvent (..))
+import Relay.EventBus qualified as Bus
 import Relay.HtlcWatcher qualified as HtlcWatcher
 import Test.Hspec
 import TestUtils
@@ -65,9 +68,18 @@ mkHtlcDatum payHash =
         )
       ]
 
+-- | Drop-in wrapper so existing tests can keep their old signature
+-- (no explicit bus). A throwaway 'EventBus' is created per call —
+-- callers don't read from it.
+runWatcher :: Pool -> Text -> Text -> [HydraUtxoEntry] -> IO ()
+runWatcher pool headId scriptHash utxos = do
+  bus <- Bus.newEventBus
+  HtlcWatcher.processUtxoSnapshot (newLogger Info) pool bus headId scriptHash utxos
+
 spec :: Spec
 spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
   let logger = newLogger Info
+      _ = logger -- silence -Wunused-local-binds in case some tests stop using it
 
   describe "processUtxoSnapshot — lock detection" $ do
     it "detects a new HTLC lock and updates hop status" $ \pool -> do
@@ -85,7 +97,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
               , inlineDatum = Just (mkHtlcDatum testPaymentHash)
               , referenceScript = Nothing
               }
-      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash [htlcUtxo]
+      runWatcher pool "head-A" testScriptHash [htlcUtxo]
 
       -- Check that hop-1 is now locked
       hops <- Db.getRouteHops pool "route-1"
@@ -108,7 +120,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
               , inlineDatum = Just (mkHtlcDatum "0000000000000000000000000000000000000000000000000000000000000000")
               , referenceScript = Nothing
               }
-      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash [unrelatedUtxo]
+      runWatcher pool "head-A" testScriptHash [unrelatedUtxo]
 
       hops <- Db.getRouteHops pool "route-1"
       let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
@@ -129,7 +141,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
               , referenceScript = Nothing
               }
       -- Process for head-B, but hops are in head-A
-      HtlcWatcher.processUtxoSnapshot logger pool "head-B" testScriptHash [htlcUtxo]
+      runWatcher pool "head-B" testScriptHash [htlcUtxo]
 
       hops <- Db.getRouteHops pool "route-1"
       let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
@@ -158,7 +170,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
               , inlineDatum = Just (mkHtlcDatum testPaymentHash)
               , referenceScript = Nothing
               }
-      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash [fakeUtxo]
+      runWatcher pool "head-A" testScriptHash [fakeUtxo]
 
       hops <- Db.getRouteHops pool "route-1"
       let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
@@ -181,11 +193,122 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
               , inlineDatum = Just (mkHtlcDatum testPaymentHash)
               , referenceScript = Nothing
               }
-      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash [mainnetUtxo]
+      runWatcher pool "head-A" testScriptHash [mainnetUtxo]
 
       hops <- Db.getRouteHops pool "route-1"
       let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
       hop1.hopHtlcStatus `shouldBe` "locked"
+
+  describe "EventBus fan-out" $ do
+    -- These tests pin the contract that "the watcher updates the
+    -- DB *and* publishes a corresponding RouteEvent" — they're what
+    -- the SSE endpoint relies on to push pushes to subscribers.
+    it "publishes HopLocked when a lock is detected" $ \pool -> do
+      setupTestPayment pool "head-A" "addr_alice" "addr_bob"
+      bus <- Bus.newEventBus
+      sub <- Bus.subscribe bus
+      let htlcUtxo =
+            HydraUtxoEntry
+              { txHash = "lock-tx-evt"
+              , outputIndex = 0
+              , address = testScriptAddress
+              , lovelace = 50000000
+              , nativeAssets = Map.empty
+              , datumHash = Nothing
+              , inlineDatum = Just (mkHtlcDatum testPaymentHash)
+              , referenceScript = Nothing
+              }
+      HtlcWatcher.processUtxoSnapshot
+        (newLogger Info)
+        pool
+        bus
+        "head-A"
+        testScriptHash
+        [htlcUtxo]
+      ev <- atomically (readTChan sub)
+      case ev of
+        HopLocked{routeId, hopIndex, txHash} -> do
+          routeId `shouldBe` "route-1"
+          hopIndex `shouldBe` 0
+          txHash `shouldBe` "lock-tx-evt"
+        other -> expectationFailure ("expected HopLocked, got " <> show other)
+
+    it "publishes HopClaimed when a previously locked UTxO disappears" $ \pool -> do
+      setupTestPayment pool "head-A" "addr_alice" "addr_bob"
+      now <- getCurrentTime
+      Db.updateHopLocked pool "hop-1" "lock-tx-001" now
+      bus <- Bus.newEventBus
+      sub <- Bus.subscribe bus
+      HtlcWatcher.processUtxoSnapshot
+        (newLogger Info)
+        pool
+        bus
+        "head-A"
+        testScriptHash
+        []
+      ev <- atomically (readTChan sub)
+      case ev of
+        HopClaimed{routeId, hopIndex} -> do
+          routeId `shouldBe` "route-1"
+          hopIndex `shouldBe` 0
+        other -> expectationFailure ("expected HopClaimed, got " <> show other)
+
+    it "publishes RouteCompleted after every hop is claimed" $ \pool -> do
+      setupTestPayment pool "head-A" "addr_alice" "addr_bob"
+      now <- getCurrentTime
+      Db.updateHopLocked pool "hop-1" "tx-1" now
+      Db.updateHopLocked pool "hop-2" "tx-2" now
+      bus <- Bus.newEventBus
+      sub <- Bus.subscribe bus
+      -- First snapshot still has hop-2's UTxO present, so only
+      -- hop-1's claim is detected and the route is not yet
+      -- complete.
+      HtlcWatcher.processUtxoSnapshot
+        (newLogger Info)
+        pool
+        bus
+        "head-A"
+        testScriptHash
+        [ HydraUtxoEntry
+            "tx-2"
+            0
+            testScriptAddress
+            50000000
+            Map.empty
+            Nothing
+            (Just (mkHtlcDatum testPaymentHash))
+            Nothing
+        ]
+      _ <- atomically (readTChan sub) -- HopClaimed for hop-1
+      -- Second snapshot has nothing → hop-2 is also claimed →
+      -- RouteCompleted should follow.
+      HtlcWatcher.processUtxoSnapshot
+        (newLogger Info)
+        pool
+        bus
+        "head-A"
+        testScriptHash
+        []
+      _ <- atomically (readTChan sub) -- HopClaimed for hop-2
+      finalEv <- atomically (readTChan sub)
+      case finalEv of
+        RouteCompleted{routeId} -> routeId `shouldBe` "route-1"
+        other -> expectationFailure ("expected RouteCompleted, got " <> show other)
+
+    it "does not publish anything when the watcher does no-op work" $ \pool -> do
+      setupTestPayment pool "head-A" "addr_alice" "addr_bob"
+      bus <- Bus.newEventBus
+      sub <- Bus.subscribe bus
+      -- Empty snapshot, no locked hops in DB → nothing to detect.
+      HtlcWatcher.processUtxoSnapshot
+        (newLogger Info)
+        pool
+        bus
+        "head-A"
+        testScriptHash
+        []
+      empty <- atomically (isEmptyTChan sub)
+      empty `shouldBe` True
 
   describe "processUtxoSnapshot — claim detection" $ do
     it "detects a claim when locked HTLC UTxO disappears" $ \pool -> do
@@ -196,7 +319,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       Db.updateHopLocked pool "hop-1" "lock-tx-001" now
 
       -- Snapshot without the locked UTxO — it was spent (claimed)
-      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash []
+      runWatcher pool "head-A" testScriptHash []
 
       hops <- Db.getRouteHops pool "route-1"
       let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
@@ -221,7 +344,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
               , inlineDatum = Just (mkHtlcDatum testPaymentHash)
               , referenceScript = Nothing
               }
-      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash [stillLockedUtxo]
+      runWatcher pool "head-A" testScriptHash [stillLockedUtxo]
 
       hops <- Db.getRouteHops pool "route-1"
       let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
@@ -237,7 +360,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       Db.updateHopLocked pool "hop-2" "lock-tx-002" now
 
       -- Claim hop-1 (UTxO disappears)
-      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash [HydraUtxoEntry "lock-tx-002" 0 testScriptAddress 50000000 Map.empty Nothing (Just (mkHtlcDatum testPaymentHash)) Nothing]
+      runWatcher pool "head-A" testScriptHash [HydraUtxoEntry "lock-tx-002" 0 testScriptAddress 50000000 Map.empty Nothing (Just (mkHtlcDatum testPaymentHash)) Nothing]
 
       -- Hop-1 claimed, hop-2 still locked
       hops1 <- Db.getRouteHops pool "route-1"
@@ -250,7 +373,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
         Nothing -> expectationFailure "Route not found"
 
       -- Claim hop-2 (all UTxOs gone)
-      HtlcWatcher.processUtxoSnapshot logger pool "head-A" testScriptHash []
+      runWatcher pool "head-A" testScriptHash []
 
       -- Now both claimed → route completed, invoice paid
       hops2 <- Db.getRouteHops pool "route-1"

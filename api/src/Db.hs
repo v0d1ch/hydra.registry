@@ -5,7 +5,9 @@ import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
 import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
+import Data.List qualified as List
 import Data.Map.Strict qualified as Map
+import Data.Ord qualified
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Time (UTCTime, getCurrentTime)
@@ -932,6 +934,121 @@ getActiveHopsByHead pool headId =
           Rel8.where_ (hop.hopHeadId ==. lit headId)
           Rel8.where_ (hop.hopHtlcStatus ==. lit "pending" ||. hop.hopHtlcStatus ==. lit "locked")
           pure hop
+
+-- | Get the distinct set of route IDs that contain a hop with the
+-- given payment-hash secret. Used by 'handleSubmitPreimage' to fan
+-- out one 'PreimageRevealed' event per affected route.
+getRouteIdsByPaymentHash :: Pool -> Text -> IO [Text]
+getRouteIdsByPaymentHash pool payHash = do
+  rows <-
+    runSession pool $
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            hop <- Rel8.each routeHopSchema
+            Rel8.where_ (hop.hopSecretHash ==. lit payHash)
+            pure hop.hopRouteId
+  pure (List.nub rows)
+
+-- | Look up a single UTxO by its @(txHash, outputIndex)@ inside a
+-- specific head's snapshot. Returns @Nothing@ if the indexed
+-- snapshot doesn't have it (which usually means the UTxO has been
+-- spent or hasn't been observed yet).
+findUtxoByRef :: Pool -> Text -> Text -> Int32 -> IO (Maybe (Utxo Identity))
+findUtxoByRef pool hid txh ix = do
+  rows <-
+    runSession pool $
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            u <- Rel8.each utxoSchema
+            Rel8.where_ (u.utxoHeadId ==. lit hid)
+            Rel8.where_ (u.utxoTxHash ==. lit txh)
+            Rel8.where_ (u.utxoOutputIndex ==. lit ix)
+            pure u
+  pure $ case rows of
+    (r : _) -> Just r
+    [] -> Nothing
+
+-- | Pure-ADA UTxOs at @walletAddress@ inside @headId@, sorted by
+-- ascending lovelace. The 'Tx.Builder' module uses this to pick an
+-- input (smallest sufficient) and a collateral (smallest sufficient
+-- separate UTxO) without making the caller deal with native tokens
+-- or script-bearing outputs.
+--
+-- "Pure-ADA" here means: no inline datum, no datum hash, no
+-- reference script, and no native tokens — i.e. spending it doesn't
+-- run a script and doesn't have to balance multi-asset values.
+findWalletPureAdaUtxos
+  :: Pool
+  -> Text
+  -- ^ headId
+  -> Text
+  -- ^ walletAddress (bech32)
+  -> IO [Utxo Identity]
+findWalletPureAdaUtxos pool hid walletAddr = do
+  rows <-
+    runSession pool $
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            u <- Rel8.each utxoSchema
+            Rel8.where_ (u.utxoHeadId ==. lit hid)
+            Rel8.where_ (u.utxoAddress ==. lit walletAddr)
+            -- No script/datum encumbrance.
+            Rel8.where_ (Rel8.isNull u.utxoDatumHash)
+            Rel8.where_ (Rel8.isNull u.utxoInlineDatum)
+            Rel8.where_ (Rel8.isNull u.utxoReferenceScriptHash)
+            pure u
+  -- Filter out outputs that carry native tokens (Aeson value at the
+  -- @assets@ column has any non-lovelace key). We don't model
+  -- native assets in our query layer, so this happens in Haskell.
+  pure $ List.sortOn (.utxoLovelace) (Prelude.filter pureAda rows)
+ where
+  pureAda u = case u.utxoAssets of
+    Aeson.Object o
+      | KM.null o -> True
+      | otherwise -> False
+    _ -> True
+
+-- | Routes the given participant pkh is involved in (as overall
+-- sender, overall receiver, or any hop's sender/receiver — i.e. as
+-- a bridge). Returns each route paired with its hops, ordered by
+-- @createdAt@ descending so the dashboard naturally shows recent
+-- payments first. Used by @GET /relay/participants/{pkh}/routes@.
+getRoutesByParticipantPkh
+  :: Pool
+  -> Text
+  -> IO [(PaymentRoute Identity, [RouteHop Identity])]
+getRoutesByParticipantPkh pool pkh = do
+  -- One DB round-trip for routes where pkh appears at the
+  -- top level. A second pass picks up bridge-only routes (pkh
+  -- shows up only inside hops). Composing the two SQL-side via
+  -- @exists@ would be cleaner but Rel8's quantification helpers
+  -- are awkward across multi-clause @where_@ — two queries +
+  -- merge in Haskell is small data and easy to read.
+  topLevel <-
+    runSession pool $
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            r <- Rel8.each paymentRouteSchema
+            Rel8.where_ (r.routeSenderAddress ==. lit pkh ||. r.routeReceiverAddress ==. lit pkh)
+            pure r
+  bridgeRouteIds <-
+    runSession pool $
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            h <- Rel8.each routeHopSchema
+            Rel8.where_ (h.hopSenderAddress ==. lit pkh ||. h.hopReceiverAddress ==. lit pkh)
+            pure h.hopRouteId
+  let topLevelIds = Set.fromList (map (.routeId) topLevel)
+      extraIds = Set.fromList bridgeRouteIds `Set.difference` topLevelIds
+  extraRoutes <- mapM (getPaymentRoute pool) (Set.toList extraIds)
+  let allRoutes = topLevel <> [r | Just r <- extraRoutes]
+      sorted = List.sortOn (Data.Ord.Down . (.routeCreatedAt)) allRoutes
+  mapM (\r -> (r,) <$> getRouteHops pool r.routeId) sorted
 
 -- | Mark a hop as locked with the HTLC transaction hash
 updateHopLocked :: Pool -> Text -> Text -> UTCTime -> IO ()

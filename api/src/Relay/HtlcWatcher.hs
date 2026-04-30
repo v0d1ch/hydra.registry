@@ -12,13 +12,15 @@ import Data.Functor.Identity (Identity)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
-import Data.Time (getCurrentTime)
+import Data.Time (UTCTime, getCurrentTime)
 import Db qualified
 import Db.Schema (PaymentRoute (..), RouteHop (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraUtxoEntry (..))
 import Hydra.Htlc qualified as Htlc
 import Logging
+import Relay.EventBus (EventBus, RouteEvent (..))
+import Relay.EventBus qualified as Bus
 
 -- | After each snapshot, detect HTLC lock and claim events by comparing
 -- the new UTxO set against active route hops for this head.
@@ -28,8 +30,12 @@ import Logging
 --
 -- Claim: a previously locked hop's HTLC tx hash is no longer in the
 --        UTxO set (spent) → mark hop as 'claimed'.
-processUtxoSnapshot :: Logger -> Pool -> Text -> Text -> [HydraUtxoEntry] -> IO ()
-processUtxoSnapshot logger pool headId htlcScriptHash utxos = do
+--
+-- Whenever the DB is updated the watcher also fans out the
+-- corresponding 'RouteEvent' on the supplied 'EventBus'. SSE
+-- subscribers see the transition without polling.
+processUtxoSnapshot :: Logger -> Pool -> EventBus -> Text -> Text -> [HydraUtxoEntry] -> IO ()
+processUtxoSnapshot logger pool bus headId htlcScriptHash utxos = do
   -- Get all active (pending or locked) hops for this head
   activeHops <- Db.getActiveHopsByHead pool headId
 
@@ -40,11 +46,11 @@ processUtxoSnapshot logger pool headId htlcScriptHash utxos = do
   -- small.
   let scriptAddrs = htlcScriptAddresses htlcScriptHash
       htlcUtxos = filter (isHtlcUtxo scriptAddrs) utxos
-  mapM_ (detectLock logger pool headId activeHops) htlcUtxos
+  mapM_ (detectLock logger pool bus headId activeHops) htlcUtxos
 
   -- Detect claims: locked hops whose HTLC tx is no longer in the UTxO set
   let utxoTxHashes = map (\u -> u.txHash) utxos
-  mapM_ (detectClaim logger pool utxoTxHashes) activeHops
+  mapM_ (detectClaim logger pool bus utxoTxHashes) activeHops
 
 -- | Bech32 enterprise-script addresses for the given script hash on
 -- every supported network. Filters out networks where address derivation
@@ -67,8 +73,8 @@ isHtlcUtxo addrs entry =
     Nothing -> False
 
 -- | Try to match an HTLC UTxO to a pending hop and mark it as locked.
-detectLock :: Logger -> Pool -> Text -> [RouteHop Identity] -> HydraUtxoEntry -> IO ()
-detectLock logger pool headId activeHops entry = do
+detectLock :: Logger -> Pool -> EventBus -> Text -> [RouteHop Identity] -> HydraUtxoEntry -> IO ()
+detectLock logger pool bus headId activeHops entry = do
   case extractPaymentHash entry.inlineDatum of
     Nothing -> pure ()
     Just payHash -> do
@@ -80,16 +86,38 @@ detectLock logger pool headId activeHops entry = do
             , h.hopHeadId == headId
             ]
       now <- getCurrentTime
-      mapM_
-        ( \h -> do
-            logInfo logger "HTLC lock detected" [("hopId", Aeson.toJSON h.hopId), ("headId", Aeson.toJSON headId), ("txHash", Aeson.toJSON entry.txHash)]
-            Db.updateHopLocked pool h.hopId entry.txHash now
-        )
-        matchingHops
+      mapM_ (recordLock logger pool bus headId entry now) matchingHops
+
+recordLock
+  :: Logger
+  -> Pool
+  -> EventBus
+  -> Text
+  -> HydraUtxoEntry
+  -> UTCTime
+  -> RouteHop Identity
+  -> IO ()
+recordLock logger pool bus headId entry now h = do
+  logInfo
+    logger
+    "HTLC lock detected"
+    [ ("hopId", Aeson.toJSON h.hopId)
+    , ("headId", Aeson.toJSON headId)
+    , ("txHash", Aeson.toJSON entry.txHash)
+    ]
+  Db.updateHopLocked pool h.hopId entry.txHash now
+  Bus.publish
+    bus
+    HopLocked
+      { routeId = h.hopRouteId
+      , hopIndex = fromIntegral h.hopIndex
+      , txHash = entry.txHash
+      , at = now
+      }
 
 -- | Check if a locked hop's HTLC UTxO has been spent (claimed).
-detectClaim :: Logger -> Pool -> [Text] -> RouteHop Identity -> IO ()
-detectClaim logger pool utxoTxHashes hop = do
+detectClaim :: Logger -> Pool -> EventBus -> [Text] -> RouteHop Identity -> IO ()
+detectClaim logger pool bus utxoTxHashes hop = do
   case hop.hopHtlcTxHash of
     Nothing -> pure ()
     Just lockedTxHash ->
@@ -99,8 +127,15 @@ detectClaim logger pool utxoTxHashes hop = do
           now <- getCurrentTime
           logInfo logger "HTLC claim detected" [("hopId", Aeson.toJSON hop.hopId), ("txHash", Aeson.toJSON lockedTxHash)]
           Db.updateHopClaimed pool hop.hopId now
+          Bus.publish
+            bus
+            HopClaimed
+              { routeId = hop.hopRouteId
+              , hopIndex = fromIntegral hop.hopIndex
+              , at = now
+              }
           -- Check if all hops in this route are now claimed → complete the payment
-          checkRouteCompletion logger pool hop.hopRouteId
+          checkRouteCompletion logger pool bus hop.hopRouteId
         else pure ()
 
 -- | Extract the payment hash from an HTLC inline datum.
@@ -126,17 +161,18 @@ extractPaymentHash (Just val) = case val of
 
 -- | Check if all hops in a route are claimed. If so, mark the route
 -- as completed and the invoice as paid.
-checkRouteCompletion :: Logger -> Pool -> Text -> IO ()
-checkRouteCompletion logger pool routeId = do
-  hops <- Db.getRouteHops pool routeId
+checkRouteCompletion :: Logger -> Pool -> EventBus -> Text -> IO ()
+checkRouteCompletion logger pool bus rid = do
+  hops <- Db.getRouteHops pool rid
   let allClaimed = all (\h -> h.hopHtlcStatus == "claimed") hops
   if allClaimed && not (null hops)
     then do
-      logInfo logger "All hops claimed — payment complete" [("routeId", Aeson.toJSON routeId)]
-      Db.updateRouteStatus pool routeId "completed"
+      logInfo logger "All hops claimed — payment complete" [("routeId", Aeson.toJSON rid)]
+      Db.updateRouteStatus pool rid "completed"
       -- Mark the invoice as paid
-      mRoute <- Db.getPaymentRoute pool routeId
+      mRoute <- Db.getPaymentRoute pool rid
       case mRoute of
         Just route -> Db.updateInvoiceStatus pool route.routeInvoiceId "paid"
         Nothing -> pure ()
+      Bus.publish bus RouteCompleted{routeId = rid}
     else pure ()

@@ -14,6 +14,7 @@ import Data.Int (Int64)
 import Db qualified
 import Explorer.Sidecar qualified as Sidecar
 import Hydra.Client (HydraEvent)
+import Relay.EventBus qualified as EventBus
 import Relay.ExpirySweep qualified as ExpirySweep
 import Relay.Graph qualified as Graph
 import Indexer qualified
@@ -44,8 +45,12 @@ main = do
   -- without trusting the registry's local system clock.
   chainSlotVar <- newTVarIO (0 :: Int64)
 
+  -- Relay event bus — fan-out for HTLC lock/claim/preimage transitions
+  -- so SSE subscribers get pushed deltas instead of having to poll.
+  bus <- EventBus.newEventBus
+
   -- Start the indexer (runs forever in its own thread)
-  indexerAsync <- async $ Indexer.startIndexer logger pool chainSlotVar config.htlcScriptHash eventQueue
+  indexerAsync <- async $ Indexer.startIndexer logger pool chainSlotVar bus config.htlcScriptHash eventQueue
   logInfo logger "Indexer started" []
 
   -- Reconnect to registered heads
@@ -98,6 +103,7 @@ main = do
           , staticDir = config.staticDir
           , relayGraph = relayGraphVar
           , latestChainSlot = chainSlotVar
+          , relayEventBus = bus
           , htlcScriptHash = config.htlcScriptHash
           , htlcScriptCbor = config.htlcScriptCbor
           }

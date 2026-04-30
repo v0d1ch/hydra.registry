@@ -39,14 +39,17 @@ library
     Explorer.Sidecar
     Hydra.Client
     Hydra.Htlc
+    Hydra.Submit
     Indexer
     Logging
     Metrics
     Middleware.RateLimit
+    Relay.EventBus
     Relay.ExpirySweep
     Relay.Graph
     Relay.HtlcWatcher
     Relay.Slot
+    Tx.Builder
   build-depends:
     , base >= 4.20 && < 5
     , aeson
@@ -56,6 +59,8 @@ library
     , bytestring
     , cborg
     , containers
+    , directory
+    , filepath
     , hasql
     , hasql-pool
     , http-client
@@ -63,6 +68,7 @@ library
     , http-types
     , mtl
     , network-uri
+    , process
     , rel8
     , servant
     , servant-server
@@ -134,10 +140,13 @@ test-suite hydra-registry-api-test
     DbIntegrationSpec
     ExplorerClientSpec
     HydraClientSpec
+    ApiSpec
     HydraHtlcSpec
     RateLimitSpec
+    RelayEventBusSpec
     RelayGraphSpec
     RelayHtlcWatcherSpec
     RelaySlotSpec
     TestUtils
+    TxBuilderSpec
     ValidationSpec
