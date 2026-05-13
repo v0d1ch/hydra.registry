@@ -4,8 +4,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    cardano-node.url = "github:IntersectMBO/cardano-node";
-    hydra.url = "github:cardano-scaling/hydra/2.0.0";
+    cardano-node.url = "github:IntersectMBO/cardano-node/11.0.1";
+    hydra.url = "github:cardano-scaling/hydra/2.1.0";
   };
 
   outputs = { self, nixpkgs, flake-utils, cardano-node, hydra }:
