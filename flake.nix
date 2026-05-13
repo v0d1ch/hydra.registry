@@ -16,6 +16,7 @@
         haskellPackages = pkgs.haskell.packages.ghc910.override {
           overrides = hself: hsuper: {
             rel8 = pkgs.haskell.lib.dontCheck hsuper.rel8;
+            bech32 = pkgs.haskell.lib.dontCheck (pkgs.haskell.lib.unmarkBroken hsuper.bech32);
           };
         };
 
