@@ -412,3 +412,61 @@ export function executeRoute(routeId: string): Promise<PaymentStatusResponse> {
 export function getPaymentStatus(paymentId: string): Promise<PaymentStatusResponse> {
   return request<PaymentStatusResponse>(`/api/v1/relay/payments/${paymentId}`)
 }
+
+// ─── Dashboard / participant routes ───
+
+export interface BuildResult {
+  cborHex: string
+  txId: string
+  envelope: unknown
+}
+
+export interface SubmitResult {
+  status: string   // "TxValid" | "TxInvalid" | "submitted"
+  txId?: string
+  error?: string
+}
+
+export interface ParticipantAction {
+  hopIndex: number
+  kind: string   // 'lock' | 'claim' | 'refund'
+  urgency: string  // 'ok' | 'soon' | 'expiring' | 'expired'
+}
+
+export interface ParticipantRouteSummary {
+  route: PaymentStatusResponse
+  roles: string[]
+  actions: ParticipantAction[]
+}
+
+export function getParticipantRoutes(pkh: string): Promise<ParticipantRouteSummary[]> {
+  return request<ParticipantRouteSummary[]>(`/api/v1/relay/participants/${pkh}/routes`)
+}
+
+export function buildLockTx(routeId: string, hopIndex: number, walletAddress: string): Promise<BuildResult> {
+  return request<BuildResult>(`/api/v1/relay/payments/${routeId}/hops/${hopIndex}/lock-tx-cbor`, {
+    method: 'POST',
+    body: JSON.stringify({ walletAddress }),
+  })
+}
+
+export function buildClaimTx(routeId: string, hopIndex: number, walletAddress: string, preimage: string): Promise<BuildResult> {
+  return request<BuildResult>(`/api/v1/relay/payments/${routeId}/hops/${hopIndex}/claim-tx-cbor`, {
+    method: 'POST',
+    body: JSON.stringify({ walletAddress, preimage }),
+  })
+}
+
+export function buildRefundTx(routeId: string, hopIndex: number, walletAddress: string): Promise<BuildResult> {
+  return request<BuildResult>(`/api/v1/relay/payments/${routeId}/hops/${hopIndex}/refund-tx-cbor`, {
+    method: 'POST',
+    body: JSON.stringify({ walletAddress }),
+  })
+}
+
+export function submitTx(headId: string, signedCborHex: string): Promise<SubmitResult> {
+  return request<SubmitResult>(`/api/v1/heads/${headId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify({ signedCborHex }),
+  })
+}

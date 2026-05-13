@@ -11,6 +11,8 @@ import RouteExplorer from './pages/RouteExplorer'
 import PaymentTracker from './pages/PaymentTracker'
 import Balance from './pages/Balance'
 import Docs from './pages/Docs'
+import Setup from './pages/Setup'
+import Dashboard from './pages/Dashboard'
 
 function App() {
   return (
@@ -28,6 +30,8 @@ function App() {
           <Route path="/payments/:paymentId" element={<PaymentTracker />} />
           <Route path="/balance" element={<Balance />} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/setup" element={<Setup />} />
+          <Route path="/dashboard" element={<Dashboard />} />
         </Routes>
       </main>
       <Footer />

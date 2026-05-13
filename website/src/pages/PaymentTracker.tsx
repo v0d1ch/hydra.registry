@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { getPaymentStatus, type PaymentStatusResponse } from '../api/client'
+import { getPaymentStatus, submitPreimage, type PaymentStatusResponse } from '../api/client'
 
 const hopStatusColors: Record<string, string> = {
   pending: 'var(--text-muted)',
@@ -16,6 +16,10 @@ export default function PaymentTracker() {
   const [payment, setPayment] = useState<PaymentStatusResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [preimageInput, setPreimageInput] = useState('')
+  const [revealing, setRevealing] = useState(false)
+  const [revealOk, setRevealOk] = useState(false)
+  const [revealErr, setRevealErr] = useState<string | null>(null)
 
   const fetchStatus = () => {
     if (!paymentId) return
@@ -72,6 +76,67 @@ export default function PaymentTracker() {
         transition={{ duration: 0.5 }}
       >
         <h1 className="section-title">Payment Tracker</h1>
+
+        {/* What's next callout */}
+        {payment.status === 'in_progress' && (
+          <div className="glow-card" style={{ marginBottom: '1.5rem', padding: '1.25rem', borderColor: '#f0c040' }}>
+            <h3 style={{ color: '#f0c040', margin: '0 0 0.5rem' }}>What's next?</h3>
+            <p className="register-desc" style={{ margin: '0 0 1rem' }}>
+              Each hop in this payment requires a signed transaction submitted to the head. Open your
+              Dashboard to see exactly which actions are available to you right now.
+            </p>
+            <Link to="/dashboard" className="btn btn-primary" style={{ display: 'inline-block' }}>
+              Open Dashboard →
+            </Link>
+          </div>
+        )}
+
+        {/* Preimage reveal for receivers */}
+        {payment.status === 'in_progress' && payment.hops.some(h => h.htlcStatus === 'locked') && (
+          <div className="glow-card" style={{ marginBottom: '1.5rem', padding: '1.25rem' }}>
+            <h3 style={{ margin: '0 0 0.5rem' }}>Reveal your secret (receivers)</h3>
+            <p className="register-desc" style={{ margin: '0 0 0.75rem' }}>
+              If you are the receiver of this payment, submit your secret here. This reveals the
+              preimage to all bridge operators and unlocks the cascade.
+            </p>
+            {!revealOk ? (
+              <>
+                <div className="form-group" style={{ marginBottom: '0.5rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Your secret hex (from openssl rand -hex 32)"
+                    value={preimageInput}
+                    onChange={e => setPreimageInput(e.target.value)}
+                  />
+                </div>
+                {revealErr && <p style={{ color: 'var(--error)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>{revealErr}</p>}
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    const lastHop = payment.hops[payment.hops.length - 1]
+                    setRevealErr(null)
+                    setRevealing(true)
+                    try {
+                      await submitPreimage(lastHop.secretHash, preimageInput.trim())
+                      setRevealOk(true)
+                    } catch (e) {
+                      setRevealErr(e instanceof Error ? e.message : 'Failed to reveal')
+                    } finally {
+                      setRevealing(false)
+                    }
+                  }}
+                  disabled={revealing || !preimageInput.trim()}
+                >
+                  {revealing ? 'Revealing…' : 'Reveal Secret'}
+                </button>
+              </>
+            ) : (
+              <p style={{ color: 'var(--success)', margin: 0 }}>
+                Secret revealed — bridge operators have been notified.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="payment-overview glow-card">
           <div className="payment-status-badge" style={{ borderColor: overallColor, color: overallColor }}>

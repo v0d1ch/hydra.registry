@@ -95,8 +95,8 @@ export default function Landing() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 3.8, duration: 0.6 }}
         >
-          <Link to="/routes" className="btn btn-primary cyber-btn">
-            <span className="btn-text">Send a Payment</span>
+          <Link to="/dashboard" className="btn btn-primary cyber-btn">
+            <span className="btn-text">Open Dashboard</span>
             <span className="btn-shine" />
           </Link>
           <Link to="/explorer" className="btn btn-secondary">
@@ -225,16 +225,23 @@ export default function Landing() {
         <div className="about-grid">
           {[
             {
+              icon: '?',
+              title: 'New here?',
+              desc: 'Follow the setup guide to get your Hydra node connected and ready to send or receive payments.',
+              link: '/setup',
+              linkText: 'Setup Guide',
+            },
+            {
               icon: '>',
-              title: 'Send a payment',
-              desc: 'Have an invoice ID? Find the cheapest route and pay in seconds.',
-              link: '/routes',
-              linkText: 'Find Routes',
+              title: 'Send or receive',
+              desc: 'Open your Dashboard to see active payments, lock funds, reveal your secret, and claim in one place.',
+              link: '/dashboard',
+              linkText: 'Open Dashboard',
             },
             {
               icon: '<',
-              title: 'Receive a payment',
-              desc: 'Generate a secret, create an invoice, and share the ID with the sender.',
+              title: 'Create an invoice',
+              desc: 'Generate a secret, publish an invoice with your key hash and amount, and share the ID with the sender.',
               link: '/invoice',
               linkText: 'Create Invoice',
             },

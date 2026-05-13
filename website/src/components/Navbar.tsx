@@ -49,7 +49,9 @@ export default function Navbar() {
           <Link to="/register" className={isActive('/register')}>Register</Link>
           <Link to="/invoice" className={isActive('/invoice')}>Invoice</Link>
           <Link to="/routes" className={isActive('/routes')}>Routes</Link>
+          <Link to="/dashboard" className={isActive('/dashboard')}>Dashboard</Link>
           <Link to="/balance" className={isActive('/balance')}>Balance</Link>
+          <Link to="/setup" className={isActive('/setup')}>Setup</Link>
           <Link to="/docs" className={isActive('/docs')}>Docs</Link>
           {showNetworkSelector && (
             <div className="network-selector">
@@ -105,8 +107,14 @@ export default function Navbar() {
               <Link to="/routes" className={isActive('/routes')}>
                 <span className="mobile-link-prefix">&gt; </span>Routes
               </Link>
+              <Link to="/dashboard" className={isActive('/dashboard')}>
+                <span className="mobile-link-prefix">&gt; </span>Dashboard
+              </Link>
               <Link to="/balance" className={isActive('/balance')}>
                 <span className="mobile-link-prefix">&gt; </span>Balance
+              </Link>
+              <Link to="/setup" className={isActive('/setup')}>
+                <span className="mobile-link-prefix">&gt; </span>Setup
               </Link>
               <Link to="/docs" className={isActive('/docs')}>
                 <span className="mobile-link-prefix">&gt; </span>Docs
