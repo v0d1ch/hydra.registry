@@ -250,16 +250,18 @@ echo ""
 echo -e "${CYAN}═══ Depositing into heads ═══${NC}"
 echo ""
 
-# Deposit one UTxO from Ida-funds (carol-funds) into Head 1
+# Head 1: deposit from both Alice and Ida (whichever has funds) so the head
+# has L2 UTxOs at both participant addresses. Each deposit_one_utxo failure
+# is non-fatal — empty wallets simply skip.
+deposit_one_utxo "Head 1 / Alice" "$ALICE_API_PORT" \
+  "$ALICE_DIR/cardano-funds.sk" "$ALICE_DIR/cardano-funds.addr" || true
+
 deposit_one_utxo "Head 1 / Ida" "$IDA_H1_API_PORT" \
   "$IDA_DIR/cardano-funds.sk" "$IDA_DIR/cardano-funds.addr" || true
 
-# Deposit one UTxO from Bob-funds into Head 2
+# Head 2: deposit from Bob
 deposit_one_utxo "Head 2 / Bob" "$BOB_API_PORT" \
   "$BOB_DIR/cardano-funds.sk" "$BOB_DIR/cardano-funds.addr" || true
-
-# Alice-funds is empty on Preview, skip her deposit (she can be funded later)
-warn "Alice deposit skipped (alice-funds is empty on $NETWORK)"
 
 echo ""
 log "Done. Check head state:"

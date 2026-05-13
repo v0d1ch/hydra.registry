@@ -358,7 +358,7 @@ start_node() {
       --api-port "$4" \
       --listen "127.0.0.1:$5" \
       --peer "127.0.0.1:$6" \
-      --network "$NETWORK" \
+      --hydra-scripts-tx-id "86288ee01e76589955d4a5cc4d7fe105bec1a3c4d14a1b48fc134dd20add66c4" \
       --hydra-signing-key "$7/hydra.sk" \
       --cardano-signing-key "$7/cardano.sk" \
       --hydra-verification-key "$8/hydra.vk" \
