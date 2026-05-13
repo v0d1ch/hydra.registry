@@ -1159,6 +1159,21 @@ code.result-value.result-value-mono {
   color: var(--text-muted);
   font-size: 0.95rem;
   line-height: 1.6;
+  margin-bottom: 0.75rem;
+}
+
+.next-step p:last-child {
+  margin-bottom: 0;
+}
+
+.next-step .code-block {
+  margin-bottom: 0.75rem;
+}
+
+.prerequisite-card .register-desc {
+  margin-top: 0.75rem;
+  margin-bottom: 1rem;
+  text-align: left;
 }
 
 /* ─── Footer ─── */
