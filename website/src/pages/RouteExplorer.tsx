@@ -229,62 +229,6 @@ export default function RouteExplorer() {
           Nodes are linked when heads share participants. Drag to rearrange, hover to see connections, click for details.
         </p>
 
-        <form
-          className="register-form"
-          onSubmit={e => { e.preventDefault(); applyHeadFilter(headIdInput) }}
-          style={{ marginBottom: '1.5rem' }}
-        >
-          <div className="form-group">
-            <label htmlFor="headIdFilter">Filter by Head ID</label>
-            <input
-              id="headIdFilter"
-              type="text"
-              placeholder="paste a head id to focus on it and its 1-hop neighbours"
-              value={headIdInput}
-              onChange={e => setHeadIdInput(e.target.value)}
-              list="registered-heads"
-            />
-            <datalist id="registered-heads">
-              {registeredHeads.map(h => (
-                <option key={h.headId} value={h.headId}>
-                  {h.host}:{h.port}
-                </option>
-              ))}
-            </datalist>
-            <span className="form-hint">
-              The URL stays in sync (<code>?headId=…</code>) so you can deep-link or share a focused view.
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button type="submit" className="btn btn-primary">Filter</button>
-            {headIdFilter && (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => { setHeadIdInput(''); applyHeadFilter('') }}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </form>
-
-        {headIdFilter && (
-          <div className="register-result" style={{ marginBottom: '1rem' }}>
-            <p>
-              Showing routes through head <code>{headIdFilter.slice(0, 12)}…</code>
-              {filteredGraph && filteredGraph.nodes.length > 0 && (
-                <>
-                  {' '}
-                  · {filteredGraph.edges.length === 0
-                    ? 'isolated (no neighbours yet — register a second head sharing a participant to see edges)'
-                    : `${filteredGraph.nodes.length - 1} neighbour${filteredGraph.nodes.length === 2 ? '' : 's'} · ${filteredGraph.edges.length} edge${filteredGraph.edges.length === 1 ? '' : 's'}`}
-                </>
-              )}
-            </p>
-          </div>
-        )}
-
         {network === 'All' && (
           <div className="relay-graph-empty">
             Select a specific network (Mainnet, Preview, or Preprod) in the navbar to view the graph.
@@ -323,6 +267,62 @@ export default function RouteExplorer() {
             <RelayGraph nodes={filteredGraph.nodes} edges={filteredGraph.edges} />
           </motion.div>
         )}
+
+        {headIdFilter && (
+          <div className="register-result" style={{ marginTop: '1rem' }}>
+            <p>
+              Showing routes through head <code>{headIdFilter.slice(0, 12)}…</code>
+              {filteredGraph && filteredGraph.nodes.length > 0 && (
+                <>
+                  {' '}
+                  · {filteredGraph.edges.length === 0
+                    ? 'isolated (no neighbours yet — register a second head sharing a participant to see edges)'
+                    : `${filteredGraph.nodes.length - 1} neighbour${filteredGraph.nodes.length === 2 ? '' : 's'} · ${filteredGraph.edges.length} edge${filteredGraph.edges.length === 1 ? '' : 's'}`}
+                </>
+              )}
+            </p>
+          </div>
+        )}
+
+        <form
+          className="register-form"
+          onSubmit={e => { e.preventDefault(); applyHeadFilter(headIdInput) }}
+          style={{ marginTop: '1.5rem' }}
+        >
+          <div className="form-group">
+            <label htmlFor="headIdFilter">Filter by Head ID</label>
+            <input
+              id="headIdFilter"
+              type="text"
+              placeholder="paste a head id to focus on it and its 1-hop neighbours"
+              value={headIdInput}
+              onChange={e => setHeadIdInput(e.target.value)}
+              list="registered-heads"
+            />
+            <datalist id="registered-heads">
+              {registeredHeads.map(h => (
+                <option key={h.headId} value={h.headId}>
+                  {h.host}:{h.port}
+                </option>
+              ))}
+            </datalist>
+            <span className="form-hint">
+              The URL stays in sync (<code>?headId=…</code>) so you can deep-link or share a focused view.
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button type="submit" className="btn btn-primary">Filter</button>
+            {headIdFilter && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { setHeadIdInput(''); applyHeadFilter('') }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </form>
       </motion.section>
 
       <motion.section
