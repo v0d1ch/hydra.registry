@@ -223,7 +223,115 @@ export default function RouteExplorer() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <h1 className="section-title">Find Payment Route</h1>
+        <h1 className="section-title">Head Network Graph</h1>
+        <p className="register-desc">
+          Interactive map of all open Hydra heads{network !== 'All' ? ` on ${network}` : ''}, not just those running HTLC.
+          Nodes are linked when heads share participants. Drag to rearrange, hover to see connections, click for details.
+        </p>
+
+        <form
+          className="register-form"
+          onSubmit={e => { e.preventDefault(); applyHeadFilter(headIdInput) }}
+          style={{ marginBottom: '1.5rem' }}
+        >
+          <div className="form-group">
+            <label htmlFor="headIdFilter">Filter by Head ID</label>
+            <input
+              id="headIdFilter"
+              type="text"
+              placeholder="paste a head id to focus on it and its 1-hop neighbours"
+              value={headIdInput}
+              onChange={e => setHeadIdInput(e.target.value)}
+              list="registered-heads"
+            />
+            <datalist id="registered-heads">
+              {registeredHeads.map(h => (
+                <option key={h.headId} value={h.headId}>
+                  {h.host}:{h.port}
+                </option>
+              ))}
+            </datalist>
+            <span className="form-hint">
+              The URL stays in sync (<code>?headId=…</code>) so you can deep-link or share a focused view.
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button type="submit" className="btn btn-primary">Filter</button>
+            {headIdFilter && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => { setHeadIdInput(''); applyHeadFilter('') }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </form>
+
+        {headIdFilter && (
+          <div className="register-result" style={{ marginBottom: '1rem' }}>
+            <p>
+              Showing routes through head <code>{headIdFilter.slice(0, 12)}…</code>
+              {filteredGraph && filteredGraph.nodes.length > 0 && (
+                <>
+                  {' '}
+                  · {filteredGraph.edges.length === 0
+                    ? 'isolated (no neighbours yet — register a second head sharing a participant to see edges)'
+                    : `${filteredGraph.nodes.length - 1} neighbour${filteredGraph.nodes.length === 2 ? '' : 's'} · ${filteredGraph.edges.length} edge${filteredGraph.edges.length === 1 ? '' : 's'}`}
+                </>
+              )}
+            </p>
+          </div>
+        )}
+
+        {network === 'All' && (
+          <div className="relay-graph-empty">
+            Select a specific network (Mainnet, Preview, or Preprod) in the navbar to view the graph.
+          </div>
+        )}
+
+        {graphLoading && (
+          <div className="stats-loading">
+            <div className="loading-spinner" />
+            <p>Loading relay graph...</p>
+          </div>
+        )}
+
+        {graphError && (
+          <motion.div
+            className="register-result error"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
+            <p>{graphError}</p>
+          </motion.div>
+        )}
+
+        {filteredGraph && filteredGraph.nodes.length === 0 && headIdFilter && !graphLoading && !standaloneLoading && (
+          <div className="relay-graph-empty">
+            Head <code>{headIdFilter.slice(0, 12)}…</code> not found on {network} (no record in the explorer or registry).
+          </div>
+        )}
+
+        {filteredGraph && filteredGraph.nodes.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+          >
+            <RelayGraph nodes={filteredGraph.nodes} edges={filteredGraph.edges} />
+          </motion.div>
+        )}
+      </motion.section>
+
+      <motion.section
+        className="section"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+      >
+        <h2 className="section-title">Find Payment Route</h2>
         <p className="register-desc">
           Find the cheapest route to pay an invoice through bridge operators.
           Routes are computed using Dijkstra pathfinding weighted by bridge fees.
@@ -364,114 +472,6 @@ export default function RouteExplorer() {
             animate={{ opacity: 1 }}
           >
             <p>{error}</p>
-          </motion.div>
-        )}
-      </motion.section>
-
-      <motion.section
-        className="section"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.2 }}
-      >
-        <h2 className="section-title">Head Network Graph</h2>
-        <p className="register-desc">
-          Interactive map of all open Hydra heads{network !== 'All' ? ` on ${network}` : ''}, not just those running HTLC.
-          Nodes are linked when heads share participants. Drag to rearrange, hover to see connections, click for details.
-        </p>
-
-        <form
-          className="register-form"
-          onSubmit={e => { e.preventDefault(); applyHeadFilter(headIdInput) }}
-          style={{ marginBottom: '1.5rem' }}
-        >
-          <div className="form-group">
-            <label htmlFor="headIdFilter">Filter by Head ID</label>
-            <input
-              id="headIdFilter"
-              type="text"
-              placeholder="paste a head id to focus on it and its 1-hop neighbours"
-              value={headIdInput}
-              onChange={e => setHeadIdInput(e.target.value)}
-              list="registered-heads"
-            />
-            <datalist id="registered-heads">
-              {registeredHeads.map(h => (
-                <option key={h.headId} value={h.headId}>
-                  {h.host}:{h.port}
-                </option>
-              ))}
-            </datalist>
-            <span className="form-hint">
-              The URL stays in sync (<code>?headId=…</code>) so you can deep-link or share a focused view.
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button type="submit" className="btn btn-primary">Filter</button>
-            {headIdFilter && (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => { setHeadIdInput(''); applyHeadFilter('') }}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </form>
-
-        {headIdFilter && (
-          <div className="register-result" style={{ marginBottom: '1rem' }}>
-            <p>
-              Showing routes through head <code>{headIdFilter.slice(0, 12)}…</code>
-              {filteredGraph && filteredGraph.nodes.length > 0 && (
-                <>
-                  {' '}
-                  · {filteredGraph.edges.length === 0
-                    ? 'isolated (no neighbours yet — register a second head sharing a participant to see edges)'
-                    : `${filteredGraph.nodes.length - 1} neighbour${filteredGraph.nodes.length === 2 ? '' : 's'} · ${filteredGraph.edges.length} edge${filteredGraph.edges.length === 1 ? '' : 's'}`}
-                </>
-              )}
-            </p>
-          </div>
-        )}
-
-        {network === 'All' && (
-          <div className="relay-graph-empty">
-            Select a specific network (Mainnet, Preview, or Preprod) in the navbar to view the graph.
-          </div>
-        )}
-
-        {graphLoading && (
-          <div className="stats-loading">
-            <div className="loading-spinner" />
-            <p>Loading relay graph...</p>
-          </div>
-        )}
-
-        {graphError && (
-          <motion.div
-            className="register-result error"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <p>{graphError}</p>
-          </motion.div>
-        )}
-
-        {filteredGraph && filteredGraph.nodes.length === 0 && headIdFilter && !graphLoading && !standaloneLoading && (
-          <div className="relay-graph-empty">
-            Head <code>{headIdFilter.slice(0, 12)}…</code> not found on {network} (no record in the explorer or registry).
-          </div>
-        )}
-
-        {filteredGraph && filteredGraph.nodes.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-          >
-            <RelayGraph nodes={filteredGraph.nodes} edges={filteredGraph.edges} />
           </motion.div>
         )}
       </motion.section>
