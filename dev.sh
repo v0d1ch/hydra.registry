@@ -94,11 +94,11 @@ start_postgres() {
     createdb -h "$PGHOST" "${DB_NAME}_test"
   fi
 
-  # Verify the database is actually healthy — a missing file OID (e.g. after a
-  # hard kill or reboot that cleared /tmp) causes the backend to crash on the
-  # first query. Detect it here and auto-recover rather than letting it surface
-  # as a cryptic runtime error.
-  if ! psql -h "$PGHOST" -d "$DB_NAME" -c "SELECT 1" &>/dev/null; then
+  # Verify the database is actually healthy by running VACUUM, which opens
+  # every relation file. SELECT 1 is a constant and never touches heap files,
+  # so it passes even when user table files are missing (stale catalog after
+  # a partial /tmp clear). VACUUM fails if any registered relation is missing.
+  if ! psql -h "$PGHOST" -d "$DB_NAME" -c "VACUUM" &>/dev/null; then
     warn "Database $DB_NAME is corrupt or inaccessible — resetting..."
     reset_postgres
     createdb -h "$PGHOST" "$DB_NAME"
@@ -139,6 +139,19 @@ main() {
   start_postgres
   echo ""
   start_backend
+
+  log "Waiting for backend to be ready..."
+  local elapsed=0
+  until curl -sf "http://localhost:${HYDRA_HTTP_PORT:-8080}/api/v1/stats" &>/dev/null; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    if [ "$elapsed" -ge 120 ]; then
+      err "Backend did not become ready within 120s — check api logs above."
+      exit 1
+    fi
+  done
+  log "Backend ready."
+
   start_frontend
 
   echo ""
