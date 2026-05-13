@@ -56,6 +56,17 @@ run_with_prefix() {
 }
 
 # ── PostgreSQL ──────────────────────────────────────────────────────
+reset_postgres() {
+  warn "Resetting corrupt PostgreSQL data directory at $PGDATA..."
+  pg_ctl -D "$PGDATA" stop -m fast 2>/dev/null || true
+  rm -rf "$PGDATA"
+  log "Initializing fresh PostgreSQL data directory..."
+  initdb -D "$PGDATA" --no-locale --encoding=UTF8 -A trust
+  pg_ctl -D "$PGDATA" -l "$PGDATA/logfile" \
+    -o "--unix_socket_directories='$PGHOST' --listen_addresses=''" \
+    start
+}
+
 start_postgres() {
   if pg_ctl -D "$PGDATA" status &>/dev/null; then
     log "PostgreSQL already running"
@@ -82,16 +93,28 @@ start_postgres() {
     log "Creating test database ${DB_NAME}_test"
     createdb -h "$PGHOST" "${DB_NAME}_test"
   fi
+
+  # Verify the database is actually healthy — a missing file OID (e.g. after a
+  # hard kill or reboot that cleared /tmp) causes the backend to crash on the
+  # first query. Detect it here and auto-recover rather than letting it surface
+  # as a cryptic runtime error.
+  if ! psql -h "$PGHOST" -d "$DB_NAME" -c "SELECT 1" &>/dev/null; then
+    warn "Database $DB_NAME is corrupt or inaccessible — resetting..."
+    reset_postgres
+    createdb -h "$PGHOST" "$DB_NAME"
+    createdb -h "$PGHOST" "${DB_NAME}_test" 2>/dev/null || true
+    log "Database recreated cleanly."
+  fi
 }
 
 # ── Backend ─────────────────────────────────────────────────────────
 start_backend() {
   log "Building backend..."
-  (cd "$ROOT/api" && cabal build all 2>&1 | tail -5)
+  cabal build all 2>&1 | tail -5
   log "Starting backend on :${HYDRA_HTTP_PORT:-8080}"
   run_with_prefix "api" "$BLUE" \
     env HYDRA_DB_CONN_STR="host=$PGHOST port=5432 dbname=$DB_NAME" \
-    sh -c "cd '$ROOT/api' && cabal run hydra-registry-api"
+    cabal run hydra-registry-api
 }
 
 # ── Frontend ────────────────────────────────────────────────────────
