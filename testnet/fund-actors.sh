@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ── Fund Alice, Ida, and Bob funds addresses ──
-# Checks each actor's funds address. If any are below MIN_LOVELACE, it
-# redistributes from Alice. If Alice is also low, prints the faucet URL
-# and exits so the user can top up manually.
+# ── Fund Alice, Ida, and Bob for testnet operations ──
+#
+# Two kinds of funding are managed:
+#
+#   1. cardano-funds.addr  — large balance used for L2 deposits into heads.
+#      Ida and Bob are topped up from Alice (3000 ADA each). Alice must be
+#      seeded from the faucet first if empty.
+#
+#   2. cardano.addr        — hydra-node key address; needs a small balance
+#      (fuel) so the node can pay L1 tx fees when building deposit txs.
+#      Each actor self-funds their own cardano.addr from their cardano-funds.addr.
 #
 # Usage:
 #   ./testnet/fund-actors.sh [preview|preprod]
@@ -42,18 +49,16 @@ log()  { echo -e "${GREEN}==>${NC} $1"; }
 warn() { echo -e "${YELLOW}==>${NC} $1"; }
 err()  { echo -e "${RED}==>${NC} $1"; }
 
-# Minimum lovelace each actor must have to deposit into a head.
-MIN_LOVELACE=1000000000   # 1000 ADA
-# Amount to top up each underfunded actor with.
-TOP_UP_LOVELACE=3000000000  # 3000 ADA
+# Thresholds and top-up amounts.
+MIN_FUNDS_LOVELACE=1000000000   # 1000 ADA — minimum for L2 deposits
+TOP_UP_FUNDS_LOVELACE=3000000000  # 3000 ADA — top-up amount
+MIN_FUEL_LOVELACE=50000000      # 50 ADA  — minimum fuel for hydra-node fees
+TOP_UP_FUEL_LOVELACE=100000000  # 100 ADA — fuel top-up amount
 
 # ── Helpers ──
-addr_of() { cat "$1/cardano-funds.addr"; }
-
 lovelace_at() {
-  local addr="$1"
   cardano-cli conway query utxo --testnet-magic "$MAGIC" \
-    --address "$addr" --output-json 2>/dev/null \
+    --address "$1" --output-json 2>/dev/null \
     | jq '[.[].value.lovelace // 0] | add // 0'
 }
 
@@ -66,120 +71,173 @@ pick_utxo() {
       'to_entries | map(select(.value.value.lovelace >= $min)) | first | .key // empty'
 }
 
-# ── Check balances ──
-ALICE_ADDR="$(addr_of "$ALICE_DIR")"
-IDA_ADDR="$(addr_of "$IDA_DIR")"
-BOB_ADDR="$(addr_of "$BOB_DIR")"
+submit_and_wait() {
+  local label="$1"
+  local tx_file="$2"
+  local signed_file="$3"
+  local sk="$4"
+  local wait_addr="$5"
+  local wait_min="$6"
 
-log "Checking balances on $NETWORK..."
-echo -e "  ${CYAN}Alice${NC} : $ALICE_ADDR"
-echo -e "  ${CYAN}Ida${NC}   : $IDA_ADDR"
-echo -e "  ${CYAN}Bob${NC}   : $BOB_ADDR"
-echo ""
+  cardano-cli conway transaction sign \
+    --testnet-magic "$MAGIC" \
+    --tx-file "$tx_file" \
+    --signing-key-file "$sk" \
+    --out-file "$signed_file"
 
-ALICE_LV=$(lovelace_at "$ALICE_ADDR")
-IDA_LV=$(lovelace_at "$IDA_ADDR")
-BOB_LV=$(lovelace_at "$BOB_ADDR")
+  cardano-cli conway transaction submit \
+    --testnet-magic "$MAGIC" \
+    --tx-file "$signed_file"
+
+  local txid
+  txid=$(cardano-cli conway transaction txid --tx-file "$signed_file")
+  log "$label submitted: $txid"
+
+  local elapsed=0
+  while [ "$elapsed" -lt 120 ]; do
+    local lv
+    lv=$(lovelace_at "$wait_addr")
+    [ "$lv" -ge "$wait_min" ] && return 0
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  warn "$label: timed out waiting for confirmation."
+}
 
 ada() { echo "$(( $1 / 1000000 )) ADA"; }
-log "Alice : $(ada "$ALICE_LV")"
-log "Ida   : $(ada "$IDA_LV")"
-log "Bob   : $(ada "$BOB_LV")"
+
+# ── Read addresses ──
+ALICE_FUNDS_ADDR=$(cat "$ALICE_DIR/cardano-funds.addr")
+IDA_FUNDS_ADDR=$(cat "$IDA_DIR/cardano-funds.addr")
+BOB_FUNDS_ADDR=$(cat "$BOB_DIR/cardano-funds.addr")
+ALICE_ADDR=$(cat "$ALICE_DIR/cardano.addr")
+IDA_ADDR=$(cat "$IDA_DIR/cardano.addr")
+BOB_ADDR=$(cat "$BOB_DIR/cardano.addr")
+
+# ────────────────────────────────────────────────────────────────
+# Part 1 — L2 deposit funds (cardano-funds.addr)
+# ────────────────────────────────────────────────────────────────
+echo ""
+log "── Part 1: L2 deposit funds (cardano-funds.addr) ──"
+
+ALICE_FUNDS_LV=$(lovelace_at "$ALICE_FUNDS_ADDR")
+IDA_FUNDS_LV=$(lovelace_at "$IDA_FUNDS_ADDR")
+BOB_FUNDS_LV=$(lovelace_at "$BOB_FUNDS_ADDR")
+
+log "Alice funds : $(ada "$ALICE_FUNDS_LV")  ($ALICE_FUNDS_ADDR)"
+log "Ida   funds : $(ada "$IDA_FUNDS_LV")  ($IDA_FUNDS_ADDR)"
+log "Bob   funds : $(ada "$BOB_FUNDS_LV")  ($BOB_FUNDS_ADDR)"
 echo ""
 
-# Collect actors that need topping up (excluding Alice — she's the source).
 NEED_TOPUP=()
-[ "$IDA_LV" -lt "$MIN_LOVELACE" ] && NEED_TOPUP+=("$IDA_ADDR")
-[ "$BOB_LV" -lt "$MIN_LOVELACE" ] && NEED_TOPUP+=("$BOB_ADDR")
+[ "$IDA_FUNDS_LV" -lt "$MIN_FUNDS_LOVELACE" ] && NEED_TOPUP+=("$IDA_FUNDS_ADDR")
+[ "$BOB_FUNDS_LV" -lt "$MIN_FUNDS_LOVELACE" ] && NEED_TOPUP+=("$BOB_FUNDS_ADDR")
 
-if [ "${#NEED_TOPUP[@]}" -eq 0 ] && [ "$ALICE_LV" -ge "$MIN_LOVELACE" ]; then
-  log "All actors have sufficient funds — nothing to do."
-  exit 0
-fi
-
-# ── Alice needs topping up too ──
-if [ "$ALICE_LV" -lt "$MIN_LOVELACE" ]; then
-  err "Alice's funds address is below the minimum ($(ada "$ALICE_LV") < $(ada "$MIN_LOVELACE"))."
-  echo ""
-  echo -e "  Fund Alice from the testnet faucet, then re-run this script:"
-  echo -e "  ${YELLOW}https://docs.cardano.org/cardano-testnets/tools/faucet${NC}"
-  echo -e "  ${YELLOW}$ALICE_ADDR${NC}"
-  exit 1
-fi
-
-if [ "${#NEED_TOPUP[@]}" -eq 0 ]; then
-  log "Ida and Bob are funded. Alice is low but not critical — nothing to do."
-  exit 0
-fi
-
-# ── Build top-up transaction ──
-REQUIRED=$(( ${#NEED_TOPUP[@]} * TOP_UP_LOVELACE ))
-if [ "$ALICE_LV" -lt "$REQUIRED" ]; then
-  err "Alice has $(ada "$ALICE_LV") but needs $(ada "$REQUIRED") to top up all actors."
-  echo ""
-  echo -e "  Fund Alice from the testnet faucet, then re-run this script:"
-  echo -e "  ${YELLOW}https://docs.cardano.org/cardano-testnets/tools/faucet${NC}"
-  echo -e "  ${YELLOW}$ALICE_ADDR${NC}"
-  exit 1
-fi
-
-UTXO=$(pick_utxo "$ALICE_ADDR" "$REQUIRED")
-if [ -z "$UTXO" ]; then
-  err "No single UTxO at Alice's address large enough to cover $(ada "$REQUIRED")."
-  warn "Alice's UTxOs may be fragmented. Send a consolidation tx first."
-  exit 1
-fi
-
-log "Topping up $(${#NEED_TOPUP[@]}) actor(s) with $(ada "$TOP_UP_LOVELACE") each from Alice..."
-
-TX_OUT_ARGS=()
-for addr in "${NEED_TOPUP[@]}"; do
-  TX_OUT_ARGS+=(--tx-out "${addr}+${TOP_UP_LOVELACE}")
-done
-
-cardano-cli conway transaction build \
-  --testnet-magic "$MAGIC" \
-  --tx-in "$UTXO" \
-  "${TX_OUT_ARGS[@]}" \
-  --change-address "$ALICE_ADDR" \
-  --out-file /tmp/fund-actors.tx
-
-cardano-cli conway transaction sign \
-  --testnet-magic "$MAGIC" \
-  --tx-file /tmp/fund-actors.tx \
-  --signing-key-file "$ALICE_DIR/cardano-funds.sk" \
-  --out-file /tmp/fund-actors.signed.tx
-
-cardano-cli conway transaction submit \
-  --testnet-magic "$MAGIC" \
-  --tx-file /tmp/fund-actors.signed.tx
-
-TXID=$(cardano-cli conway transaction txid --tx-file /tmp/fund-actors.signed.tx)
-log "Submitted: $TXID"
-log "Waiting for confirmation..."
-
-# Poll until all topped-up actors show the funds.
-ELAPSED=0
-while [ "$ELAPSED" -lt 120 ]; do
-  ALL_FUNDED=1
-  for addr in "${NEED_TOPUP[@]}"; do
-    lv=$(lovelace_at "$addr")
-    if [ "$lv" -lt "$MIN_LOVELACE" ]; then
-      ALL_FUNDED=0
-      break
-    fi
-  done
-  if [ "$ALL_FUNDED" -eq 1 ]; then
-    log "All actors funded."
-    break
+if [ "${#NEED_TOPUP[@]}" -gt 0 ]; then
+  if [ "$ALICE_FUNDS_LV" -lt "$MIN_FUNDS_LOVELACE" ]; then
+    err "Alice's funds address is below the minimum ($(ada "$ALICE_FUNDS_LV"))."
+    echo -e "  Fund Alice from the faucet first, then re-run:"
+    echo -e "  ${YELLOW}https://docs.cardano.org/cardano-testnets/tools/faucet${NC}"
+    echo -e "  ${YELLOW}$ALICE_FUNDS_ADDR${NC}"
+    exit 1
   fi
-  sleep 5
-  ELAPSED=$((ELAPSED + 5))
-done
 
-if [ "$ELAPSED" -ge 120 ]; then
-  warn "Timed out waiting for confirmation — tx may still be in mempool."
+  REQUIRED=$(( ${#NEED_TOPUP[@]} * TOP_UP_FUNDS_LOVELACE ))
+  if [ "$ALICE_FUNDS_LV" -lt "$REQUIRED" ]; then
+    err "Alice has $(ada "$ALICE_FUNDS_LV") but needs $(ada "$REQUIRED") to top up all actors."
+    echo -e "  ${YELLOW}https://docs.cardano.org/cardano-testnets/tools/faucet${NC}"
+    echo -e "  ${YELLOW}$ALICE_FUNDS_ADDR${NC}"
+    exit 1
+  fi
+
+  UTXO=$(pick_utxo "$ALICE_FUNDS_ADDR" "$REQUIRED")
+  if [ -z "$UTXO" ]; then
+    err "No single UTxO at Alice's funds address large enough to cover $(ada "$REQUIRED")."
+    warn "Alice's UTxOs may be fragmented — send a consolidation tx first."
+    exit 1
+  fi
+
+  log "Topping up ${#NEED_TOPUP[@]} actor(s) with $(ada "$TOP_UP_FUNDS_LOVELACE") each..."
+  TX_OUT_ARGS=()
+  for addr in "${NEED_TOPUP[@]}"; do
+    TX_OUT_ARGS+=(--tx-out "${addr}+${TOP_UP_FUNDS_LOVELACE}")
+  done
+
+  cardano-cli conway transaction build \
+    --testnet-magic "$MAGIC" \
+    --tx-in "$UTXO" \
+    "${TX_OUT_ARGS[@]}" \
+    --change-address "$ALICE_FUNDS_ADDR" \
+    --out-file /tmp/fund-actors-funds.tx
+
+  submit_and_wait "Funds top-up" \
+    /tmp/fund-actors-funds.tx /tmp/fund-actors-funds.signed.tx \
+    "$ALICE_DIR/cardano-funds.sk" \
+    "${NEED_TOPUP[0]}" "$MIN_FUNDS_LOVELACE"
+else
+  log "All actors have sufficient L2 deposit funds."
 fi
+
+# ────────────────────────────────────────────────────────────────
+# Part 2 — Hydra-node fuel (cardano.addr)
+# Each actor self-funds from their own cardano-funds.addr.
+# ────────────────────────────────────────────────────────────────
+echo ""
+log "── Part 2: Hydra-node fuel (cardano.addr) ──"
+
+ALICE_FUEL_LV=$(lovelace_at "$ALICE_ADDR")
+IDA_FUEL_LV=$(lovelace_at "$IDA_ADDR")
+BOB_FUEL_LV=$(lovelace_at "$BOB_ADDR")
+
+log "Alice fuel : $(ada "$ALICE_FUEL_LV")  ($ALICE_ADDR)"
+log "Ida   fuel : $(ada "$IDA_FUEL_LV")  ($IDA_ADDR)"
+log "Bob   fuel : $(ada "$BOB_FUEL_LV")  ($BOB_ADDR)"
+echo ""
+
+fuel_actor() {
+  local name="$1"
+  local actor_dir="$2"
+  local fuel_addr="$3"
+  local funds_addr="$4"
+  local current_lv="$5"
+
+  if [ "$current_lv" -ge "$MIN_FUEL_LOVELACE" ]; then
+    log "$name fuel is sufficient — skipping."
+    return 0
+  fi
+
+  local source_lv
+  source_lv=$(lovelace_at "$funds_addr")
+  local needed=$(( TOP_UP_FUEL_LOVELACE + 200000 ))  # buffer for fees
+  if [ "$source_lv" -lt "$needed" ]; then
+    warn "$name: funds address only has $(ada "$source_lv") — cannot self-fuel. Top up funds address first."
+    return 0
+  fi
+
+  local utxo
+  utxo=$(pick_utxo "$funds_addr" "$needed")
+  if [ -z "$utxo" ]; then
+    warn "$name: no suitable UTxO at funds address to self-fuel."
+    return 0
+  fi
+
+  log "Fuelling $name: sending $(ada "$TOP_UP_FUEL_LOVELACE") to $fuel_addr..."
+  cardano-cli conway transaction build \
+    --testnet-magic "$MAGIC" \
+    --tx-in "$utxo" \
+    --tx-out "${fuel_addr}+${TOP_UP_FUEL_LOVELACE}" \
+    --change-address "$funds_addr" \
+    --out-file /tmp/fuel-"$name".tx
+
+  submit_and_wait "$name fuel" \
+    /tmp/fuel-"$name".tx /tmp/fuel-"$name".signed.tx \
+    "$actor_dir/cardano-funds.sk" \
+    "$fuel_addr" "$MIN_FUEL_LOVELACE"
+}
+
+fuel_actor "Alice" "$ALICE_DIR" "$ALICE_ADDR" "$ALICE_FUNDS_ADDR" "$ALICE_FUEL_LV"
+fuel_actor "Ida"   "$IDA_DIR"   "$IDA_ADDR"   "$IDA_FUNDS_ADDR"   "$IDA_FUEL_LV"
+fuel_actor "Bob"   "$BOB_DIR"   "$BOB_ADDR"   "$BOB_FUNDS_ADDR"   "$BOB_FUEL_LV"
 
 echo ""
 log "Done. Run ./testnet/open-heads.sh $NETWORK to deposit into heads."
