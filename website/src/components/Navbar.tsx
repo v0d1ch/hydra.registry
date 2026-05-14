@@ -1,141 +1,138 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNetwork, type Network } from '../context/NetworkContext'
+import { useWallet } from '../context/WalletContext'
 
 const networks: Network[] = ['All', 'Mainnet', 'Preview', 'Preprod']
-
 const networkPages = new Set(['/explorer', '/routes'])
+
+const ALL_LINKS = [
+  { to: '/',          label: 'Home' },
+  { to: '/explorer',  label: 'Explorer' },
+  { to: '/routes',    label: 'Routes' },
+  { to: '/register',  label: 'Register' },
+  { to: '/invoice',   label: 'Invoice' },
+  { to: '/dashboard', label: 'Dashboard' },
+  { to: '/balance',   label: 'Balance' },
+  { to: '/setup',     label: 'Setup' },
+  { to: '/docs',      label: 'Docs' },
+]
+
+// Shown inline in the top bar (excluding brand and wallet button)
+const TOP_LINKS = ['/explorer', '/routes']
 
 export default function Navbar() {
   const location = useLocation()
-  const [open, setOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const { network, setNetwork } = useNetwork()
+  const { address, connect, disconnect, available } = useWallet()
+  const menuRef = useRef<HTMLDivElement>(null)
 
-  // Close menu on route change
-  useEffect(() => {
-    setOpen(false)
-  }, [location.pathname])
+  const showNetworkSelector = networkPages.has(location.pathname)
 
-  // Close menu on escape
+  useEffect(() => { setMenuOpen(false) }, [location.pathname])
+
   useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
     window.addEventListener('keydown', handleEsc)
     return () => window.removeEventListener('keydown', handleEsc)
   }, [])
 
-  // Prevent body scroll when menu is open
   useEffect(() => {
-    document.body.style.overflow = open ? 'hidden' : ''
-    return () => { document.body.style.overflow = '' }
-  }, [open])
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    if (menuOpen) document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [menuOpen])
 
   const isActive = (path: string) => location.pathname === path ? 'active' : ''
-  const showNetworkSelector = networkPages.has(location.pathname)
+
+  const shortAddress = address
+    ? `${address.slice(0, 8)}…${address.slice(-4)}`
+    : null
 
   return (
-    <>
-      <nav className="navbar">
-        <Link to="/" className="navbar-brand">
-          hydra.registry
-        </Link>
+    <nav className="navbar">
+      <Link to="/" className="navbar-brand">hydra.registry</Link>
 
-        {/* Desktop links */}
-        <div className="navbar-links desktop-only">
-          <Link to="/" className={isActive('/')}>Home</Link>
-          <Link to="/explorer" className={isActive('/explorer')}>Explorer</Link>
-          <Link to="/register" className={isActive('/register')}>Register</Link>
-          <Link to="/invoice" className={isActive('/invoice')}>Invoice</Link>
-          <Link to="/routes" className={isActive('/routes')}>Routes</Link>
-          <Link to="/dashboard" className={isActive('/dashboard')}>Dashboard</Link>
-          <Link to="/balance" className={isActive('/balance')}>Balance</Link>
-          <Link to="/setup" className={isActive('/setup')}>Setup</Link>
-          <Link to="/docs" className={isActive('/docs')}>Docs</Link>
-          {showNetworkSelector && (
-            <div className="network-selector">
-              {networks.map(n => (
-                <button
-                  key={n}
-                  className={`network-btn ${network === n ? 'network-active' : ''}`}
-                  onClick={() => setNetwork(n)}
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      <div className="navbar-links">
+        {ALL_LINKS.filter(l => TOP_LINKS.includes(l.to)).map(l => (
+          <Link key={l.to} to={l.to} className={isActive(l.to)}>{l.label}</Link>
+        ))}
 
-        {/* Mobile hamburger */}
-        <button
-          className={`hamburger mobile-only ${open ? 'is-open' : ''}`}
-          onClick={() => setOpen(!open)}
-          aria-label="Toggle menu"
-          aria-expanded={open}
-        >
-          <span className="hamburger-line" />
-          <span className="hamburger-line" />
-          <span className="hamburger-line" />
-        </button>
-      </nav>
-
-      {/* Mobile menu overlay */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            className="mobile-menu"
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.25 }}
-          >
-            <div className="mobile-menu-links">
-              <Link to="/" className={isActive('/')}>
-                <span className="mobile-link-prefix">&gt; </span>Home
-              </Link>
-              <Link to="/explorer" className={isActive('/explorer')}>
-                <span className="mobile-link-prefix">&gt; </span>Explorer
-              </Link>
-              <Link to="/register" className={isActive('/register')}>
-                <span className="mobile-link-prefix">&gt; </span>Register
-              </Link>
-              <Link to="/invoice" className={isActive('/invoice')}>
-                <span className="mobile-link-prefix">&gt; </span>Invoice
-              </Link>
-              <Link to="/routes" className={isActive('/routes')}>
-                <span className="mobile-link-prefix">&gt; </span>Routes
-              </Link>
-              <Link to="/dashboard" className={isActive('/dashboard')}>
-                <span className="mobile-link-prefix">&gt; </span>Dashboard
-              </Link>
-              <Link to="/balance" className={isActive('/balance')}>
-                <span className="mobile-link-prefix">&gt; </span>Balance
-              </Link>
-              <Link to="/setup" className={isActive('/setup')}>
-                <span className="mobile-link-prefix">&gt; </span>Setup
-              </Link>
-              <Link to="/docs" className={isActive('/docs')}>
-                <span className="mobile-link-prefix">&gt; </span>Docs
-              </Link>
-              {showNetworkSelector && (
-                <div className="mobile-network-selector">
-                  {networks.map(n => (
-                    <button
-                      key={n}
-                      className={`network-btn ${network === n ? 'network-active' : ''}`}
-                      onClick={() => setNetwork(n)}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </motion.div>
+        {showNetworkSelector && (
+          <div className="network-selector">
+            {networks.map(n => (
+              <button
+                key={n}
+                className={`network-btn ${network === n ? 'network-active' : ''}`}
+                onClick={() => setNetwork(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
         )}
-      </AnimatePresence>
-    </>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+        {/* Wallet button */}
+        {address ? (
+          <button className="btn-wallet btn-wallet-connected" onClick={disconnect}>
+            {shortAddress}
+          </button>
+        ) : (
+          <button
+            className="btn-wallet"
+            onClick={() => available.length > 0 ? connect(available[0]) : undefined}
+            title={available.length === 0 ? 'No wallet extension detected' : `Connect ${available[0]}`}
+            disabled={available.length === 0}
+          >
+            Connect Wallet
+          </button>
+        )}
+
+        {/* All-links dropdown */}
+        <div className="nav-dropdown-wrap" ref={menuRef}>
+          <button
+            className={`nav-more-btn ${menuOpen ? 'is-open' : ''}`}
+            onClick={() => setMenuOpen(v => !v)}
+            aria-label="All pages"
+          >
+            <span /><span /><span />
+          </button>
+
+          <AnimatePresence>
+            {menuOpen && (
+              <motion.div
+                className="nav-dropdown"
+                initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -8, scale: 0.97 }}
+                transition={{ duration: 0.18 }}
+              >
+                {ALL_LINKS.map(l => (
+                  <Link key={l.to} to={l.to} className={`nav-dropdown-item ${isActive(l.to)}`}>
+                    {l.label}
+                  </Link>
+                ))}
+                {address && (
+                  <>
+                    <div className="nav-dropdown-divider" />
+                    <button className="nav-dropdown-item nav-dropdown-disconnect" onClick={disconnect}>
+                      Disconnect {shortAddress}
+                    </button>
+                  </>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </nav>
   )
 }

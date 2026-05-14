@@ -96,6 +96,132 @@ a:hover {
   opacity: 1;
 }
 
+/* ─── Wallet button ─── */
+.btn-wallet {
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  white-space: nowrap;
+}
+
+.btn-wallet:hover:not(:disabled) {
+  background: var(--accent-dim);
+}
+
+.btn-wallet:disabled {
+  opacity: 0.4;
+  cursor: default;
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.btn-wallet-connected {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.btn-wallet-connected:hover {
+  background: rgba(0, 212, 170, 0.1) !important;
+}
+
+/* ─── Nav dropdown (all pages menu) ─── */
+.nav-dropdown-wrap {
+  position: relative;
+}
+
+.nav-more-btn {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  width: 2rem;
+  height: 2rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.nav-more-btn span {
+  display: block;
+  width: 14px;
+  height: 2px;
+  background: var(--text-muted);
+  border-radius: 2px;
+  transition: background 0.2s;
+}
+
+.nav-more-btn:hover,
+.nav-more-btn.is-open {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.nav-more-btn:hover span,
+.nav-more-btn.is-open span {
+  background: var(--accent);
+}
+
+.nav-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.4rem;
+  z-index: 200;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+.nav-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  text-decoration: none;
+  font-family: var(--font-body);
+}
+
+.nav-dropdown-item:hover,
+.nav-dropdown-item.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.nav-dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.3rem 0;
+}
+
+.nav-dropdown-disconnect {
+  color: var(--error);
+}
+
+.nav-dropdown-disconnect:hover {
+  background: rgba(255, 77, 106, 0.1) !important;
+  color: var(--error) !important;
+}
+
 /* ─── Main ─── */
 
 main {
@@ -1491,113 +1617,9 @@ code.result-value.result-value-mono {
   to { transform: rotate(360deg); }
 }
 
-/* ─── Desktop / Mobile toggles ─── */
-
-.mobile-only {
-  display: none;
-}
-
-.desktop-only {
-  display: flex;
-}
-
-/* ─── Hamburger button ─── */
-
-.hamburger {
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  z-index: 200;
-}
-
-.hamburger-line {
-  display: block;
-  width: 24px;
-  height: 2px;
-  background: var(--text);
-  border-radius: 2px;
-  transition: transform 0.3s ease, opacity 0.3s ease, background 0.3s ease;
-}
-
-.hamburger:hover .hamburger-line {
-  background: var(--accent);
-}
-
-.hamburger.is-open .hamburger-line:nth-child(1) {
-  transform: translateY(7px) rotate(45deg);
-  background: var(--accent);
-}
-
-.hamburger.is-open .hamburger-line:nth-child(2) {
-  opacity: 0;
-}
-
-.hamburger.is-open .hamburger-line:nth-child(3) {
-  transform: translateY(-7px) rotate(-45deg);
-  background: var(--accent);
-}
-
-/* ─── Mobile menu overlay ─── */
-
-.mobile-menu {
-  position: fixed;
-  inset: 0;
-  top: 60px;
-  background: rgba(10, 10, 15, 0.97);
-  backdrop-filter: blur(20px);
-  z-index: 99;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.mobile-menu-links {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2.5rem;
-}
-
-.mobile-menu-links a {
-  font-family: var(--font-heading);
-  font-size: 1.4rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  transition: color 0.2s, text-shadow 0.2s;
-  letter-spacing: 0.02em;
-}
-
-.mobile-menu-links a:hover,
-.mobile-menu-links a.active {
-  color: var(--accent);
-  text-shadow: 0 0 20px var(--accent-glow);
-  opacity: 1;
-}
-
-.mobile-link-prefix {
-  color: var(--accent);
-  opacity: 0.4;
-  font-family: 'Press Start 2P', monospace;
-  font-size: 0.7rem;
-  margin-right: 0.5rem;
-  vertical-align: middle;
-}
-
 /* ─── Responsive ─── */
 
 @media (max-width: 768px) {
-  .mobile-only {
-    display: flex;
-  }
-
-  .desktop-only {
-    display: none;
-  }
-
   .navbar {
     padding: 1rem 1.5rem;
   }

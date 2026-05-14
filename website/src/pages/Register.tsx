@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
-import { useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { registerHead, checkHead } from '../api/client'
+import { registerHead, checkHead, getHeadParticipants } from '../api/client'
 
 // Persist the in-progress wizard across navigation.
 const WIZARD_STORAGE_KEY = 'registerWizard'
@@ -31,6 +31,25 @@ const NETWORKS = ['Mainnet', 'Preview', 'Preprod'] as const
 
 const STEPS = ['Connection', 'Register']
 
+function loadRegisteredHeads(): { headId: string; host: string; port: number }[] {
+  try {
+    const raw = localStorage.getItem('registeredHeads')
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    // Deduplicate by headId, keeping the last entry for each
+    const seen = new Map<string, { headId: string; host: string; port: number }>()
+    for (const h of parsed) {
+      if (h?.headId) seen.set(h.headId, h)
+    }
+    const deduped = Array.from(seen.values())
+    localStorage.setItem('registeredHeads', JSON.stringify(deduped))
+    return deduped
+  } catch {
+    return []
+  }
+}
+
 export default function Register() {
   const location = useLocation()
   const saved = loadWizardState()
@@ -38,6 +57,22 @@ export default function Register() {
   const [selectedNetwork, setSelectedNetwork] = useState<string>(saved.selectedNetwork ?? NETWORKS[1])
   const [host, setHost] = useState(saved.host ?? '')
   const [port, setPort] = useState(saved.port ?? '')
+  const [registeredHeads, setRegisteredHeads] = useState(loadRegisteredHeads)
+  const userKeyHash = localStorage.getItem('userKeyHash') ?? ''
+  const [myHeadIds, setMyHeadIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!userKeyHash || registeredHeads.length === 0) return
+    Promise.all(
+      registeredHeads.map(h =>
+        getHeadParticipants(h.headId)
+          .then(ps => ps.some(p => p.onChainId === userKeyHash) ? h.headId : null)
+          .catch(() => null)
+      )
+    ).then(results => {
+      setMyHeadIds(new Set(results.filter((id): id is string => id !== null)))
+    })
+  }, [userKeyHash, registeredHeads])
 
   // Connection step error
   const [connectError, setConnectError] = useState<string | null>(null)
@@ -137,6 +172,7 @@ export default function Register() {
       const stored = JSON.parse(localStorage.getItem('registeredHeads') ?? '[]')
       stored.push({ headId: res.headId, host, port: portNum, registeredAt: new Date().toISOString() })
       localStorage.setItem('registeredHeads', JSON.stringify(stored))
+      setRegisteredHeads(loadRegisteredHeads())
     } catch (err) {
       setRegError(err instanceof Error ? err.message : 'Registration failed')
     } finally {
@@ -146,6 +182,47 @@ export default function Register() {
 
   return (
     <div className="register-page">
+      {registeredHeads.length > 0 && !regResult && (
+        <motion.div
+          className="prerequisite-card glow-card"
+          style={{ marginBottom: '2rem' }}
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+        >
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem', fontWeight: 600 }}>
+            {registeredHeads.length} head{registeredHeads.length > 1 ? 's' : ''} registered
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1rem' }}>
+            {registeredHeads.map(h => {
+              const isMine = myHeadIds.has(h.headId)
+              return (
+                <div key={h.headId} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <code style={{ color: isMine ? 'var(--success)' : 'var(--accent)' }}>{h.headId.slice(0, 16)}…</code>
+                  <span>{h.host}:{h.port}</span>
+                  {isMine && <span style={{ color: 'var(--success)', fontSize: '0.75rem' }}>← you</span>}
+                </div>
+              )
+            })}
+          </div>
+          {userKeyHash && myHeadIds.size === 0 && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+              Your key hash is not a participant in any of these heads.
+            </p>
+          )}
+          {!userKeyHash && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+              Set your key hash on the <Link to="/dashboard" style={{ color: 'var(--accent)' }}>Dashboard</Link> to see which heads you're in.
+            </p>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.9rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
+            <p><strong style={{ color: 'var(--text)' }}>1. Publish the HTLC validator</strong> — see <Link to="/setup" style={{ color: 'var(--accent)' }}>Setup guide → step 04</Link></p>
+            <p><strong style={{ color: 'var(--text)' }}>2. Receive a payment</strong> — <Link to="/invoice" style={{ color: 'var(--accent)' }}>create an invoice</Link></p>
+            <p><strong style={{ color: 'var(--text)' }}>3. Send a payment</strong> — <Link to="/routes" style={{ color: 'var(--accent)' }}>find a route</Link></p>
+          </div>
+        </motion.div>
+      )}
+
       {step > 0 && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
           <button type="button" className="btn btn-secondary" onClick={resetWizard}>
@@ -301,14 +378,42 @@ export default function Register() {
                       <span className="result-value">{regResult.status}</span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-full"
-                    style={{ marginTop: '1rem' }}
-                    onClick={resetWizard}
-                  >
-                    Register another head
-                  </button>
+
+                  <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'var(--surface)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.75rem', fontWeight: 600 }}>What's next</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                      <p>
+                        <strong style={{ color: 'var(--text)' }}>1. Publish the HTLC validator</strong> — if you operate this head,
+                        publish the HTLC reference script UTxO inside it before payments can flow.
+                        See <Link to="/setup" style={{ color: 'var(--accent)' }}>Setup guide → step 04</Link>.
+                      </p>
+                      <p>
+                        <strong style={{ color: 'var(--text)' }}>2. Receive a payment</strong> — generate a secret, create an invoice
+                        with your key hash and amount, and share the invoice ID with the sender.
+                      </p>
+                      <p>
+                        <strong style={{ color: 'var(--text)' }}>3. Send a payment</strong> — enter an invoice ID and your key hash
+                        to find a route and execute the HTLC cascade.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+                    <Link to="/invoice" className="btn btn-primary" style={{ flex: 1, textAlign: 'center' }}>
+                      Create invoice
+                    </Link>
+                    <Link to="/routes" className="btn btn-secondary" style={{ flex: 1, textAlign: 'center' }}>
+                      Find a route
+                    </Link>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ flex: 1 }}
+                      onClick={resetWizard}
+                    >
+                      Register another
+                    </button>
+                  </div>
                 </motion.div>
               )}
 
