@@ -19,15 +19,10 @@ export default function Docs() {
           tx blueprints that callers (typically a bridge agent) assemble and
           submit via their hydra-node WebSocket. This page is the ground-truth
           reference for what those transactions look like on the wire.
-        </p>
-        <p className="register-desc">
-          Routing keys off <strong>Cardano key hashes</strong> — the 28-byte
-          pkh of each participant's hydra-node{' '}
-          <code>--cardano-signing-key</code>. That's the head's
-          <em> OnChainId</em>, the participant identity in
-          <code>head_participants</code>, and the receiver in every HTLC
-          datum. Wallet addresses don't enter the protocol; the receiver
-          picks the final claim's output destination at claim-tx build time.
+          Each participant is identified by their <em>OnChainId</em> — the
+          28-byte key hash of their hydra-node's{' '}
+          <code>--cardano-signing-key</code> — which is what the receiver
+          field in every HTLC datum refers to.
         </p>
       </motion.section>
 

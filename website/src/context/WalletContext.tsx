@@ -34,13 +34,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(async (walletName: string) => {
     const api = await window.cardano![walletName].enable()
     const addr = await api.getChangeAddress()
+    sessionStorage.removeItem('wallet.disconnected')
     setAddress(addr)
   }, [])
 
   useEffect(() => {
+    if (sessionStorage.getItem('wallet.disconnected')) return
     const wallets = getAvailableWallets()
     setAvailable(wallets)
-    // Auto-reconnect to whichever wallet is already enabled (no localStorage needed)
     ;(async () => {
       for (const name of wallets) {
         try {
@@ -52,6 +53,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, [connect])
 
   const disconnect = useCallback(() => {
+    sessionStorage.setItem('wallet.disconnected', '1')
     setAddress(null)
   }, [])
 

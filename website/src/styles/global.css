@@ -83,6 +83,22 @@ a:hover {
   gap: 2rem;
 }
 
+.navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.navbar-desktop {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.navbar-mobile {
+  display: none;
+}
+
 .navbar-links a {
   color: var(--text-muted);
   font-size: 0.9rem;
@@ -1622,6 +1638,22 @@ code.result-value.result-value-mono {
 @media (max-width: 768px) {
   .navbar {
     padding: 1rem 1.5rem;
+  }
+
+  .navbar-desktop {
+    display: none !important;
+  }
+
+  .navbar-mobile {
+    display: flex;
+  }
+
+  .navbar-links.navbar-desktop {
+    display: none !important;
+  }
+
+  .nav-dropdown-mobile {
+    min-width: 200px;
   }
 
   main {

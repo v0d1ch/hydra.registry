@@ -954,8 +954,8 @@ handleFindRoutes pool graphVar chainSlotVar req = do
     Just inv -> do
       graph <- liftIO $ readTVarIO graphVar
       chainSlot <- liftIO $ readTVarIO chainSlotVar
-      -- Routing keys off Cardano key hashes (= hydra-node OnChainIds):
-      -- sender's identity from the request, receiver's from the invoice.
+      -- Participants are identified by their OnChainId (pkh of --cardano-signing-key).
+      -- Sender's OnChainId comes from the request, receiver's from the invoice.
       -- The receiver picks where claimed funds ultimately land at
       -- claim-tx build time.
       let routes = Graph.findRoutes graph req.senderOnChainId inv.invoiceReceiverOnChainId req.network 3

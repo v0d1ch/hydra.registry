@@ -151,15 +151,15 @@ export default function Setup() {
           </div>
           <p className="register-desc">
             Every HTLC lock and claim transaction references the same Plutus validator. Rather than
-            embedding the full script in every transaction (expensive), it lives as a single
+            embedding the full script in every transaction, it lives as a single
             <strong> reference script UTxO inside the head</strong> that all transactions point to.
+            This is done once per head by whoever operates it.
           </p>
           <p className="register-desc">
-            The validator enforces two rules: the receiver can spend the UTxO by providing the
-            correct preimage (secret) before the timeout slot; after the timeout the sender can
-            reclaim without the preimage. This is a one-time setup per head, done by whoever
-            operates it. If you're joining an existing head, ask the operator whether it's already
-            been published.
+            You need an address that <strong>has funds committed inside the head</strong> — the
+            same address you used when committing UTxOs at head initialisation. The transaction is
+            built and signed locally using the Cardano signing key for that address, then submitted
+            to the head over its WebSocket API.
           </p>
           <div className="setup-steps">
             <h3>Step-by-step</h3>
@@ -167,30 +167,43 @@ export default function Setup() {
               <div className="next-step">
                 <span className="next-num">1</span>
                 <div>
-                  <p><strong>Build the publish transaction.</strong> Provide your in-head wallet address to construct an unsigned transaction that sends the HTLC script to a UTxO inside the head:</p>
-                  <pre className="code-block">{`curl -X POST https://<indexer>/api/v1/heads/{headId}/publish-ref-script-tx-cbor \\
-  -H 'Content-Type: application/json' \\
-  -d '{"walletAddress": "addr_test1..."}'`}</pre>
-                  <p>The response contains an unsigned transaction <code>cborHex</code> and a <code>txId</code>. Keep both.</p>
+                  <p>
+                    <strong>Find your in-head address.</strong> This is the address you committed
+                    funds from when the head was opened. You can see it on the{' '}
+                    <Link to="/dashboard" style={{ color: 'var(--accent)' }}>Dashboard</Link> next
+                    to your head, or ask the indexer directly:
+                  </p>
+                  <pre className="code-block">{`curl https://<indexer>/api/v1/heads/{headId}/addresses`}</pre>
+                  <p>Pick the address you control — the one whose <code>.sk</code> key file you have.</p>
                 </div>
               </div>
               <div className="next-step">
                 <span className="next-num">2</span>
                 <div>
-                  <p><strong>Sign the transaction</strong> with your actor key. Your node does not hold signing keys — you sign locally:</p>
-                  <pre className="code-block">{`echo '{"type":"Tx ConwayEra","description":"","cborHex":"<cborHex>"}' > tx.raw
-
-cardano-cli transaction sign \\
-  --tx-file tx.raw \\
-  --signing-key-file <actor>.sk \\
-  --out-file tx.signed`}</pre>
+                  <p><strong>Build the publish transaction.</strong> Pass your in-head address. The indexer selects a suitable UTxO from inside the head to pay fees:</p>
+                  <pre className="code-block">{`curl -X POST https://<indexer>/api/v1/heads/{headId}/publish-ref-script-tx-cbor \\
+  -H 'Content-Type: application/json' \\
+  -d '{"walletAddress": "addr_test1..."}'`}</pre>
+                  <p>The response contains an unsigned <code>cborHex</code> and a <code>txId</code>. Keep both.</p>
                 </div>
               </div>
               <div className="next-step">
                 <span className="next-num">3</span>
                 <div>
+                  <p><strong>Sign the transaction</strong> with the Cardano signing key for that address:</p>
+                  <pre className="code-block">{`echo '{"type":"Tx ConwayEra","description":"","cborHex":"<cborHex>"}' > tx.raw
+
+cardano-cli transaction sign \\
+  --tx-file tx.raw \\
+  --signing-key-file <your-address>.sk \\
+  --out-file tx.signed`}</pre>
+                </div>
+              </div>
+              <div className="next-step">
+                <span className="next-num">4</span>
+                <div>
                   <p><strong>Submit the signed transaction to the head.</strong> This creates the reference script UTxO inside the head's L2 state:</p>
-                  <pre className="code-block">{`SIGNED_CBOR=$(cardano-cli transaction view --tx-file tx.signed | jq -r .cborHex)
+                  <pre className="code-block">{`SIGNED_CBOR=$(cat tx.signed | jq -r .cborHex)
 
 curl -X POST https://<indexer>/api/v1/heads/{headId}/submit \\
   -H 'Content-Type: application/json' \\
@@ -198,13 +211,13 @@ curl -X POST https://<indexer>/api/v1/heads/{headId}/submit \\
                 </div>
               </div>
               <div className="next-step">
-                <span className="next-num">4</span>
+                <span className="next-num">5</span>
                 <div>
-                  <p><strong>Register the reference UTxO</strong> so the indexer knows which UTxO holds the script. Use the <code>txId</code> from step 1:</p>
+                  <p><strong>Register the reference UTxO</strong> so the indexer knows which UTxO holds the script. Use the <code>txId</code> from step 2:</p>
                   <pre className="code-block">{`curl -X POST https://<indexer>/api/v1/heads/{headId}/ref-script \\
   -H 'Content-Type: application/json' \\
   -d '{"utxo": "<txId>#0"}'`}</pre>
-                  <p>All future lock transactions will reference this UTxO. Because it carries the script, each lock tx costs ~2 ADA min-ada instead of ~7 ADA when the script is inlined.</p>
+                  <p>Once registered, all future lock transactions reference this UTxO automatically.</p>
                 </div>
               </div>
             </div>
