@@ -14,11 +14,9 @@ const WalletContext = createContext<WalletContextValue>({
   available: [],
 })
 
-const STORAGE_KEY = 'connectedWallet'
-
 declare global {
   interface Window {
-    cardano?: Record<string, { enable: () => Promise<{ getChangeAddress: () => Promise<string> }> }>
+    cardano?: Record<string, { enable: () => Promise<{ getChangeAddress: () => Promise<string> }>; isEnabled?: () => Promise<boolean> }>
   }
 }
 
@@ -33,25 +31,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [address, setAddress] = useState<string | null>(null)
   const [available, setAvailable] = useState<string[]>([])
 
-  useEffect(() => {
-    setAvailable(getAvailableWallets())
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      connect(saved).catch(() => localStorage.removeItem(STORAGE_KEY))
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   const connect = useCallback(async (walletName: string) => {
     const api = await window.cardano![walletName].enable()
     const addr = await api.getChangeAddress()
     setAddress(addr)
-    localStorage.setItem(STORAGE_KEY, walletName)
   }, [])
+
+  useEffect(() => {
+    const wallets = getAvailableWallets()
+    setAvailable(wallets)
+    // Auto-reconnect to whichever wallet is already enabled (no localStorage needed)
+    ;(async () => {
+      for (const name of wallets) {
+        try {
+          const already = await window.cardano![name].isEnabled?.()
+          if (already) { await connect(name); break }
+        } catch { /* ignore */ }
+      }
+    })()
+  }, [connect])
 
   const disconnect = useCallback(() => {
     setAddress(null)
-    localStorage.removeItem(STORAGE_KEY)
   }, [])
 
   return (

@@ -152,7 +152,11 @@ initDb pool =
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS timeout_slot BIGINT NOT NULL DEFAULT 0;\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS fee_lovelace BIGINT NOT NULL DEFAULT 0;\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ;\
-      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;"
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;\
+      \CREATE TABLE IF NOT EXISTS user_profiles (\
+      \  wallet_address TEXT PRIMARY KEY,\
+      \  key_hash TEXT\
+      \);"
 
 -- | Insert a new head or update on conflict.
 --
@@ -1137,5 +1141,49 @@ expireStaleRoutes pool now =
                 row.routeInvoiceId ==. invoice.invoiceId
                   &&. invoice.invoiceStatus ==. lit "expired"
                   &&. (row.routeStatus ==. lit "requested" ||. row.routeStatus ==. lit "in_progress")
+            , returning = NoReturning
+            }
+
+-- ─── User profiles ───
+
+-- | Look up the Hydra key hash registered for a wallet address.
+getUserKeyHash :: Pool -> Text -> IO (Maybe Text)
+getUserKeyHash pool walletAddr = do
+  rows <-
+    runSession pool $
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            u <- Rel8.each userProfileSchema
+            Rel8.where_ (u.userWalletAddress ==. lit walletAddr)
+            pure u
+  pure $ case rows of
+    [] -> Nothing
+    (u : _) -> u.userKeyHash
+
+-- | Insert or update the key hash for a wallet address (upsert on primary key).
+setUserKeyHash :: Pool -> Text -> Text -> IO ()
+setUserKeyHash pool walletAddr kh =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.insert
+          Insert
+            { into = userProfileSchema
+            , rows =
+                Rel8.values
+                  [ UserProfile
+                      { userWalletAddress = lit walletAddr
+                      , userKeyHash       = lit (Just kh)
+                      }
+                  ]
+            , onConflict =
+                DoUpdate
+                  Upsert
+                    { index = (.userWalletAddress)
+                    , predicate = Nothing
+                    , set = \new _old -> new
+                    , updateWhere = \_ _ -> lit True
+                    }
             , returning = NoReturning
             }

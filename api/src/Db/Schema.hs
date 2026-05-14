@@ -295,3 +295,22 @@ utxoSchema =
           , utxoUpdatedAt = "updated_at"
           }
     }
+
+-- User profile (wallet address → hydra key hash)
+data UserProfile f = UserProfile
+  { userWalletAddress :: Column f Text
+  , userKeyHash       :: Column f (Maybe Text)
+  }
+  deriving stock (Generic)
+  deriving anyclass (Rel8able)
+
+userProfileSchema :: TableSchema (UserProfile Name)
+userProfileSchema =
+  TableSchema
+    { name = "user_profiles"
+    , columns =
+        UserProfile
+          { userWalletAddress = "wallet_address"
+          , userKeyHash       = "key_hash"
+          }
+    }

@@ -5,6 +5,7 @@ import {
   findRoutes,
   executeRoute,
   getRelayGraph,
+  getHeads,
   getExplorerHead,
   getHeadParticipants,
   getRegisteredHead,
@@ -16,30 +17,16 @@ import {
 import { useNetwork } from '../context/NetworkContext'
 import RelayGraph from '../components/RelayGraph'
 
-interface RegisteredHead {
-  headId: string
-  host: string
-  port: number
-  registeredAt?: string
-}
-
-function loadRegisteredHeads(): RegisteredHead[] {
-  try {
-    const raw = localStorage.getItem('registeredHeads')
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
 export default function RouteExplorer() {
   const { network } = useNetwork()
   const [searchParams, setSearchParams] = useSearchParams()
   const headIdFilter = searchParams.get('headId')?.trim() ?? ''
   const [headIdInput, setHeadIdInput] = useState(headIdFilter)
-  const registeredHeads = useMemo(loadRegisteredHeads, [])
+  const [registeredHeads, setRegisteredHeads] = useState<{ headId: string; host: string; port: number }[]>([])
+
+  useEffect(() => {
+    getHeads().then(heads => setRegisteredHeads(heads.map(h => ({ headId: h.headId, host: h.host, port: h.port })))).catch(() => {})
+  }, [])
   const [invoiceId, setInvoiceId] = useState('')
   const [senderOnChainId, setSenderOnChainId] = useState('')
   const [loading, setLoading] = useState(false)

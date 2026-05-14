@@ -538,6 +538,16 @@ data SubmitTxRequest = SubmitTxRequest
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+data UserKeyHashResponse = UserKeyHashResponse
+  { keyHash :: Maybe Text }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+data SetKeyHashRequest = SetKeyHashRequest
+  { keyHash :: Text }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
 -- | A single thing a participant can do *right now* on a specific
 -- hop — surfaced in the dashboard so the UI knows which buttons to
 -- show and which to grey out.

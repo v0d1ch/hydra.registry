@@ -13,13 +13,10 @@ const NetworkContext = createContext<NetworkContextType>({
 })
 
 export function NetworkProvider({ children }: { children: ReactNode }) {
-  const [network, setNetwork] = useState<Network>(
-    () => (localStorage.getItem('selectedNetwork') as Network) ?? 'All'
-  )
+  const [network, setNetwork] = useState<Network>('All')
 
   const handleSet = (n: Network) => {
     setNetwork(n)
-    localStorage.setItem('selectedNetwork', n)
   }
 
   return (

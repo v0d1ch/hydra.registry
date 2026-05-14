@@ -470,3 +470,14 @@ export function submitTx(headId: string, signedCborHex: string): Promise<SubmitR
     body: JSON.stringify({ signedCborHex }),
   })
 }
+
+export function getUserKeyHash(walletAddress: string): Promise<{ keyHash: string | null }> {
+  return request<{ keyHash: string | null }>(`/api/v1/users/${encodeURIComponent(walletAddress)}/keyhash`)
+}
+
+export function setUserKeyHash(walletAddress: string, keyHash: string): Promise<{ keyHash: string | null }> {
+  return request<{ keyHash: string | null }>(`/api/v1/users/${encodeURIComponent(walletAddress)}/keyhash`, {
+    method: 'PUT',
+    body: JSON.stringify({ keyHash }),
+  })
+}

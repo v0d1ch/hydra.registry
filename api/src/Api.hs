@@ -95,6 +95,8 @@ type ApiV1Routes =
     :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "lock-tx-cbor" :> ReqBody '[JSON] BuildTxFromWalletRequest :> Post '[JSON] Tx.BuildResult
     :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "claim-tx-cbor" :> ReqBody '[JSON] BuildClaimTxRequest :> Post '[JSON] Tx.BuildResult
     :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "refund-tx-cbor" :> ReqBody '[JSON] BuildTxFromWalletRequest :> Post '[JSON] Tx.BuildResult
+    :<|> "users" :> Capture "walletAddress" Text :> "keyhash" :> Get '[JSON] UserKeyHashResponse
+    :<|> "users" :> Capture "walletAddress" Text :> "keyhash" :> ReqBody '[JSON] SetKeyHashRequest :> Put '[JSON] UserKeyHashResponse
 
 -- | Full API type
 type API =
@@ -184,6 +186,8 @@ apiV1Server env =
     :<|> handleLockTxCbor env.pool env.latestChainSlot env.htlcScriptCbor
     :<|> handleClaimTxCbor env.pool env.latestChainSlot
     :<|> handleRefundTxCbor env.pool env.latestChainSlot
+    :<|> handleGetUserKeyHash env.pool
+    :<|> handleSetUserKeyHash env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
 corsMiddleware :: Middleware
@@ -1710,3 +1714,17 @@ requireHtlcTx hop = case hop.hopHtlcTxHash of
   Nothing ->
     throwError $ err409{errBody = Aeson.encode $ ErrorResponse "Hop has not been locked yet (htlc_tx_hash is null)"}
   Just t -> pure t
+
+-- ─── User profile handlers ───
+
+-- | GET /api/v1/users/:walletAddress/keyhash
+handleGetUserKeyHash :: Pool -> Text -> Handler UserKeyHashResponse
+handleGetUserKeyHash pool walletAddr = do
+  kh <- liftIO $ Db.getUserKeyHash pool walletAddr
+  pure $ UserKeyHashResponse kh
+
+-- | PUT /api/v1/users/:walletAddress/keyhash
+handleSetUserKeyHash :: Pool -> Text -> SetKeyHashRequest -> Handler UserKeyHashResponse
+handleSetUserKeyHash pool walletAddr req = do
+  liftIO $ Db.setUserKeyHash pool walletAddr req.keyHash
+  pure $ UserKeyHashResponse (Just req.keyHash)

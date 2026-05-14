@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import {
@@ -8,14 +8,15 @@ import {
   buildRefundTx,
   submitTx,
   submitPreimage,
+  getUserKeyHash,
+  setUserKeyHash,
   type ParticipantRouteSummary,
   type ParticipantAction,
   type HopStatusResponse,
 } from '../api/client'
+import { useWallet } from '../context/WalletContext'
 
 // ─── helpers ──────────────────────────────────────────────────────────────
-
-const KEY_HASH_STORAGE = 'userKeyHash'
 
 const urgencyColor: Record<string, string> = {
   ok: 'var(--text-muted)',
@@ -457,11 +458,20 @@ function RouteCard({ summary, onRefresh }: RouteCardProps) {
 // ─── Dashboard ────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const [keyHash, setKeyHash] = useState<string>(() => localStorage.getItem(KEY_HASH_STORAGE) ?? '')
-  const [input, setInput] = useState<string>(() => localStorage.getItem(KEY_HASH_STORAGE) ?? '')
+  const { address: walletAddress } = useWallet()
+  const [keyHash, setKeyHash] = useState<string>('')
+  const [input, setInput] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [summaries, setSummaries] = useState<ParticipantRouteSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Load saved key hash from backend when wallet connects
+  useEffect(() => {
+    if (!walletAddress) { setKeyHash(''); setInput(''); return }
+    getUserKeyHash(walletAddress)
+      .then(r => { if (r.keyHash) { setKeyHash(r.keyHash); setInput(r.keyHash) } })
+      .catch(() => {})
+  }, [walletAddress])
 
   const load = useCallback(async (pkh: string) => {
     setError(null)
@@ -484,8 +494,8 @@ export default function Dashboard() {
       setError('Key hash must be a 56-character hex string.')
       return
     }
-    localStorage.setItem(KEY_HASH_STORAGE, pkh)
     setKeyHash(pkh)
+    if (walletAddress) setUserKeyHash(walletAddress, pkh).catch(() => {})
     load(pkh)
   }
 
