@@ -223,7 +223,7 @@ export default function PaymentTracker() {
                 <div className="hop-timeline-body">
                   <div className="meta-row">
                     <span className="meta-label">Head</span>
-                    <code className="meta-value">{hop.headId.slice(0, 12)}...</code>
+                    <code className="meta-value" style={{ wordBreak: 'break-all' }}>{hop.headId}</code>
                   </div>
                   <div className="meta-row">
                     <span className="meta-label">Sender</span>

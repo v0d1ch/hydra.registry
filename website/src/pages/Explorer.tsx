@@ -140,7 +140,7 @@ export default function Explorer() {
                   {head.htlcEnabled && <span className="badge-htlc">HTLC</span>}
                 </div>
                 <div className="explorer-card-id">
-                  <code>{head.headId.slice(0, 16)}...{head.headId.slice(-8)}</code>
+                  <code>{head.headId}</code>
                   <CopyButton text={head.headId} />
                 </div>
                 <div className="explorer-card-meta">

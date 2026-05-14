@@ -140,10 +140,9 @@ export default function Register() {
             {registeredHeads.map(h => {
               const isMine = myHeadIds.has(h.headId)
               return (
-                <div key={h.headId} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <code style={{ color: isMine ? 'var(--success)' : 'var(--accent)' }}>{h.headId.slice(0, 16)}…</code>
-                  <span>{h.host}:{h.port}</span>
-                  {isMine && <span style={{ color: 'var(--success)', fontSize: '0.75rem' }}>← you</span>}
+                <div key={h.headId} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                  <code style={{ color: isMine ? 'var(--success)' : 'var(--accent)', wordBreak: 'break-all' }}>{h.headId}</code>
+                  <span>{h.host}:{h.port}{isMine && <span style={{ color: 'var(--success)', marginLeft: '0.5rem' }}>← you</span>}</span>
                 </div>
               )
             })}

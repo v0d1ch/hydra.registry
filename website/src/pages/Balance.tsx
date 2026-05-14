@@ -315,7 +315,7 @@ export default function Balance() {
                           {b.network && <span className="explorer-network">{b.network}</span>}
                         </div>
                         <div className="explorer-card-id">
-                          <code>{b.headId.slice(0, 16)}...{b.headId.slice(-8)}</code>
+                          <code>{b.headId}</code>
                         </div>
                         <div className="balance-amount">
                           {(displayLovelace / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })} ADA

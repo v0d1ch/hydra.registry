@@ -51,7 +51,8 @@ initDb pool =
       \  snapshot_number INTEGER NOT NULL DEFAULT 0,\
       \  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
       \  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
-      \  last_message_at TIMESTAMPTZ\
+      \  last_message_at TIMESTAMPTZ,\
+      \  UNIQUE (host, port)\
       \);\
       \CREATE TABLE IF NOT EXISTS utxos (\
       \  tx_hash TEXT NOT NULL,\
@@ -285,6 +286,10 @@ setHeadRefScriptUtxo pool hid mUtxo = do
             }
 
 -- | Get all registered heads
+countHeads :: Pool -> IO Int
+countHeads pool =
+  length <$> getAllHeads pool
+
 getAllHeads :: Pool -> IO [Head Identity]
 getAllHeads pool =
   runSession pool $

@@ -88,11 +88,15 @@ registerHead logger pool eventQueue hostAddr portNum = do
       case existing of
         Just _ -> pure $ Left $ "Head " <> greeterHeadId <> " is already registered"
         Nothing -> do
-          Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus
-          Db.replaceUtxos pool greeterHeadId greeterUtxos
-          connectToHead logger greeterHeadId hostAddr portNum eventQueue
-          logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr)]
-          pure $ Right evt
+          n <- Db.countHeads pool
+          if n >= 5
+            then pure $ Left "Head limit reached (maximum 5 registered heads)"
+            else do
+              Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus
+              Db.replaceUtxos pool greeterHeadId greeterUtxos
+              connectToHead logger greeterHeadId hostAddr portNum eventQueue
+              logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr)]
+              pure $ Right evt
     Right _ -> pure $ Left "Unexpected event during validation"
 
 -- | Reconnect to all registered heads on startup

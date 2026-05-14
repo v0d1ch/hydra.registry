@@ -241,7 +241,7 @@ export default function RouteExplorer() {
 
         {filteredGraph && filteredGraph.nodes.length === 0 && headIdFilter && !graphLoading && !standaloneLoading && (
           <div className="relay-graph-empty">
-            Head <code>{headIdFilter.slice(0, 12)}…</code> not found on {network} (no record in the explorer or registry).
+            Head <code>{headIdFilter}</code> not found on {network} (no record in the explorer or registry).
           </div>
         )}
 
@@ -258,7 +258,7 @@ export default function RouteExplorer() {
         {headIdFilter && (
           <div className="register-result" style={{ marginTop: '1rem' }}>
             <p>
-              Showing routes through head <code>{headIdFilter.slice(0, 12)}…</code>
+              Showing routes through head <code>{headIdFilter}</code>
               {filteredGraph && filteredGraph.nodes.length > 0 && (
                 <>
                   {' '}
@@ -398,7 +398,7 @@ export default function RouteExplorer() {
                       <div className="hop-details">
                         <div className="hop-head">
                           <span className="meta-label">Head</span>
-                          <code>{hop.headId.slice(0, 12)}...</code>
+                          <code style={{ wordBreak: 'break-all' }}>{hop.headId}</code>
                         </div>
                         <div className="hop-bridge">
                           <span className="meta-label">Bridge</span>

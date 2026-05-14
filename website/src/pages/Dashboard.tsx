@@ -290,7 +290,7 @@ function HopCard({ hop, action, routeId, onDone }: HopCardProps) {
       </div>
 
       <div className="hop-timeline-body">
-        <div className="meta-row"><span className="meta-label">Head</span><code className="meta-value">{hop.headId.slice(0, 14)}…</code></div>
+        <div className="meta-row"><span className="meta-label">Head</span><code className="meta-value" style={{ wordBreak: 'break-all' }}>{hop.headId}</code></div>
         <div className="meta-row"><span className="meta-label">Sender</span><code className="meta-value">{hop.senderAddress.slice(0, 16)}…</code></div>
         <div className="meta-row"><span className="meta-label">Receiver</span><code className="meta-value">{hop.receiverAddress.slice(0, 16)}…</code></div>
         <div className="meta-row"><span className="meta-label">Fee</span><span className="meta-value">{(hop.fee / 1_000_000).toFixed(6)} ADA</span></div>
