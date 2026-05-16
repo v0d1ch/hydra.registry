@@ -1,6 +1,7 @@
 module Hydra.Submit
   ( submitToHead
   , SubmitResult (..)
+  , classify
   )
 where
 
@@ -114,10 +115,8 @@ lookupTag o = case KM.lookup "tag" o of
   _ -> Nothing
 
 lookupTxId :: KM.KeyMap Value -> Text
-lookupTxId o = case KM.lookup "transaction" o of
-  Just (Object t) -> case KM.lookup "txId" t of
-    Just (String s) -> s
-    _ -> ""
+lookupTxId o = case KM.lookup "transactionId" o of
+  Just (String s) -> s
   _ -> ""
 
 lookupReason :: KM.KeyMap Value -> Text

@@ -11,6 +11,7 @@ import GHC.Generics (Generic)
 data RegisterHead = RegisterHead
   { host :: Text
   , port :: Int
+  , walletAddress :: Maybe Text
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -92,6 +93,8 @@ data HealthResponse = HealthResponse
   { status :: Text
   , headCount :: Int
   , dbConnected :: Bool
+  , chainSlotKnown :: Bool
+  , nodeSyncProgress :: Maybe Double
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -192,6 +195,8 @@ data EnrichedHeadDetail = EnrichedHeadDetail
   , registeredAt :: UTCTime
   , lastSeenAt :: Maybe UTCTime
   , onChain :: Maybe ExplorerHeadOnChain
+  , htlcEnabled :: Bool
+  , refScriptUtxo :: Maybe Text
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
@@ -287,7 +292,8 @@ data SubgraphResponse = SubgraphResponse
 -- same key signs the final HTLC claim. The receiver picks where
 -- claimed funds land at claim-tx build time.
 data CreateInvoiceRequest = CreateInvoiceRequest
-  { receiverOnChainId :: Text
+  { headId :: Text
+  , receiverOnChainId :: Text
   , paymentHash :: Text
   , amountLovelace :: Int64
   , memo :: Maybe Text
@@ -299,6 +305,7 @@ data CreateInvoiceRequest = CreateInvoiceRequest
 -- | Invoice response
 data InvoiceResponse = InvoiceResponse
   { invoiceId :: Text
+  , headId :: Text
   , receiverOnChainId :: Text
   , paymentHash :: Text
   , amountLovelace :: Int64
@@ -584,6 +591,50 @@ data ParticipantRouteSummary = ParticipantRouteSummary
   { route :: PaymentStatusResponse
   , roles :: [Text] -- ^ @sender@ | @bridge@ | @receiver@ — usually one
   , actions :: [ParticipantAction] -- ^ empty when there's nothing to do
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- ─── Agent types ───
+
+-- | Request body for @POST /api/v1/agent/register@.
+data AgentRegisterRequest = AgentRegisterRequest
+  { headId :: Text
+  , binaryHash :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Response for @POST /api/v1/agent/register@.
+-- The @secretKey@ is shown once and never retrievable again.
+data AgentRegisterResponse = AgentRegisterResponse
+  { agentId :: Text
+  , secretKey :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Request body for @POST /api/v1/agent/events@.
+-- The raw Hydra WS event JSON forwarded by the CLI agent.
+newtype AgentEventRequest = AgentEventRequest
+  { event :: Value
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- ─── Claim ownership types ───
+
+-- | Request body for @POST /api/v1/heads/{id}/claim-ownership@.
+newtype ClaimOwnershipRequest = ClaimOwnershipRequest
+  { walletAddress :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
+-- | Response for @POST /api/v1/heads/{id}/claim-ownership@.
+data ClaimOwnershipResponse = ClaimOwnershipResponse
+  { verified :: Bool
+  , keyHash :: Text
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

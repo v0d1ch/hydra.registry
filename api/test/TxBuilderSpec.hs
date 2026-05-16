@@ -1,14 +1,21 @@
 module TxBuilderSpec (spec) where
 
+import Codec.Binary.Bech32 qualified as Bech32
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString qualified as BS
+import Data.ByteString.Base16 qualified as Base16
 import Data.List (isInfixOf)
+import Data.Text.Encoding qualified as T
 import Test.Hspec
 import Tx.Builder
-  ( ClaimArgs (..)
+  ( BuildResult (..)
+  , ClaimArgs (..)
   , LockArgs (..)
   , PublishRefArgs (..)
   , RefundArgs (..)
   , claimTxArgs
+  , extractPkhFromAddress
   , htlcExecUnits
   , lockTxArgs
   , publishRefTxArgs
@@ -187,3 +194,48 @@ spec = describe "Tx.Builder" $ do
       args `shouldContain'` "addr_test1ida+13400000"
       args `shouldContain'` "--tx-out-reference-script-file"
       args `shouldContain'` "/tmp/htlc.json"
+
+  describe "BuildResult JSON serialisation" $ do
+    let sampleEnvelope =
+          Aeson.object
+            [ "type"        Aeson..= ("Tx ConwayEra" :: String)
+            , "description" Aeson..= ("Ledger Cddl Format" :: String)
+            , "cborHex"     Aeson..= ("deadbeef" :: String)
+            ]
+        result = BuildResult
+          { cborHex  = "deadbeef"
+          , txId     = "abc123"
+          , envelope = sampleEnvelope
+          }
+
+    it "serialises as a flat object (cardano-cli text-envelope shape)" $ do
+      case Aeson.toJSON result of
+        Aeson.Object km -> do
+          KM.lookup "type"    km `shouldBe` Just (Aeson.String "Tx ConwayEra")
+          KM.lookup "cborHex" km `shouldBe` Just (Aeson.String "deadbeef")
+          KM.lookup "txId"    km `shouldBe` Just (Aeson.String "abc123")
+        other -> expectationFailure $ "Expected Object, got: " <> show other
+
+    it "does not nest an 'envelope' key" $ do
+      case Aeson.toJSON result of
+        Aeson.Object km -> KM.lookup "envelope" km `shouldBe` Nothing
+        other -> expectationFailure $ "Expected Object, got: " <> show other
+
+  describe "extractPkhFromAddress" $ do
+    it "extracts payment key hash from bech32 enterprise testnet address" $ do
+      let knownPkh = BS.replicate 28 0xab
+          addrBytes = BS.cons 0x60 knownPkh
+          Right hrp = Bech32.humanReadablePartFromText "addr_test"
+          dp = Bech32.dataPartFromBytes addrBytes
+          addr = Bech32.encodeLenient hrp dp
+      extractPkhFromAddress addr `shouldBe` Right (T.decodeUtf8 $ Base16.encode knownPkh)
+
+    it "rejects an address whose decoded payload is too short" $ do
+      let shortBytes = BS.replicate 10 0x00
+          Right hrp = Bech32.humanReadablePartFromText "addr_test"
+          dp = Bech32.dataPartFromBytes shortBytes
+          addr = Bech32.encodeLenient hrp dp
+      extractPkhFromAddress addr `shouldBe` Left "address too short"
+
+    it "rejects invalid bech32 input" $ do
+      extractPkhFromAddress "not-bech32-at-all!!!" `shouldBe` Left "invalid bech32 address"

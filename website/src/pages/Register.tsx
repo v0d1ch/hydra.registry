@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { registerHead, checkHead, getHeads, getHeadParticipants, getUserKeyHash } from '../api/client'
+import { registerHead, checkHead, getHeads, getRegisteredHead, getHeadParticipants, getUserKeyHash, getPendingInvoices, type RegisteredHeadDetail, type InvoiceResponse } from '../api/client'
 import { useWallet } from '../context/WalletContext'
+import { useUser } from '../context/UserContext'
 
 const HTLC_SCRIPT_HASH = '81b00e96189dc6dc1d492c469442d0fce05367e946a1b59de13a17df'
 const HTLC_REPO = 'https://github.com/v0d1ch/htlc'
@@ -13,16 +14,18 @@ const STEPS = ['Connection', 'Register']
 export default function Register() {
   const location = useLocation()
   const { address: walletAddress } = useWallet()
+  const { pendingInvoice: contextInvoice } = useUser()
 
   const [step, setStep] = useState(0)
   const [selectedNetwork, setSelectedNetwork] = useState<string>(NETWORKS[1])
   const [host, setHost] = useState('')
   const [port, setPort] = useState('')
 
-  const [registeredHeads, setRegisteredHeads] = useState<{ headId: string; host: string; port: number }[]>([])
+  const [registeredHeads, setRegisteredHeads] = useState<RegisteredHeadDetail[]>([])
   const [headsLoading, setHeadsLoading] = useState(true)
   const [myHeadIds, setMyHeadIds] = useState<Set<string>>(new Set())
   const [userKeyHash, setUserKeyHash] = useState<string | null>(null)
+  const [pendingInvoices, setPendingInvoices] = useState<InvoiceResponse[]>([])
 
   const [connectError, setConnectError] = useState<string | null>(null)
   const [checkLoading, setCheckLoading] = useState(false)
@@ -31,12 +34,13 @@ export default function Register() {
   const [regError, setRegError] = useState<string | null>(null)
   const [aboutOpen, setAboutOpen] = useState(false)
 
-  // Load registered heads from API
+  // Load registered heads with full detail (includes htlcEnabled)
   const loadHeads = useCallback(async () => {
     setHeadsLoading(true)
     try {
       const heads = await getHeads()
-      setRegisteredHeads(heads.map(h => ({ headId: h.headId, host: h.host, port: h.port })))
+      const details = await Promise.all(heads.map(h => getRegisteredHead(h.headId).catch(() => null)))
+      setRegisteredHeads(details.filter((d): d is RegisteredHeadDetail => d !== null))
     } catch {
       setRegisteredHeads([])
     } finally {
@@ -46,14 +50,12 @@ export default function Register() {
 
   useEffect(() => { loadHeads() }, [loadHeads])
 
-  // Load key hash from backend when wallet is connected
+  // Load key hash from backend when wallet is connected (used only for "← you" label)
   useEffect(() => {
     if (!walletAddress) { setUserKeyHash(null); return }
-    import('../api/client').then(({ getUserKeyHash }) =>
-      getUserKeyHash(walletAddress)
-        .then(r => setUserKeyHash(r.keyHash))
-        .catch(() => setUserKeyHash(null))
-    )
+    getUserKeyHash(walletAddress)
+      .then(r => setUserKeyHash(r.keyHash))
+      .catch(() => setUserKeyHash(null))
   }, [walletAddress])
 
   // Mark which heads the user participates in
@@ -69,6 +71,21 @@ export default function Register() {
       setMyHeadIds(new Set(results.filter((id): id is string => id !== null)))
     })
   }, [userKeyHash, registeredHeads])
+
+  // Fetch all pending invoices from backend, merge with any context invoice from this session
+  useEffect(() => {
+    getPendingInvoices()
+      .then(invs => {
+        if (contextInvoice && contextInvoice.status === 'pending' && !invs.some(i => i.invoiceId === contextInvoice.invoiceId)) {
+          setPendingInvoices([contextInvoice, ...invs])
+        } else {
+          setPendingInvoices(invs)
+        }
+      })
+      .catch(() => {
+        if (contextInvoice && contextInvoice.status === 'pending') setPendingInvoices([contextInvoice])
+      })
+  }, [contextInvoice])
 
   // Reset form on same-path navigation
   useEffect(() => {
@@ -113,7 +130,7 @@ export default function Register() {
   const handleRegister = async () => {
     setRegLoading(true); setRegError(null); setRegResult(null)
     try {
-      const res = await registerHead(host, parseInt(port, 10))
+      const res = await registerHead(host, parseInt(port, 10), walletAddress ?? undefined)
       setRegResult(res)
       await loadHeads()
     } catch (err) {
@@ -136,32 +153,52 @@ export default function Register() {
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem', fontWeight: 600 }}>
             {registeredHeads.length} head{registeredHeads.length > 1 ? 's' : ''} registered
           </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             {registeredHeads.map(h => {
               const isMine = myHeadIds.has(h.headId)
+              const htlcEnabled = h.htlcEnabled ?? false
+              const invoices = pendingInvoices.filter(i => i.headId === h.headId)
               return (
-                <div key={h.headId} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
-                  <code style={{ color: isMine ? 'var(--success)' : 'var(--accent)', wordBreak: 'break-all' }}>{h.headId}</code>
-                  <span>{h.host}:{h.port}{isMine && <span style={{ color: 'var(--success)', marginLeft: '0.5rem' }}>← you</span>}</span>
+                <div key={h.headId} style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
+                  <code style={{ fontSize: '0.8rem', color: isMine ? 'var(--success)' : 'var(--accent)', wordBreak: 'break-all', display: 'block', marginBottom: '0.2rem' }}>{h.headId}</code>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    {h.host}:{h.port}
+                    {isMine && <span style={{ color: 'var(--success)', marginLeft: '0.5rem' }}>← you</span>}
+                  </span>
+                  <div style={{ marginTop: '0.6rem', fontSize: '0.85rem' }}>
+                    {!htlcEnabled ? (
+                      <p style={{ color: 'var(--text-muted)', margin: 0 }}>
+                        <strong style={{ color: 'var(--text)' }}>Next:</strong> Publish the HTLC validator — see <Link to="/setup" style={{ color: 'var(--accent)' }}>Setup guide → step 04</Link>
+                      </p>
+                    ) : invoices.length > 0 ? (
+                      <div>
+                        {invoices.map(inv => (
+                          <div key={inv.invoiceId} style={{ marginBottom: '0.4rem', padding: '0.5rem 0.75rem', background: 'rgba(0,212,170,0.06)', borderRadius: '6px', border: '1px solid rgba(0,212,170,0.2)' }}>
+                            <p style={{ margin: 0, color: 'var(--success)', fontWeight: 600 }}>Waiting for payment</p>
+                            <code style={{ fontSize: '0.75rem', color: 'var(--text-muted)', wordBreak: 'break-all' }}>{inv.invoiceId}</code>
+                            <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                              {(inv.amountLovelace / 1_000_000).toFixed(2)} ADA · expires {new Date(inv.expiresAt).toLocaleString()}
+                            </span>
+                          </div>
+                        ))}
+                        <Link to="/invoice" style={{ fontSize: '0.8rem', color: 'var(--accent)' }}>+ Create another invoice</Link>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <Link to="/invoice" className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.3rem 0.75rem' }}>Receive a payment</Link>
+                        <Link to="/routes" className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.3rem 0.75rem' }}>Send a payment</Link>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )
             })}
           </div>
           {!walletAddress && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
               Connect your wallet to see which heads you're in.
             </p>
           )}
-          {walletAddress && userKeyHash && myHeadIds.size === 0 && (
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-              Your key hash is not a participant in any of these heads.
-            </p>
-          )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.9rem', color: 'var(--text-muted)', borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
-            <p><strong style={{ color: 'var(--text)' }}>1. Publish the HTLC validator</strong> — see <Link to="/setup" style={{ color: 'var(--accent)' }}>Setup guide → step 04</Link></p>
-            <p><strong style={{ color: 'var(--text)' }}>2. Receive a payment</strong> — <Link to="/invoice" style={{ color: 'var(--accent)' }}>create an invoice</Link></p>
-            <p><strong style={{ color: 'var(--text)' }}>3. Send a payment</strong> — <Link to="/routes" style={{ color: 'var(--accent)' }}>find a route</Link></p>
-          </div>
         </motion.div>
       )}
 

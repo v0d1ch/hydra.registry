@@ -12,7 +12,7 @@ spec :: Spec
 spec = describe "Api.Types" $ do
   describe "JSON roundtrips" $ do
     it "RegisterHead roundtrips" $ do
-      let val = RegisterHead "localhost" 4001
+      let val = RegisterHead "localhost" 4001 Nothing
       roundtrip val `shouldBe` Just val
 
     it "RegisterHeadResponse roundtrips" $ do
@@ -34,6 +34,8 @@ spec = describe "Api.Types" $ do
               , utxoCount = 5
               , registeredAt = now
               , lastSeenAt = Just now
+              , htlcEnabled = False
+              , refScriptUtxo = Nothing
               , onChain = Nothing
               }
       roundtrip val `shouldBe` Just val
@@ -76,7 +78,7 @@ spec = describe "Api.Types" $ do
       roundtrip val `shouldBe` Just val
 
     it "HealthResponse roundtrips" $ do
-      let val = HealthResponse "ok" 3 True
+      let val = HealthResponse "ok" 3 True False (Just 99.5)
       roundtrip val `shouldBe` Just val
 
     it "RootResponse roundtrips" $ do
@@ -149,6 +151,8 @@ spec = describe "Api.Types" $ do
               , utxoCount = 5
               , registeredAt = now
               , lastSeenAt = Just now
+              , htlcEnabled = True
+              , refScriptUtxo = Just "abc123#0"
               , onChain = Just onChain
               }
       roundtrip val `shouldBe` Just val

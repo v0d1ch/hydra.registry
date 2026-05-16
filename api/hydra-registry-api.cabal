@@ -32,6 +32,7 @@ library
     Api.Validation
     Cache
     Config
+    Blockfrost
     Db
     Db.Schema
     Explorer.Client
@@ -50,6 +51,9 @@ library
     Relay.HtlcWatcher
     Relay.Slot
     Tx.Builder
+    Agent.BinaryHash
+    Agent.EventPusher
+    Agent.ReadOnly
   build-depends:
     , base >= 4.20 && < 5
     , aeson
@@ -59,6 +63,7 @@ library
     , bytestring
     , cborg
     , containers
+    , crypton
     , directory
     , filepath
     , hasql
@@ -103,6 +108,22 @@ executable hydra-registry-api
     , wai-extra
     , warp
 
+executable hydra-registry-agent
+  import: shared
+  hs-source-dirs: app
+  main-is: Agent.hs
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+  build-depends:
+    , base >= 4.20 && < 5
+    , aeson
+    , http-client
+    , http-client-tls
+    , hydra-registry-api
+    , text
+
 test-suite hydra-registry-api-test
   import: shared
   type: exitcode-stdio-1.0
@@ -133,6 +154,7 @@ test-suite hydra-registry-api-test
     , hasql
     , vector
     , wai
+    , wai-extra
   other-modules:
     ApiIntegrationSpec
     ApiTypesSpec

@@ -20,6 +20,7 @@ interface PhysicsNode {
 }
 
 const NODE_RADIUS = 3
+const USER_HEAD_COLOR = '#4db8a4'
 const DAMPING = 0.85
 const CENTER_GRAVITY = 0.01
 // Reference size the physics were tuned for
@@ -303,6 +304,21 @@ export default function RelayGraph({ nodes, edges }: Props) {
 
         ctx.globalAlpha = isDimmed ? 0.1 : 1
 
+        // Pulsing glow for heads registered in this registry
+        if (p.node.isUserHead && !isDimmed) {
+          const pulse = 0.35 + 0.35 * Math.sin(Date.now() * 0.003 + i)
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, r + 10, 0, Math.PI * 2)
+          ctx.strokeStyle = USER_HEAD_COLOR
+          ctx.lineWidth = 2
+          ctx.shadowColor = USER_HEAD_COLOR
+          ctx.shadowBlur = 18
+          ctx.globalAlpha = pulse
+          ctx.stroke()
+          ctx.shadowBlur = 0
+          ctx.globalAlpha = 1
+        }
+
         if (isActive || isSel) {
           ctx.beginPath()
           ctx.arc(p.x, p.y, r + 8, 0, Math.PI * 2)
@@ -345,7 +361,7 @@ export default function RelayGraph({ nodes, edges }: Props) {
         const p = pNodes[hoverIdx]
         const conns = adjRef.current.neighbors.get(p.id)?.size ?? 0
         const label = p.id.slice(0, 20) + '...'
-        const meta = (p.node.hasHtlc ? 'HTLC  ' : '') + `${conns} connection${conns !== 1 ? 's' : ''}`
+        const meta = (p.node.isUserHead ? 'My head  ' : '') + (p.node.hasHtlc ? 'HTLC  ' : '') + `${conns} connection${conns !== 1 ? 's' : ''}`
         const tw = 200
         const th = 44
         const flipX = p.x > w - tw - 20
@@ -511,8 +527,8 @@ export default function RelayGraph({ nodes, edges }: Props) {
               transition={{ duration: 0.2 }}
             >
               <div className="graph-detail-header">
-                <span className="graph-detail-dot" style={{ background: color }} />
-                <h4>Head Details</h4>
+                <span className="graph-detail-dot" style={{ background: selectedNode.isUserHead ? USER_HEAD_COLOR : color }} />
+                <h4>{selectedNode.isUserHead ? 'My Head' : 'Head Details'}</h4>
                 <button className="graph-clear-btn" onClick={() => setSelected(null)}>Close</button>
               </div>
               <div className="graph-detail-body">
@@ -562,6 +578,10 @@ export default function RelayGraph({ nodes, edges }: Props) {
         <span className="legend-item">
           <svg width="16" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#6e8cef" strokeWidth="1.5" /></svg>
           Connection
+        </span>
+        <span className="legend-item">
+          <svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="none" stroke={USER_HEAD_COLOR} strokeWidth="1.5" /></svg>
+          My head
         </span>
         <span className="legend-item relay-graph-count">{nodes.length} heads, {edges.length} links</span>
       </div>

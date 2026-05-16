@@ -172,18 +172,16 @@ run_with_prefix "node" "$BLUE" \
     --socket-path "$NODE_SOCKET" \
     --config "$CONFIGS_DIR/config.json"
 
-# Wait for socket
+# Wait for socket — chunk validation can take a long time on first run
 log "Waiting for cardano-node socket..."
-for _ in $(seq 1 60); do
-  if [ -S "$NODE_SOCKET" ]; then
-    break
+WAITED=0
+while [ ! -S "$NODE_SOCKET" ]; do
+  if (( WAITED % 30 == 0 && WAITED > 0 )); then
+    warn "Still waiting for socket... ${WAITED}s elapsed"
   fi
   sleep 1
+  WAITED=$((WAITED + 1))
 done
-if [ ! -S "$NODE_SOCKET" ]; then
-  echo "ERROR: cardano-node socket not found after 60s"
-  exit 1
-fi
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"

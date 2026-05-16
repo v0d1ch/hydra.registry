@@ -62,6 +62,7 @@ export interface ParticipantHeadInfo {
 // ─── Relay types ───
 
 export interface CreateInvoiceRequest {
+  headId: string
   receiverOnChainId: string
   paymentHash: string
   amountLovelace: number
@@ -71,6 +72,7 @@ export interface CreateInvoiceRequest {
 
 export interface InvoiceResponse {
   invoiceId: string
+  headId: string
   receiverOnChainId: string
   paymentHash: string
   amountLovelace: number
@@ -136,6 +138,18 @@ export interface CheckHeadResponse {
   alreadyRegistered: boolean
 }
 
+export interface HealthResponse {
+  status: string
+  headCount: number
+  dbConnected: boolean
+  chainSlotKnown: boolean
+  nodeSyncProgress: number | null
+}
+
+export function getHealth(): Promise<HealthResponse> {
+  return request<HealthResponse>('/api/v1/health')
+}
+
 export function checkHead(host: string, port: number): Promise<CheckHeadResponse> {
   const params = new URLSearchParams({ host, port: String(port) })
   return request<CheckHeadResponse>(`/api/v1/heads/check?${params}`)
@@ -169,10 +183,10 @@ export function getHeads(count?: number, page?: number): Promise<HeadInfo[]> {
   return request<HeadInfo[]>(`/api/v1/heads${qs ? `?${qs}` : ''}`)
 }
 
-export function registerHead(host: string, port: number): Promise<RegisterHeadResponse> {
+export function registerHead(host: string, port: number, walletAddress?: string): Promise<RegisterHeadResponse> {
   return request<RegisterHeadResponse>('/api/v1/heads/register', {
     method: 'POST',
-    body: JSON.stringify({ host, port }),
+    body: JSON.stringify({ host, port, walletAddress: walletAddress ?? null }),
   })
 }
 
@@ -186,7 +200,8 @@ export interface RegisteredHeadDetail {
   utxoCount: number
   registeredAt: string
   lastSeenAt: string | null
-  // Present only when the explorer sidecar has observed this head on chain.
+  htlcEnabled: boolean
+  refScriptUtxo: string | null
   onChain: ExplorerOnChain | null
 }
 
@@ -381,6 +396,10 @@ export function getHeadParticipants(headId: string): Promise<ParticipantHeadInfo
 
 // ─── Relay: Invoices ───
 
+export function getPendingInvoices(): Promise<InvoiceResponse[]> {
+  return request<InvoiceResponse[]>('/api/v1/relay/invoices?status=pending')
+}
+
 export function createInvoice(req: CreateInvoiceRequest): Promise<InvoiceResponse> {
   return request<InvoiceResponse>('/api/v1/relay/invoices', {
     method: 'POST',
@@ -441,6 +460,10 @@ export interface ParticipantRouteSummary {
 
 export function getParticipantRoutes(pkh: string): Promise<ParticipantRouteSummary[]> {
   return request<ParticipantRouteSummary[]>(`/api/v1/relay/participants/${pkh}/routes`)
+}
+
+export function getParticipantInvoices(pkh: string): Promise<InvoiceResponse[]> {
+  return request<InvoiceResponse[]>(`/api/v1/relay/participants/${pkh}/invoices`)
 }
 
 export function buildLockTx(routeId: string, hopIndex: number, walletAddress: string): Promise<BuildResult> {

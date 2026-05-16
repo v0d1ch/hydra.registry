@@ -157,6 +157,17 @@ initDb pool =
       \CREATE TABLE IF NOT EXISTS user_profiles (\
       \  wallet_address TEXT PRIMARY KEY,\
       \  key_hash TEXT\
+      \);\
+      \ALTER TABLE invoices ADD COLUMN IF NOT EXISTS head_id TEXT NOT NULL DEFAULT '';\
+      \DELETE FROM invoices WHERE head_id = '';\
+      \ALTER TABLE heads ADD COLUMN IF NOT EXISTS registered_by TEXT REFERENCES user_profiles(wallet_address);\
+      \CREATE TABLE IF NOT EXISTS agent_registrations (\
+      \  agent_id TEXT PRIMARY KEY,\
+      \  head_id TEXT NOT NULL,\
+      \  secret_key_hash TEXT NOT NULL UNIQUE,\
+      \  binary_hash TEXT NOT NULL,\
+      \  registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
+      \  last_seen_at TIMESTAMPTZ\
       \);"
 
 -- | Insert a new head or update on conflict.
@@ -167,8 +178,8 @@ initDb pool =
 -- declaration. The columns @is_bridge@ and @bridge_fee_lovelace@ stay in
 -- the schema so older rows aren't disturbed; new inserts always write
 -- the defaults.
-upsertHead :: Pool -> Text -> Text -> Int -> Text -> IO ()
-upsertHead pool hid hostAddr portNum status' = do
+upsertHead :: Pool -> Text -> Text -> Int -> Text -> Maybe Text -> IO ()
+upsertHead pool hid hostAddr portNum status' mWallet = do
   now <- getCurrentTime
   runSession pool $
     Session.statement () $
@@ -190,6 +201,7 @@ upsertHead pool hid hostAddr portNum status' = do
                       , headIsBridge = lit False
                       , headBridgeFeeLovelace = lit Nothing
                       , headRefScriptUtxo = lit Nothing
+                      , headRegisteredBy = lit mWallet
                       }
                   ]
             , onConflict =
@@ -198,12 +210,13 @@ upsertHead pool hid hostAddr portNum status' = do
                     { index = (.headId)
                     , predicate = Nothing
                     , set = \new old ->
-                        -- Don't clobber a published ref_script_utxo on
-                        -- subsequent re-registrations of the same head.
+                        -- Don't clobber a published ref_script_utxo or
+                        -- registered_by on subsequent re-registrations.
                         new
                           { updatedAt = lit now
                           , lastMessageAt = lit (Just now)
                           , headRefScriptUtxo = old.headRefScriptUtxo
+                          , headRegisteredBy = old.headRegisteredBy
                           }
                     , updateWhere = \_ _ -> lit True
                     }
@@ -323,6 +336,31 @@ getHead pool hid =
     pure $ case rows of
       [] -> Nothing
       (x : _) -> Just x
+
+getHeadByHostPort :: Pool -> Text -> Int -> IO (Maybe (Head Identity))
+getHeadByHostPort pool host port =
+  runSession pool $ do
+    rows <-
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            h <- Rel8.each headSchema
+            Rel8.where_ (h.headHost ==. lit host &&. h.headPort ==. lit (fromIntegral @Int @Int32 port))
+            pure h
+    pure $ case rows of
+      [] -> Nothing
+      (x : _) -> Just x
+
+-- | Return all heads registered by a specific wallet address.
+getHeadsByWallet :: Pool -> Text -> IO [Head Identity]
+getHeadsByWallet pool walletAddr =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          h <- Rel8.each headSchema
+          Rel8.where_ (h.headRegisteredBy ==. lit (Just walletAddr))
+          pure h
 
 -- | Count UTxOs for a specific head
 countUtxosForHead :: Pool -> Text -> IO Int
@@ -739,8 +777,8 @@ getHeadsWithScript pool scriptHash =
 -- ─── Invoices ───
 
 -- | Insert a new invoice
-insertInvoice :: Pool -> Text -> Text -> Text -> Int64 -> Maybe Text -> Text -> UTCTime -> IO ()
-insertInvoice pool iid receiverOnChainId payHash amount memo status' expiresAt = do
+insertInvoice :: Pool -> Text -> Text -> Text -> Text -> Int64 -> Maybe Text -> Text -> UTCTime -> IO ()
+insertInvoice pool iid headId receiverOnChainId payHash amount memo status' expiresAt = do
   now <- getCurrentTime
   runSession pool $
     Session.statement () $
@@ -752,6 +790,7 @@ insertInvoice pool iid receiverOnChainId payHash amount memo status' expiresAt =
                 Rel8.values
                   [ Invoice
                       { invoiceId = lit iid
+                      , invoiceHeadId = lit headId
                       , invoiceReceiverOnChainId = lit receiverOnChainId
                       , invoicePaymentHash = lit payHash
                       , invoiceAmountLovelace = lit amount
@@ -764,6 +803,30 @@ insertInvoice pool iid receiverOnChainId payHash amount memo status' expiresAt =
             , onConflict = DoNothing
             , returning = NoReturning
             }
+
+-- | Get all invoices for a receiver (by on-chain key hash)
+getInvoicesByReceiver :: Pool -> Text -> IO [Invoice Identity]
+getInvoicesByReceiver pool receiverPkh =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          inv <- Rel8.each invoiceSchema
+          Rel8.where_ (inv.invoiceReceiverOnChainId ==. lit receiverPkh)
+          pure inv
+
+getPendingInvoices :: Pool -> IO [Invoice Identity]
+getPendingInvoices pool = getInvoicesByStatus pool "pending"
+
+getInvoicesByStatus :: Pool -> Text -> IO [Invoice Identity]
+getInvoicesByStatus pool status =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          inv <- Rel8.each invoiceSchema
+          Rel8.where_ (inv.invoiceStatus ==. lit status)
+          pure inv
 
 -- | Get an invoice by ID
 getInvoice :: Pool -> Text -> IO (Maybe (Invoice Identity))
@@ -1149,6 +1212,28 @@ expireStaleRoutes pool now =
             , returning = NoReturning
             }
 
+-- ─── Head ownership ───
+
+-- | Set registered_by on an existing head (targeted update — does not touch other columns).
+setHeadRegisteredBy :: Pool -> Text -> Text -> IO ()
+setHeadRegisteredBy pool hid walletAddr = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = headSchema
+            , from = pure ()
+            , set = \_ row ->
+                row
+                  { headRegisteredBy = lit (Just walletAddr)
+                  , updatedAt = lit now
+                  }
+            , updateWhere = \_ row -> row.headId ==. lit hid
+            , returning = NoReturning
+            }
+
 -- ─── User profiles ───
 
 -- | Look up the Hydra key hash registered for a wallet address.
@@ -1190,5 +1275,62 @@ setUserKeyHash pool walletAddr kh =
                     , set = \new _old -> new
                     , updateWhere = \_ _ -> lit True
                     }
+            , returning = NoReturning
+            }
+
+-- ─── Agent registrations ───
+
+-- | Insert a new agent registration. The secret key is stored pre-hashed by the caller.
+insertAgentRegistration :: Pool -> Text -> Text -> Text -> Text -> IO ()
+insertAgentRegistration pool aid hid secretHash binaryHash = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.insert
+          Insert
+            { into = agentRegistrationSchema
+            , rows =
+                Rel8.values
+                  [ AgentRegistration
+                      { agentId           = lit aid
+                      , agentHeadId       = lit hid
+                      , agentSecretHash   = lit secretHash
+                      , agentBinaryHash   = lit binaryHash
+                      , agentRegisteredAt = lit now
+                      , agentLastSeenAt   = lit Nothing
+                      }
+                  ]
+            , onConflict = Abort
+            , returning = NoReturning
+            }
+
+-- | Look up an agent registration by the SHA-256 hash of its secret key.
+lookupAgentBySecretHash :: Pool -> Text -> IO (Maybe (AgentRegistration Identity))
+lookupAgentBySecretHash pool secretHash = do
+  rows <-
+    runSession pool $
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            a <- Rel8.each agentRegistrationSchema
+            Rel8.where_ (a.agentSecretHash ==. lit secretHash)
+            pure a
+  pure $ case rows of
+    []    -> Nothing
+    (a:_) -> Just a
+
+-- | Update the last_seen_at timestamp for an agent.
+updateAgentLastSeen :: Pool -> Text -> UTCTime -> IO ()
+updateAgentLastSeen pool aid now =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = agentRegistrationSchema
+            , from = pure ()
+            , set = \_ row -> row{agentLastSeenAt = lit (Just now)}
+            , updateWhere = \_ row -> row.agentId ==. lit aid
             , returning = NoReturning
             }

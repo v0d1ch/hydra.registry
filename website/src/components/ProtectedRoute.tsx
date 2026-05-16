@@ -1,4 +1,5 @@
 import { useWallet } from '../context/WalletContext'
+import SyncBanner from './SyncBanner'
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { address } = useWallet()
@@ -16,5 +17,10 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     )
   }
 
-  return <>{children}</>
+  return (
+    <>
+      <SyncBanner />
+      {children}
+    </>
+  )
 }

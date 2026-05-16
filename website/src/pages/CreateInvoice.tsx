@@ -1,8 +1,18 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { createInvoice, type InvoiceResponse } from '../api/client'
+import { Link } from 'react-router-dom'
+import { createInvoice, setUserKeyHash, getUserKeyHash, getHeads, getRegisteredHead, getRelayGraph, type InvoiceResponse, type RegisteredHeadDetail } from '../api/client'
+import { useWallet } from '../context/WalletContext'
+import { useUser } from '../context/UserContext'
+import { useNetwork } from '../context/NetworkContext'
 
 export default function CreateInvoice() {
+  const { address: walletAddress } = useWallet()
+  const { setPendingInvoice } = useUser()
+  const { network } = useNetwork()
+  const [heads, setHeads] = useState<RegisteredHeadDetail[]>([])
+  const [selectedHeadId, setSelectedHeadId] = useState('')
+  const [routingHeadCount, setRoutingHeadCount] = useState<number | null>(null)
   const [receiverKeyHash, setReceiverKeyHash] = useState('')
   const [paymentHash, setPaymentHash] = useState('')
   const [amountAda, setAmountAda] = useState('')
@@ -11,15 +21,55 @@ export default function CreateInvoice() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<InvoiceResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    getHeads()
+      .then(hs => Promise.all(hs.map(h => getRegisteredHead(h.headId).catch(() => null))))
+      .then(details => {
+        const htlc = details.filter((d): d is RegisteredHeadDetail => d !== null && d.htlcEnabled)
+        setHeads(htlc)
+        if (htlc.length === 1) setSelectedHeadId(htlc[0].headId)
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!selectedHeadId || network === 'All') { setRoutingHeadCount(null); return }
+    getRelayGraph(network)
+      .then(g => {
+        const neighbours = new Set<string>()
+        g.edges.forEach(e => {
+          if (e.fromHead === selectedHeadId) neighbours.add(e.toHead)
+          if (e.toHead === selectedHeadId) neighbours.add(e.fromHead)
+        })
+        setRoutingHeadCount(neighbours.size)
+      })
+      .catch(() => setRoutingHeadCount(null))
+  }, [selectedHeadId, network])
+
+  useEffect(() => {
+    if (!walletAddress) return
+    getUserKeyHash(walletAddress)
+      .then(({ keyHash }) => { if (keyHash) setReceiverKeyHash(keyHash) })
+      .catch(() => {})
+  }, [walletAddress])
 
   const resetForm = () => {
-    setReceiverKeyHash('')
     setPaymentHash('')
     setAmountAda('')
     setMemo('')
     setExpiresMinutes('60')
     setResult(null)
     setError(null)
+    setCopied(false)
+  }
+
+  const copyInvoiceId = (id: string) => {
+    navigator.clipboard.writeText(id).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -28,6 +78,12 @@ export default function CreateInvoice() {
     setLoading(true)
     setError(null)
     setResult(null)
+
+    if (!selectedHeadId) {
+      setError('Select a head')
+      setLoading(false)
+      return
+    }
 
     const amountLovelace = Math.round(parseFloat(amountAda) * 1_000_000)
     if (isNaN(amountLovelace) || amountLovelace <= 0) {
@@ -50,12 +106,15 @@ export default function CreateInvoice() {
 
     try {
       const res = await createInvoice({
+        headId: selectedHeadId,
         receiverOnChainId: receiverKeyHash,
         paymentHash,
         amountLovelace,
         memo: memo || undefined,
         expiresInSeconds: parseInt(expiresMinutes) * 60,
       })
+      setPendingInvoice(res)
+      if (walletAddress) setUserKeyHash(walletAddress, receiverKeyHash).catch(() => {})
       setResult(res)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create invoice')
@@ -97,6 +156,37 @@ export default function CreateInvoice() {
 
         <form className="register-form" onSubmit={handleSubmit}>
           <div className="form-group">
+            <label htmlFor="headId">Head</label>
+            {heads.length === 0 ? (
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                No HTLC-enabled heads found. <Link to="/register" style={{ color: 'var(--accent)' }}>Register and publish the HTLC validator first.</Link>
+              </p>
+            ) : (
+              <>
+                <select
+                  id="headId"
+                  value={selectedHeadId}
+                  onChange={e => setSelectedHeadId(e.target.value)}
+                  required
+                  disabled={loading || result !== null}
+                  style={{ width: '100%' }}
+                >
+                  <option value="">Select a head…</option>
+                  {heads.map(h => (
+                    <option key={h.headId} value={h.headId}>{h.headId} ({h.host}:{h.port})</option>
+                  ))}
+                </select>
+                {selectedHeadId && routingHeadCount !== null && (
+                  <span className="form-hint" style={{ color: routingHeadCount === 0 ? 'var(--error)' : 'var(--success)', marginTop: '0.35rem', display: 'block' }}>
+                    {routingHeadCount === 0
+                      ? 'No other heads can route to this head yet — share a bridge participant with another head first.'
+                      : `${routingHeadCount} head${routingHeadCount === 1 ? '' : 's'} can route payments to this head.`}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+          <div className="form-group">
             <label htmlFor="receiverKeyHash">Your Cardano Key Hash (28 bytes hex)</label>
             <input
               id="receiverKeyHash"
@@ -108,13 +198,8 @@ export default function CreateInvoice() {
               disabled={loading || result !== null}
             />
             <span className="form-hint">
-              Hash of your hydra-node's <code>--cardano-signing-key</code> verification
-              key — i.e. your participant identity in the head. Routing matches
-              this to find the receiving head. Derive with:
-              <pre className="code-block" style={{ marginTop: '0.4rem' }}>
-                cardano-cli address key-hash \{'\n'}
-                {'  '}--payment-verification-key-file &lt;your-actor&gt;.vk
-              </pre>
+              Hash of your hydra-node's <code>--cardano-signing-key</code> verification key — your participant identity in the head.
+              See <Link to="/setup" style={{ color: 'var(--accent)' }}>Setup guide → step 02</Link>.
             </span>
           </div>
           <div className="form-group">
@@ -172,7 +257,7 @@ export default function CreateInvoice() {
             />
           </div>
           {result === null && (
-            <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
+            <button type="submit" className="btn btn-primary btn-full" disabled={loading || heads.length === 0}>
               {loading ? 'Creating…' : 'Create Invoice'}
             </button>
           )}
@@ -207,14 +292,6 @@ export default function CreateInvoice() {
             <p className="invoice-share-hint">
               Share the <strong>invoice ID</strong> with the sender so they can find a route and pay.
             </p>
-            <button
-              type="button"
-              className="btn btn-primary btn-full"
-              style={{ marginTop: '1rem' }}
-              onClick={resetForm}
-            >
-              Create another invoice
-            </button>
           </motion.div>
         )}
 

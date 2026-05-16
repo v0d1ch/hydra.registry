@@ -62,6 +62,8 @@ cleanTestData pool = do
     Session.sql "DROP TABLE IF EXISTS utxos CASCADE"
     Session.sql "DROP TABLE IF EXISTS heads CASCADE"
     Session.sql "DROP TABLE IF EXISTS explorer_heads CASCADE"
+    Session.sql "DROP TABLE IF EXISTS user_profiles CASCADE"
+    Session.sql "DROP TABLE IF EXISTS agent_registrations CASCADE"
   Db.initDb pool
 
 -- | Build a Greetings JSON message for testing

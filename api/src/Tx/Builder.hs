@@ -8,6 +8,7 @@ module Tx.Builder
   , buildClaimTx
   , buildRefundTx
   , buildPublishRefTx
+  , extractPkhFromAddress
   , -- exposed for unit tests
     lockTxArgs
   , claimTxArgs
@@ -17,6 +18,7 @@ module Tx.Builder
   )
 where
 
+import Codec.Binary.Bech32 qualified as Bech32
 import Control.Exception (IOException, bracket, try)
 import Data.Aeson (Value)
 import Data.Aeson qualified as Aeson
@@ -37,17 +39,25 @@ import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
 
--- | Result of a successful tx build: the Conway envelope as
--- returned by @cardano-cli@ plus convenience extracts. Callers
--- typically want @cborHex@ to hand to @cardano-cli transaction
--- sign@ via a downloadable JSON file built from @envelope@.
+-- | Result of a successful tx build.
+--
+-- Serialises as a flat cardano-cli text-envelope JSON
+-- (@type@, @description@, @cborHex@) with @txId@ added alongside —
+-- cardano-cli ignores unknown keys, so the file can be passed directly
+-- to @cardano-cli conway transaction sign --tx-file@.
 data BuildResult = BuildResult
   { cborHex :: Text
   , txId :: Text
   , envelope :: Value
   }
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Aeson.FromJSON, Aeson.ToJSON)
+  deriving anyclass (Aeson.FromJSON)
+
+instance Aeson.ToJSON BuildResult where
+  toJSON BuildResult{txId, envelope} =
+    case envelope of
+      Aeson.Object km -> Aeson.Object (KM.insert (Key.fromString "txId") (Aeson.String txId) km)
+      other -> other
 
 -- ─── argument records ──────────────────────────────────────────────────
 
@@ -169,6 +179,20 @@ data PublishRefArgs = PublishRefArgs
 -- estimated per-tx — our validator is small and shape-stable.
 htlcExecUnits :: (Integer, Integer)
 htlcExecUnits = (10_000_000_000, 4_000_000)
+
+-- | Extract the 28-byte payment key hash from a bech32 Cardano address.
+-- Works for enterprise addresses (addr1/addr_test1) where byte[0] is the
+-- header and bytes[1..28] are the payment pkh. Does not validate the
+-- header byte — callers should ensure the address is an enterprise address.
+extractPkhFromAddress :: Text -> Either Text Text
+extractPkhFromAddress addr =
+  case Bech32.decode addr of
+    Left _ -> Left "invalid bech32 address"
+    Right (_, dp) -> case Bech32.dataPartToBytes dp of
+      Nothing -> Left "invalid bech32 data part"
+      Just bytes
+        | BS.length bytes < 29 -> Left "address too short"
+        | otherwise -> Right $ T.decodeUtf8 $ Base16.encode $ BS.take 28 $ BS.drop 1 bytes
 
 -- ─── builders ──────────────────────────────────────────────────────────
 

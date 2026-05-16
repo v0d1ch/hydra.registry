@@ -5,6 +5,11 @@ import Api.Types
 import Cache (newCache)
 import Control.Concurrent.STM
 import Data.Aeson (encode)
+import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KM
+import Data.ByteString.Lazy qualified as BSL
+import Data.Time (addUTCTime, getCurrentTime)
+import Db qualified
 import Hydra.Client (HydraEvent)
 import Logging (newLogger)
 import Logging qualified
@@ -14,6 +19,7 @@ import Relay.Graph qualified as Graph
 import Network.HTTP.Types
 import Network.Wai (Application)
 import Servant (serve)
+import Network.Wai.Test (simpleBody)
 import Test.Hspec
 import Test.Hspec.Wai
 import TestUtils
@@ -38,6 +44,17 @@ spec = with makeTestApp $ describe "API (integration)" $ do
   describe "GET /api/v1/heads/:headId" $ do
     it "returns 404 for non-existent head" $ do
       get "/api/v1/heads/non-existent" `shouldRespondWith` 404
+
+    it "returns htlcEnabled=false and refScriptUtxo=null when no ref script is set" $ do
+      liftIO $ withTestPool $ \pool ->
+        Db.upsertHead pool "head-htlc-test" "localhost" 4001 "Open" Nothing
+      resp <- get "/api/v1/heads/head-htlc-test"
+      liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
+        Nothing -> expectationFailure "Could not parse response"
+        Just (Aeson.Object o) -> do
+          KM.lookup "htlcEnabled" o `shouldBe` Just (Aeson.Bool False)
+          KM.lookup "refScriptUtxo" o `shouldBe` Just Aeson.Null
+        Just other -> expectationFailure $ "Expected object, got: " <> show other
 
   describe "GET /api/v1/heads/:headId/addresses" $ do
     it "returns 404 for non-existent head" $ do
@@ -73,7 +90,7 @@ spec = with makeTestApp $ describe "API (integration)" $ do
 
   describe "POST /api/v1/heads/register" $ do
     it "returns 400 for unreachable host" $ do
-      let body = encode $ RegisterHead "unreachable-host.invalid" 9999
+      let body = encode $ RegisterHead "unreachable-host.invalid" 9999 Nothing
       request methodPost "/api/v1/heads/register" [("Content-Type", "application/json")] body
         `shouldRespondWith` 400
 
@@ -91,6 +108,69 @@ spec = with makeTestApp $ describe "API (integration)" $ do
   describe "GET /api/v1/stats" $ do
     it "returns stats including explorerHeadCount" $ do
       get "/api/v1/stats" `shouldRespondWith` 200
+
+  describe "POST /api/v1/agent/register" $ do
+    it "returns 200 with agentId and secretKey (dev mode: empty allowed list accepts any hash)" $ do
+      let body = encode $ Aeson.object ["headId" Aeson..= ("head-xyz" :: String), "binaryHash" Aeson..= ("sha256:abcdef" :: String)]
+      resp <- request methodPost "/api/v1/agent/register" [("Content-Type", "application/json")] body
+      liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
+        Nothing -> expectationFailure "Could not parse response"
+        Just (Aeson.Object o) -> do
+          KM.member "agentId" o `shouldBe` True
+          KM.member "secretKey" o `shouldBe` True
+        Just other -> expectationFailure $ "Expected object, got: " <> show other
+
+  describe "POST /api/v1/agent/events" $ do
+    it "returns 401 when Authorization header is missing" $ do
+      let body = encode $ Aeson.object ["event" Aeson..= Aeson.object []]
+      request methodPost "/api/v1/agent/events" [("Content-Type", "application/json")] body
+        `shouldRespondWith` 401
+
+    it "returns 400 when X-Agent-Binary-Hash header is missing" $ do
+      let body = encode $ Aeson.object ["event" Aeson..= Aeson.object []]
+      request methodPost "/api/v1/agent/events"
+        [("Content-Type", "application/json"), ("Authorization", "Bearer sometoken")] body
+        `shouldRespondWith` 400
+
+    it "returns 401 for an unknown agent secret" $ do
+      let body = encode $ Aeson.object ["event" Aeson..= Aeson.object []]
+      request methodPost "/api/v1/agent/events"
+        [("Content-Type", "application/json"), ("Authorization", "Bearer nosuchtoken"), ("X-Agent-Binary-Hash", "sha256:abc")]
+        body
+        `shouldRespondWith` 401
+
+  describe "POST /api/v1/heads/:headId/claim-ownership" $ do
+    it "returns 404 for non-existent head" $ do
+      let body = encode $ Aeson.object ["walletAddress" Aeson..= ("addr1qxtest" :: String)]
+      request methodPost "/api/v1/heads/nonexistent/claim-ownership" [("Content-Type", "application/json")] body
+        `shouldRespondWith` 404
+
+  describe "GET /api/v1/relay/invoices" $ do
+    it "returns empty list when no invoices exist" $ do
+      get "/api/v1/relay/invoices" `shouldRespondWith` 200
+
+    it "returns only pending invoices" $ do
+      future <- liftIO $ addUTCTime 3600 <$> getCurrentTime
+      liftIO $ withTestPool $ \pool -> do
+        Db.insertInvoice pool "all-inv-1" "test-head" "any-pkh" "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111" 5_000_000 Nothing "pending" future
+        Db.insertInvoice pool "all-inv-2" "test-head" "any-pkh" "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222" 5_000_000 Nothing "paid"    future
+      resp <- get "/api/v1/relay/invoices"
+      liftIO $ case Aeson.decode @[Aeson.Value] (simpleBody resp) of
+        Nothing -> expectationFailure "Could not parse response as JSON array"
+        Just invs -> length invs `shouldBe` 1
+
+  describe "GET /api/v1/relay/participants/:pkh/invoices" $ do
+    it "returns empty list for unknown receiver" $ do
+      get "/api/v1/relay/participants/unknown-pkh/invoices" `shouldRespondWith` 200
+
+    it "returns invoices for a known receiver" $ do
+      future <- liftIO $ addUTCTime 3600 <$> getCurrentTime
+      liftIO $ withTestPool $ \pool ->
+        Db.insertInvoice pool "api-inv-1" "test-head" "api-test-pkh" "aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011" 5_000_000 Nothing "pending" future
+      resp <- get "/api/v1/relay/participants/api-test-pkh/invoices"
+      liftIO $ case Aeson.decode @[Aeson.Value] (simpleBody resp) of
+        Nothing -> expectationFailure "Could not parse response as JSON array"
+        Just invs -> length invs `shouldBe` 1
 
 -- | Create a test Application backed by a test DB
 makeTestApp :: IO Application
@@ -116,5 +196,8 @@ makeTestApp = do
             , relayEventBus = bus
             , htlcScriptHash = Nothing
             , htlcScriptCbor = Nothing
+            , cardanoNodeSocket = Nothing
+            , cardanoNodeMagic = Nothing
+            , agentAllowedHashes = []
             }
     pure $ serve api (server env)

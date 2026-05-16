@@ -4,6 +4,15 @@ set -m  # enable job control so each background job gets its own process group
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Optional network argument: ./dev.sh [preview|preprod]
+NETWORK="${1:-}"
+case "$NETWORK" in
+  preview)  NODE_SOCKET="$ROOT/testnet/data/preview/node.socket"; NODE_MAGIC=2 ;;
+  preprod)  NODE_SOCKET="$ROOT/testnet/data/preprod/node.socket"; NODE_MAGIC=1 ;;
+  "")       NODE_SOCKET=""; NODE_MAGIC="" ;;
+  *)        echo "Unknown network: $NETWORK (use 'preview' or 'preprod')"; exit 1 ;;
+esac
+
 # Ensure we're inside nix develop (provides pg, cabal, node, etc.)
 if ! command -v initdb &>/dev/null; then
   echo "Not inside nix develop shell. Entering it now..."
@@ -112,8 +121,14 @@ start_backend() {
   log "Building backend..."
   cabal build all 2>&1 | tail -5
   log "Starting backend on :${HYDRA_HTTP_PORT:-8080}"
+  local extra_env=""
+  if [ -n "$NODE_SOCKET" ]; then
+    extra_env="CARDANO_NODE_SOCKET_PATH=$NODE_SOCKET CARDANO_NODE_MAGIC=$NODE_MAGIC"
+    log "Cardano node socket: $NODE_SOCKET (magic=$NODE_MAGIC)"
+  fi
   run_with_prefix "api" "$BLUE" \
     env HYDRA_DB_CONN_STR="host=$PGHOST port=5432 dbname=$DB_NAME" \
+    $extra_env \
     cabal run hydra-registry-api
 }
 
@@ -158,6 +173,9 @@ main() {
   log "All services running. Press Ctrl+C to stop."
   echo -e "  ${BLUE}API${NC}      → http://localhost:${HYDRA_HTTP_PORT:-8080}"
   echo -e "  ${YELLOW}Website${NC}  → http://localhost:5173"
+  if [ -n "$NODE_SOCKET" ]; then
+    echo -e "  ${GREEN}Node${NC}     → $NETWORK (socket: $NODE_SOCKET)"
+  fi
   echo ""
 
   wait

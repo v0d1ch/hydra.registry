@@ -44,6 +44,8 @@ graph TB
 
   subgraph "External"
     PG[(PostgreSQL)]
+    AGENT1[hydra-registry-agent A]
+    AGENT2[hydra-registry-agent B]
     NODE1[hydra-node A WS]
     NODE2[hydra-node B WS]
     EXPLORER[hydra-explorer HTTP]
@@ -53,8 +55,11 @@ graph TB
   WALLET -.->|sign tx| UI
   API <-->|Hasql pool| PG
   INDEXER --> QUEUE
-  NODE1 -->|JSON events| QUEUE
-  NODE2 -->|JSON events| QUEUE
+  AGENT1 -->|POST /agent/events| API
+  AGENT2 -->|POST /agent/events| API
+  AGENT1 -->|WS read-only| NODE1
+  AGENT2 -->|WS read-only| NODE2
+  API --> QUEUE
   INDEXER --> PG
   INDEXER --> SLOT
   INDEXER --> HTLC

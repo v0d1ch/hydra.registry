@@ -4,7 +4,10 @@ import Api.Types
 import Api.Validation (validateAddress)
 import Cache (Cache, insertCache, lookupCache)
 import Control.Concurrent.STM
-import Control.Monad (when)
+import Control.Exception (SomeException, try)
+import Control.Monad (unless, when)
+import Data.ByteString.Lazy qualified as BSL
+import System.Process (readProcess)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
@@ -16,6 +19,7 @@ import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -25,7 +29,7 @@ import Text.Read (readMaybe)
 import Data.UUID qualified as UUID
 import Data.UUID.V4 qualified as UUID
 import Db qualified
-import Db.Schema (ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
+import Db.Schema (AgentRegistration (..), ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraEvent (..), normalizeHost, validateHydraNode)
 import Hydra.Client qualified
@@ -54,6 +58,8 @@ import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRe
 import Network.HTTP.Types.Status (statusCode)
 import Tx.Builder qualified as Tx
 import Control.Exception (SomeException, try)
+import Crypto.Hash (Digest, SHA256, hash)
+import Tx.Builder (extractPkhFromAddress)
 
 -- | Our own endpoints that live under /api/v1/
 type ApiV1Routes =
@@ -80,6 +86,8 @@ type ApiV1Routes =
     -- Relay endpoints
     :<|> "relay" :> "graph" :> QueryParam "network" Text :> Get '[JSON] SubgraphResponse
     :<|> "relay" :> "participants" :> Capture "pkh" Text :> "routes" :> Get '[JSON] [ParticipantRouteSummary]
+    :<|> "relay" :> "participants" :> Capture "pkh" Text :> "invoices" :> Get '[JSON] [InvoiceResponse]
+    :<|> "relay" :> "invoices" :> QueryParam "status" Text :> Get '[JSON] [InvoiceResponse]
     :<|> "relay" :> "invoices" :> ReqBody '[JSON] CreateInvoiceRequest :> Post '[JSON] InvoiceResponse
     :<|> "relay" :> "invoices" :> Capture "invoiceId" Text :> Get '[JSON] InvoiceResponse
     :<|> "relay" :> "routes" :> ReqBody '[JSON] FindRoutesRequest :> Post '[JSON] [RouteResponse]
@@ -97,6 +105,11 @@ type ApiV1Routes =
     :<|> "relay" :> "payments" :> Capture "routeId" Text :> "hops" :> Capture "hopIndex" Int :> "refund-tx-cbor" :> ReqBody '[JSON] BuildTxFromWalletRequest :> Post '[JSON] Tx.BuildResult
     :<|> "users" :> Capture "walletAddress" Text :> "keyhash" :> Get '[JSON] UserKeyHashResponse
     :<|> "users" :> Capture "walletAddress" Text :> "keyhash" :> ReqBody '[JSON] SetKeyHashRequest :> Put '[JSON] UserKeyHashResponse
+    -- Agent push model
+    :<|> "agent" :> "register" :> ReqBody '[JSON] AgentRegisterRequest :> Post '[JSON] AgentRegisterResponse
+    :<|> "agent" :> "events" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> ReqBody '[JSON] AgentEventRequest :> Post '[JSON] MessageResponse
+    -- Head ownership via L1 deposit
+    :<|> "heads" :> Capture "headId" Text :> "claim-ownership" :> ReqBody '[JSON] ClaimOwnershipRequest :> Post '[JSON] ClaimOwnershipResponse
 
 -- | Full API type
 type API =
@@ -137,6 +150,9 @@ data AppEnv = AppEnv
     relayEventBus :: EventBus
   , htlcScriptHash :: Maybe Text
   , htlcScriptCbor :: Maybe Text
+  , cardanoNodeSocket :: Maybe FilePath
+  , cardanoNodeMagic :: Maybe Int
+  , agentAllowedHashes :: [Text]
   }
 
 -- | Create the Servant server
@@ -151,7 +167,7 @@ server env =
 -- | Server for /api/v1/* routes
 apiV1Server :: AppEnv -> Server ApiV1Routes
 apiV1Server env =
-  handleHealth env.pool
+  handleHealth env.pool env.latestChainSlot env.cardanoNodeSocket env.cardanoNodeMagic
     :<|> handleCheckHead env.logger env.pool
     :<|> handleRegister env.logger env.pool env.eventQueue
     :<|> handleSetRefScript env.pool
@@ -172,7 +188,9 @@ apiV1Server env =
     :<|> handleAddressHeads env.pool
     :<|> handleRelayGraph env.pool env.htlcScriptHash
     :<|> handleParticipantRoutes env.pool env.latestChainSlot
-    :<|> handleCreateInvoice env.pool
+    :<|> handleParticipantInvoices env.pool
+    :<|> handleGetInvoices env.pool
+    :<|> handleCreateInvoice env.pool env.relayGraph
     :<|> handleGetInvoice env.pool
     :<|> handleFindRoutes env.pool env.relayGraph env.latestChainSlot
     :<|> handleExecuteRoute env.pool
@@ -188,6 +206,9 @@ apiV1Server env =
     :<|> handleRefundTxCbor env.pool env.latestChainSlot
     :<|> handleGetUserKeyHash env.pool
     :<|> handleSetUserKeyHash env.pool
+    :<|> handleAgentRegister env.pool env.agentAllowedHashes
+    :<|> handleAgentEvent env.pool env.agentAllowedHashes env.eventQueue
+    :<|> handleClaimOwnership env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
 corsMiddleware :: Middleware
@@ -215,16 +236,36 @@ handleRoot =
       }
 
 -- | GET /api/v1/health
-handleHealth :: Pool -> Handler HealthResponse
-handleHealth pool = do
+handleHealth :: Pool -> TVar Int64 -> Maybe FilePath -> Maybe Int -> Handler HealthResponse
+handleHealth pool chainSlotVar mSocket mMagic = do
   heads <- liftIO $ Db.getAllHeads pool
   dbOk <- liftIO $ Db.checkDbConnectivity pool
+  chainSlot <- liftIO $ readTVarIO chainSlotVar
+  syncProgress <- liftIO $ queryNodeSyncProgress mSocket mMagic
   pure $
     HealthResponse
       { status = if dbOk then "ok" else "degraded"
       , headCount = length heads
       , dbConnected = dbOk
+      , chainSlotKnown = chainSlot > 0
+      , nodeSyncProgress = syncProgress
       }
+
+queryNodeSyncProgress :: Maybe FilePath -> Maybe Int -> IO (Maybe Double)
+queryNodeSyncProgress Nothing _ = pure Nothing
+queryNodeSyncProgress _ Nothing = pure Nothing
+queryNodeSyncProgress (Just socketPath) (Just magic) = do
+  result <- try @SomeException $ do
+    let args = ["query", "tip", "--testnet-magic", show magic, "--socket-path", socketPath]
+    out <- readProcess "cardano-cli" args ""
+    case Aeson.decode (BSL.fromStrict $ T.encodeUtf8 $ T.pack out) of
+      Just obj -> pure $ KM.lookup "syncProgress" obj >>= \case
+        Aeson.String s -> readMaybe (T.unpack s)
+        _              -> Nothing
+      Nothing  -> pure Nothing
+  pure $ case result of
+    Left _  -> Nothing
+    Right v -> v
 
 -- | GET /api/v1/heads/check?host=...&port=...
 handleCheckHead :: Logger -> Pool -> Maybe Text -> Maybe Int -> Handler CheckHeadResponse
@@ -244,7 +285,7 @@ handleCheckHead logger pool mHost mPort = do
 -- | POST /api/v1/heads/register
 handleRegister :: Logger -> Pool -> TQueue HydraEvent -> RegisterHead -> Handler RegisterHeadResponse
 handleRegister logger pool eventQueue req = do
-  result <- liftIO $ Indexer.registerHead logger pool eventQueue req.host req.port
+  result <- liftIO $ Indexer.registerHead logger pool eventQueue req.host req.port req.walletAddress
   case result of
     Left err ->
       throwError $ err400{errBody = Aeson.encode $ ErrorResponse err}
@@ -313,6 +354,8 @@ handleHeadDetail pool hid = do
           , registeredAt = h.createdAt
           , lastSeenAt = h.lastMessageAt
           , onChain = explorerHeadToOnChain <$> mExplorer
+          , htlcEnabled = isJust h.headRefScriptUtxo
+          , refScriptUtxo = h.headRefScriptUtxo
           }
 
 -- | GET /api/v1/heads/:headId/addresses
@@ -717,7 +760,7 @@ handleRelayGraph pool mHtlcHash mNetwork = do
             { headId = eh.explorerHeadId
             , network = eh.explorerNetwork
             , hasHtlc = Set.member eh.explorerHeadId htlcIds
-            , isUserHead = False
+            , isUserHead = Set.member eh.explorerHeadId registeredOpenIds
             , participants = Map.findWithDefault [] eh.explorerHeadId headParticipants
             , committedLovelace = Map.findWithDefault 0 eh.explorerHeadId headLovelace
             }
@@ -895,23 +938,65 @@ handleParticipantRoutes pool chainSlotVar pkh = do
       , actions = participantActionsFor chainSlot pkh hops
       }
 
+invoiceToResponse :: Invoice Identity -> InvoiceResponse
+invoiceToResponse inv =
+  InvoiceResponse
+    { invoiceId         = inv.invoiceId
+    , headId            = inv.invoiceHeadId
+    , receiverOnChainId = inv.invoiceReceiverOnChainId
+    , paymentHash       = inv.invoicePaymentHash
+    , amountLovelace    = inv.invoiceAmountLovelace
+    , memo              = inv.invoiceMemo
+    , status            = inv.invoiceStatus
+    , expiresAt         = inv.invoiceExpiresAt
+    , createdAt         = inv.invoiceCreatedAt
+    }
+
+-- | GET /api/v1/relay/participants/:pkh/invoices
+handleParticipantInvoices :: Pool -> Text -> Handler [InvoiceResponse]
+handleParticipantInvoices pool pkh = do
+  invoices <- liftIO $ Db.getInvoicesByReceiver pool pkh
+  pure $ map invoiceToResponse invoices
+
+-- | GET /api/v1/relay/invoices?status=pending
+handleGetInvoices :: Pool -> Maybe Text -> Handler [InvoiceResponse]
+handleGetInvoices pool mStatus = do
+  invs <- liftIO $ Db.getInvoicesByStatus pool (fromMaybe "pending" mStatus)
+  pure $ map invoiceToResponse invs
+
 -- | POST /api/v1/relay/invoices
-handleCreateInvoice :: Pool -> CreateInvoiceRequest -> Handler InvoiceResponse
-handleCreateInvoice pool req = do
+handleCreateInvoice :: Pool -> TVar Graph.RelayGraph -> CreateInvoiceRequest -> Handler InvoiceResponse
+handleCreateInvoice pool graphVar req = do
+  when (T.null req.headId) $
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "headId is required"}
   when (T.length req.receiverOnChainId /= 56 || not (T.all isHex req.receiverOnChainId)) $
     throwError $ err400{errBody = Aeson.encode $ ErrorResponse "receiverOnChainId must be 56 hex chars (28-byte vkey hash)"}
   when (req.amountLovelace <= 0) $
     throwError $ err400{errBody = Aeson.encode $ ErrorResponse "amount must be positive"}
   when (T.null req.paymentHash) $
     throwError $ err400{errBody = Aeson.encode $ ErrorResponse "paymentHash is required"}
+  mHead <- liftIO $ Db.getHead pool req.headId
+  case mHead of
+    Nothing ->
+      throwError $ err400{errBody = Aeson.encode $ ErrorResponse "headId does not exist"}
+    Just h -> do
+      when (h.headStatus /= "Open") $
+        throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Head is not Open — wait for it to be fully connected before creating an invoice"}
+      when (isNothing h.headRefScriptUtxo) $
+        throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Head does not have an HTLC ref script published — publish the validator first (Setup → step 04)"}
+  graph <- liftIO $ readTVarIO graphVar
+  let routable = any (\e -> e.edgeFromHead == req.headId || e.edgeToHead == req.headId) graph.graphEdges
+  unless routable $
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "This head has no routing connections — at least one other head must share a bridge participant before invoices can be created"}
   now <- liftIO getCurrentTime
   iid <- liftIO $ UUID.toText <$> UUID.nextRandom
   let expirySeconds = maybe 3600 id req.expiresInSeconds
       expiresAt = addUTCTime (fromIntegral expirySeconds) now
-  liftIO $ Db.insertInvoice pool iid req.receiverOnChainId req.paymentHash req.amountLovelace req.memo "pending" expiresAt
+  liftIO $ Db.insertInvoice pool iid req.headId req.receiverOnChainId req.paymentHash req.amountLovelace req.memo "pending" expiresAt
   pure
     InvoiceResponse
       { invoiceId = iid
+      , headId = req.headId
       , receiverOnChainId = req.receiverOnChainId
       , paymentHash = req.paymentHash
       , amountLovelace = req.amountLovelace
@@ -931,17 +1016,7 @@ handleGetInvoice pool iid = do
     Nothing ->
       throwError $ err404{errBody = Aeson.encode $ ErrorResponse "Invoice not found"}
     Just inv ->
-      pure
-        InvoiceResponse
-          { invoiceId = inv.invoiceId
-          , receiverOnChainId = inv.invoiceReceiverOnChainId
-          , paymentHash = inv.invoicePaymentHash
-          , amountLovelace = inv.invoiceAmountLovelace
-          , memo = inv.invoiceMemo
-          , status = inv.invoiceStatus
-          , expiresAt = inv.invoiceExpiresAt
-          , createdAt = inv.invoiceCreatedAt
-          }
+      pure $ invoiceToResponse inv
 
 -- | POST /api/v1/relay/routes
 handleFindRoutes :: Pool -> TVar Graph.RelayGraph -> TVar Int64 -> FindRoutesRequest -> Handler [RouteResponse]
@@ -1728,3 +1803,78 @@ handleSetUserKeyHash :: Pool -> Text -> SetKeyHashRequest -> Handler UserKeyHash
 handleSetUserKeyHash pool walletAddr req = do
   liftIO $ Db.setUserKeyHash pool walletAddr req.keyHash
   pure $ UserKeyHashResponse (Just req.keyHash)
+
+-- ─── Agent handlers ───
+
+hashSecret :: Text -> Text
+hashSecret t = T.pack $ show (hash (T.encodeUtf8 t) :: Digest SHA256)
+
+-- | POST /api/v1/agent/register
+-- Issues a per-agent secret key. Empty allowedHashes list = dev mode (any hash accepted).
+handleAgentRegister :: Pool -> [Text] -> AgentRegisterRequest -> Handler AgentRegisterResponse
+handleAgentRegister pool allowedHashes req = do
+  when (not (null allowedHashes) && req.binaryHash `notElem` allowedHashes) $
+    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash not in allowed list"}
+  agentId' <- liftIO $ T.replace "-" "" . T.pack . UUID.toString <$> UUID.nextRandom
+  secretKey <- liftIO $ T.replace "-" "" . T.pack . UUID.toString <$> UUID.nextRandom
+  let secretHash = hashSecret secretKey
+  liftIO $ Db.insertAgentRegistration pool agentId' req.headId secretHash req.binaryHash
+  pure $ AgentRegisterResponse{agentId = agentId', secretKey}
+
+-- | POST /api/v1/agent/events
+-- Accepts a Hydra event pushed by the CLI agent.
+handleAgentEvent
+  :: Pool
+  -> [Text]
+  -> TQueue HydraEvent
+  -> Maybe Text
+  -> Maybe Text
+  -> AgentEventRequest
+  -> Handler MessageResponse
+handleAgentEvent pool allowedHashes eventQueue mAuthHeader mBinaryHashHeader req = do
+  authToken <- case mAuthHeader of
+    Nothing -> throwError err401{errBody = Aeson.encode $ ErrorResponse "Authorization header required"}
+    Just h | T.isPrefixOf "Bearer " h -> pure $ T.drop 7 h
+    Just _ -> throwError err401{errBody = Aeson.encode $ ErrorResponse "Authorization must be Bearer token"}
+  binaryHashHdr <- case mBinaryHashHeader of
+    Nothing -> throwError err400{errBody = Aeson.encode $ ErrorResponse "X-Agent-Binary-Hash header required"}
+    Just h -> pure h
+  let secretHash = hashSecret authToken
+  mAgent <- liftIO $ Db.lookupAgentBySecretHash pool secretHash
+  agent <- case mAgent of
+    Nothing -> throwError err401{errBody = Aeson.encode $ ErrorResponse "invalid or unknown agent secret"}
+    Just a -> pure a
+  when (agent.agentBinaryHash /= binaryHashHdr) $
+    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash mismatch"}
+  when (not (null allowedHashes) && binaryHashHdr `notElem` allowedHashes) $
+    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash not in allowed list"}
+  now <- liftIO getCurrentTime
+  liftIO $ Db.updateAgentLastSeen pool agent.agentId now
+  hydraEvent <- case Hydra.Client.parseHydraMessage req.event of
+    Nothing -> throwError err400{errBody = Aeson.encode $ ErrorResponse "could not parse event as HydraEvent"}
+    Just e -> pure e
+  liftIO $ atomically $ writeTQueue eventQueue hydraEvent
+  pure $ MessageResponse "event accepted"
+
+-- ─── Claim ownership ───
+
+-- | POST /api/v1/heads/:headId/claim-ownership
+-- Verifies the wallet has a UTxO in the head snapshot, extracts the pkh, stores the link.
+handleClaimOwnership :: Pool -> Text -> ClaimOwnershipRequest -> Handler ClaimOwnershipResponse
+handleClaimOwnership pool headId' req = do
+  mHead <- liftIO $ Db.getHead pool headId'
+  _ <- case mHead of
+    Nothing -> throwError err404{errBody = Aeson.encode $ ErrorResponse "head not found"}
+    Just h -> pure h
+  utxos <- liftIO $ Db.getUtxosByAddressAndHead pool headId' req.walletAddress
+  when (null utxos) $
+    throwError err404
+      { errBody = Aeson.encode $ ErrorResponse
+          "No UTxO from this wallet found in head snapshot. Commit a UTxO from your wallet to this head first."
+      }
+  pkh <- case extractPkhFromAddress req.walletAddress of
+    Left e -> throwError err400{errBody = Aeson.encode $ ErrorResponse e}
+    Right p -> pure p
+  liftIO $ Db.setUserKeyHash pool req.walletAddress pkh
+  liftIO $ Db.setHeadRegisteredBy pool headId' req.walletAddress
+  pure $ ClaimOwnershipResponse{verified = True, keyHash = pkh}

@@ -78,8 +78,8 @@ processEvent logger pool chainSlotVar bus mHtlcScriptHash = \case
     Db.updateHeadStatus pool lostHeadId "unreachable"
 
 -- | Register a new head: validate, store in DB, start listening
-registerHead :: Logger -> Pool -> TQueue HydraEvent -> Text -> Int -> IO (Either Text HydraEvent)
-registerHead logger pool eventQueue hostAddr portNum = do
+registerHead :: Logger -> Pool -> TQueue HydraEvent -> Text -> Int -> Maybe Text -> IO (Either Text HydraEvent)
+registerHead logger pool eventQueue hostAddr portNum mWallet = do
   result <- validateHydraNode logger hostAddr portNum
   case result of
     Left err -> pure $ Left err
@@ -88,11 +88,19 @@ registerHead logger pool eventQueue hostAddr portNum = do
       case existing of
         Just _ -> pure $ Left $ "Head " <> greeterHeadId <> " is already registered"
         Nothing -> do
+          -- If the same host:port had a different head before (e.g. the head
+          -- was closed and a new one opened), evict the stale entry so the
+          -- UNIQUE (host, port) constraint doesn't block the insert below.
+          mStale <- Db.getHeadByHostPort pool hostAddr portNum
+          case mStale of
+            Just stale | stale.headId /= greeterHeadId ->
+              Db.deleteHead pool stale.headId
+            _ -> pure ()
           n <- Db.countHeads pool
           if n >= 5
             then pure $ Left "Head limit reached (maximum 5 registered heads)"
             else do
-              Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus
+              Db.upsertHead pool greeterHeadId hostAddr portNum greeterHeadStatus mWallet
               Db.replaceUtxos pool greeterHeadId greeterUtxos
               connectToHead logger greeterHeadId hostAddr portNum eventQueue
               logInfo logger "Head registered" [("headId", toJSON greeterHeadId), ("host", toJSON hostAddr)]

@@ -1,6 +1,7 @@
 module Main where
 
 import Api (AppEnv (..), api, corsMiddleware, server)
+import Blockfrost qualified
 import Cache (newCache)
 import Config (AppConfig (..), loadConfig)
 import Control.Concurrent (forkIO, threadDelay)
@@ -74,6 +75,15 @@ main = do
   expiryAsync <- async $ ExpirySweep.startExpirySweep logger pool
   logInfo logger "Expiry sweep started" []
 
+  -- Optionally poll Blockfrost for chain slot (runs alongside Hydra events)
+  mBlockfrostAsync <- case config.blockfrostProjectId of
+    Nothing -> do
+      logInfo logger "Blockfrost not configured (set BLOCKFROST_PROJECT_ID to enable)" []
+      pure Nothing
+    Just pid -> do
+      a <- async $ Blockfrost.startBlockfrostPoller logger chainSlotVar pid config.blockfrostNetwork
+      pure (Just a)
+
   -- Rate limiter with periodic cleanup
   rateLimiter <- newRateLimiter config.rateLimitPerMin
   cleanupAsync <- async $ forever $ do
@@ -106,6 +116,9 @@ main = do
           , relayEventBus = bus
           , htlcScriptHash = config.htlcScriptHash
           , htlcScriptCbor = config.htlcScriptCbor
+          , cardanoNodeSocket = config.cardanoNodeSocket
+          , cardanoNodeMagic = config.cardanoNodeMagic
+          , agentAllowedHashes = config.agentAllowedHashes
           }
 
   -- Build middleware stack
@@ -132,5 +145,6 @@ main = do
       cancel sidecarAsync
       cancel expiryAsync
       cancel cleanupAsync
+      mapM_ cancel mBlockfrostAsync
       logInfo logger "Shutdown complete" []
 

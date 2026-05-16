@@ -27,6 +27,10 @@ data Head f = Head
     -- via @--spending-tx-in-reference@. Operators publish the UTxO
     -- once and register it via @POST /heads/{id}/ref-script@.
     headRefScriptUtxo :: Column f (Maybe Text)
+  , -- | Wallet address of the user who registered this head via the website.
+    -- FK to user_profiles(wallet_address). Null for heads registered before
+    -- wallet login was introduced or by headless clients.
+    headRegisteredBy :: Column f (Maybe Text)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -51,6 +55,7 @@ headSchema =
           , headIsBridge = "is_bridge"
           , headBridgeFeeLovelace = "bridge_fee_lovelace"
           , headRefScriptUtxo = "ref_script_utxo"
+          , headRegisteredBy = "registered_by"
           }
     }
 
@@ -142,6 +147,7 @@ headParticipantSchema =
 -- wallet, or wherever).
 data Invoice f = Invoice
   { invoiceId :: Column f Text
+  , invoiceHeadId :: Column f Text
   , invoiceReceiverOnChainId :: Column f Text
   , invoicePaymentHash :: Column f Text
   , invoiceAmountLovelace :: Column f Int64
@@ -163,6 +169,7 @@ invoiceSchema =
     , columns =
         Invoice
           { invoiceId = "invoice_id"
+          , invoiceHeadId = "head_id"
           , invoiceReceiverOnChainId = "receiver_on_chain_id"
           , invoicePaymentHash = "payment_hash"
           , invoiceAmountLovelace = "amount_lovelace"
@@ -312,5 +319,37 @@ userProfileSchema =
         UserProfile
           { userWalletAddress = "wallet_address"
           , userKeyHash       = "key_hash"
+          }
+    }
+
+-- | Per-agent registration issued by the registry. The registry generates a
+-- unique secret per agent and stores only its SHA-256 hash. The agent
+-- receives the plaintext secret once and uses it as a Bearer token.
+data AgentRegistration f = AgentRegistration
+  { agentId          :: Column f Text
+  , agentHeadId      :: Column f Text
+  , agentSecretHash  :: Column f Text
+  , agentBinaryHash  :: Column f Text
+  , agentRegisteredAt :: Column f UTCTime
+  , agentLastSeenAt  :: Column f (Maybe UTCTime)
+  }
+  deriving stock (Generic)
+  deriving anyclass (Rel8able)
+
+deriving stock instance Show (AgentRegistration Identity)
+deriving stock instance Eq (AgentRegistration Identity)
+
+agentRegistrationSchema :: TableSchema (AgentRegistration Name)
+agentRegistrationSchema =
+  TableSchema
+    { name = "agent_registrations"
+    , columns =
+        AgentRegistration
+          { agentId           = "agent_id"
+          , agentHeadId       = "head_id"
+          , agentSecretHash   = "secret_key_hash"
+          , agentBinaryHash   = "binary_hash"
+          , agentRegisteredAt = "registered_at"
+          , agentLastSeenAt   = "last_seen_at"
           }
     }

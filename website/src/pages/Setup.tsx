@@ -11,6 +11,8 @@ const cardVariants = {
 }
 
 export default function Setup() {
+  const apiBase = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080'
+
   return (
     <div className="register-page">
       <motion.section
@@ -28,7 +30,7 @@ export default function Setup() {
         </p>
       </motion.section>
 
-      {/* Step 1 */}
+      {/* HTLC flow explanation */}
       <motion.section
         className="section"
         initial="hidden"
@@ -36,6 +38,50 @@ export default function Setup() {
         viewport={{ once: true }}
         variants={cardVariants}
         custom={0}
+      >
+        <div className="prerequisite-card glow-card">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+            <span className="step-num" style={{ fontSize: '1.5rem' }}>→</span>
+            <h2 style={{ margin: 0 }}>What happens during a payment</h2>
+          </div>
+          <p className="register-desc">
+            A multi-hop payment works as a cascade of HTLCs, all sharing the same secret hash.
+            Timeouts decrease at each hop so earlier hops always expire after later ones, giving
+            each bridge operator time to claim before their own refund window closes.
+          </p>
+          <div className="setup-steps">
+            <div className="next-steps">
+              <div className="next-step">
+                <span className="next-num" style={{ background: 'rgba(0,212,170,0.15)', color: 'var(--success)' }}>🔒</span>
+                <div>
+                  <p><strong>Locking (sender side).</strong> The sender submits a transaction to the head that locks funds in the HTLC validator, naming the next hop's key hash as receiver and setting a timeout slot. Each intermediate bridge operator does the same in their own head, forwarding the lock toward the final receiver.</p>
+                </div>
+              </div>
+              <div className="next-step">
+                <span className="next-num" style={{ background: 'rgba(0,212,170,0.15)', color: 'var(--success)' }}>🔑</span>
+                <div>
+                  <p><strong>Claiming (receiver side).</strong> The final receiver claims the HTLC by submitting a transaction that includes the secret preimage. The validator checks that <code>sha256(preimage) == secretHash</code> and that the receiver's signature is present. Once claimed, the preimage is visible in the head's snapshot — bridge operators use it to claim their own HTLCs back up the chain.</p>
+                </div>
+              </div>
+              <div className="next-step">
+                <span className="next-num" style={{ background: 'rgba(255,77,106,0.15)', color: 'var(--error)' }}>⏱</span>
+                <div>
+                  <p><strong>Timeout / refund.</strong> If the receiver does not claim before the timeout slot, the sender (or bridge operator) can reclaim by submitting after the deadline with only their own signature. No preimage is required for a refund path. Timeouts are set so refunds always become available before the preceding hop's window closes.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.section>
+
+      {/* Step 1 */}
+      <motion.section
+        className="section"
+        initial="hidden"
+        whileInView="visible"
+        viewport={{ once: true }}
+        variants={cardVariants}
+        custom={1}
       >
         <div className="prerequisite-card glow-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
@@ -68,7 +114,7 @@ export default function Setup() {
         whileInView="visible"
         viewport={{ once: true }}
         variants={cardVariants}
-        custom={1}
+        custom={2}
       >
         <div className="prerequisite-card glow-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
@@ -106,7 +152,7 @@ export default function Setup() {
         whileInView="visible"
         viewport={{ once: true }}
         variants={cardVariants}
-        custom={2}
+        custom={3}
       >
         <div className="prerequisite-card glow-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
@@ -142,7 +188,7 @@ export default function Setup() {
         whileInView="visible"
         viewport={{ once: true }}
         variants={cardVariants}
-        custom={3}
+        custom={4}
       >
         <div className="prerequisite-card glow-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
@@ -171,9 +217,9 @@ export default function Setup() {
                     <strong>Find your in-head address.</strong> This is the address you committed
                     funds from when the head was opened. You can see it on the{' '}
                     <Link to="/dashboard" style={{ color: 'var(--accent)' }}>Dashboard</Link> next
-                    to your head, or ask the indexer directly:
+                    to your head, or query the registry (replace the port if you configured a different one):
                   </p>
-                  <pre className="code-block">{`curl https://<indexer>/api/v1/heads/{headId}/addresses`}</pre>
+                  <pre className="code-block">{`curl ${apiBase}/api/v1/heads/{headId}/addresses`}</pre>
                   <p>Pick the address you control — the one whose <code>.sk</code> key file you have.</p>
                 </div>
               </div>
@@ -181,19 +227,18 @@ export default function Setup() {
                 <span className="next-num">2</span>
                 <div>
                   <p><strong>Build the publish transaction.</strong> Pass your in-head address. The indexer selects a suitable UTxO from inside the head to pay fees:</p>
-                  <pre className="code-block">{`curl -X POST https://<indexer>/api/v1/heads/{headId}/publish-ref-script-tx-cbor \\
+                  <pre className="code-block">{`curl -X POST ${apiBase}/api/v1/heads/{headId}/publish-ref-script-tx-cbor \\
   -H 'Content-Type: application/json' \\
-  -d '{"walletAddress": "addr_test1..."}'`}</pre>
-                  <p>The response contains an unsigned <code>cborHex</code> and a <code>txId</code>. Keep both.</p>
+  -d '{"walletAddress": "addr_test1..."}' \\
+  > tx.raw`}</pre>
+                  <p>The response is already a cardano-cli text envelope. Keep the file — it also contains a <code>txId</code> field you need in step 5.</p>
                 </div>
               </div>
               <div className="next-step">
                 <span className="next-num">3</span>
                 <div>
                   <p><strong>Sign the transaction</strong> with the Cardano signing key for that address:</p>
-                  <pre className="code-block">{`echo '{"type":"Tx ConwayEra","description":"","cborHex":"<cborHex>"}' > tx.raw
-
-cardano-cli transaction sign \\
+                  <pre className="code-block">{`cardano-cli conway transaction sign \\
   --tx-file tx.raw \\
   --signing-key-file <your-address>.sk \\
   --out-file tx.signed`}</pre>
@@ -205,7 +250,7 @@ cardano-cli transaction sign \\
                   <p><strong>Submit the signed transaction to the head.</strong> This creates the reference script UTxO inside the head's L2 state:</p>
                   <pre className="code-block">{`SIGNED_CBOR=$(cat tx.signed | jq -r .cborHex)
 
-curl -X POST https://<indexer>/api/v1/heads/{headId}/submit \\
+curl -X POST ${apiBase}/api/v1/heads/{headId}/submit \\
   -H 'Content-Type: application/json' \\
   -d "{\"signedCborHex\": \"$SIGNED_CBOR\"}"`}</pre>
                 </div>
@@ -213,55 +258,13 @@ curl -X POST https://<indexer>/api/v1/heads/{headId}/submit \\
               <div className="next-step">
                 <span className="next-num">5</span>
                 <div>
-                  <p><strong>Register the reference UTxO</strong> so the indexer knows which UTxO holds the script. Use the <code>txId</code> from step 2:</p>
-                  <pre className="code-block">{`curl -X POST https://<indexer>/api/v1/heads/{headId}/ref-script \\
-  -H 'Content-Type: application/json' \\
-  -d '{"utxo": "<txId>#0"}'`}</pre>
-                  <p>Once registered, all future lock transactions reference this UTxO automatically.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </motion.section>
+                  <p><strong>Register the reference UTxO</strong> so the indexer knows which UTxO holds the script. Read the <code>txId</code> from <code>tx.raw</code>:</p>
+                  <pre className="code-block">{`TX_ID=$(jq -r .txId tx.raw)
 
-      {/* HTLC flow explanation */}
-      <motion.section
-        className="section"
-        initial="hidden"
-        whileInView="visible"
-        viewport={{ once: true }}
-        variants={cardVariants}
-        custom={4}
-      >
-        <div className="prerequisite-card glow-card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-            <span className="step-num" style={{ fontSize: '1.5rem' }}>→</span>
-            <h2 style={{ margin: 0 }}>What happens during a payment</h2>
-          </div>
-          <p className="register-desc">
-            A multi-hop payment works as a cascade of HTLCs, all sharing the same secret hash.
-            Timeouts decrease at each hop so earlier hops always expire after later ones, giving
-            each bridge operator time to claim before their own refund window closes.
-          </p>
-          <div className="setup-steps">
-            <div className="next-steps">
-              <div className="next-step">
-                <span className="next-num" style={{ background: 'rgba(0,212,170,0.15)', color: 'var(--success)' }}>🔒</span>
-                <div>
-                  <p><strong>Locking (sender side).</strong> The sender submits a transaction to the head that locks funds in the HTLC validator, naming the next hop's key hash as receiver and setting a timeout slot. Each intermediate bridge operator does the same in their own head, forwarding the lock toward the final receiver.</p>
-                </div>
-              </div>
-              <div className="next-step">
-                <span className="next-num" style={{ background: 'rgba(0,212,170,0.15)', color: 'var(--success)' }}>🔑</span>
-                <div>
-                  <p><strong>Claiming (receiver side).</strong> The final receiver claims the HTLC by submitting a transaction that includes the secret preimage. The validator checks that <code>sha256(preimage) == secretHash</code> and that the receiver's signature is present. Once claimed, the preimage is visible in the head's snapshot — bridge operators use it to claim their own HTLCs back up the chain.</p>
-                </div>
-              </div>
-              <div className="next-step">
-                <span className="next-num" style={{ background: 'rgba(255,77,106,0.15)', color: 'var(--error)' }}>⏱</span>
-                <div>
-                  <p><strong>Timeout / refund.</strong> If the receiver does not claim before the timeout slot, the sender (or bridge operator) can reclaim by submitting after the deadline with only their own signature. No preimage is required for a refund path. Timeouts are set so refunds always become available before the preceding hop's window closes.</p>
+curl -X POST ${apiBase}/api/v1/heads/{headId}/ref-script \\
+  -H 'Content-Type: application/json' \\
+  -d "{\"utxo\": \"$TX_ID#0\"}"`}</pre>
+                  <p>Once registered, all future lock transactions reference this UTxO automatically.</p>
                 </div>
               </div>
             </div>

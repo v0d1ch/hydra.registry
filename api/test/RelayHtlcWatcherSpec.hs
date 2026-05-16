@@ -42,7 +42,7 @@ setupTestPayment :: Pool -> Text -> Text -> Text -> IO ()
 setupTestPayment pool headId senderAddr receiverAddr = do
   now <- getCurrentTime
   let expiresAt = addUTCTime 3600 now
-  Db.insertInvoice pool "inv-1" receiverAddr testPaymentHash 50000000 Nothing "pending" expiresAt
+  Db.insertInvoice pool "inv-1" "test-head" receiverAddr testPaymentHash 50000000 Nothing "pending" expiresAt
   Db.insertPaymentRoute pool "route-1" "inv-1" senderAddr receiverAddr 50000000 "in_progress" (Aeson.toJSON ([] :: [Value])) 500000 "Preview"
   Db.insertRouteHops
     pool
@@ -406,7 +406,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
     it "expires pending invoices past their deadline" $ \pool -> do
       now <- getCurrentTime
       let expiredTime = addUTCTime (-60) now -- expired 60 seconds ago
-      Db.insertInvoice pool "inv-expired" "addr_bob" "somehash" 1000000 Nothing "pending" expiredTime
+      Db.insertInvoice pool "inv-expired" "test-head" "addr_bob" "somehash" 1000000 Nothing "pending" expiredTime
 
       Db.expirePendingInvoices pool now
 
@@ -418,7 +418,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
     it "does not expire invoices that are still valid" $ \pool -> do
       now <- getCurrentTime
       let futureTime = addUTCTime 3600 now
-      Db.insertInvoice pool "inv-valid" "addr_bob" "somehash" 1000000 Nothing "pending" futureTime
+      Db.insertInvoice pool "inv-valid" "test-head" "addr_bob" "somehash" 1000000 Nothing "pending" futureTime
 
       Db.expirePendingInvoices pool now
 
@@ -430,7 +430,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
     it "expires routes whose invoices have expired" $ \pool -> do
       now <- getCurrentTime
       let expiredTime = addUTCTime (-60) now
-      Db.insertInvoice pool "inv-exp" "addr_bob" "somehash" 1000000 Nothing "pending" expiredTime
+      Db.insertInvoice pool "inv-exp" "test-head" "addr_bob" "somehash" 1000000 Nothing "pending" expiredTime
       Db.insertPaymentRoute pool "route-exp" "inv-exp" "addr_alice" "addr_bob" 1000000 "in_progress" (Aeson.toJSON ([] :: [Value])) 0 "Preview"
 
       -- First expire the invoice
