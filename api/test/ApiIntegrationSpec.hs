@@ -8,9 +8,11 @@ import Data.Aeson (encode)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KM
 import Data.ByteString.Lazy qualified as BSL
+import Data.Text qualified as T
+import Data.Text.Encoding (encodeUtf8)
 import Data.Time (addUTCTime, getCurrentTime)
 import Db qualified
-import Hydra.Client (HydraEvent)
+import Hydra.Client (HydraEvent, HydraUtxoEntry (..))
 import Logging (newLogger)
 import Logging qualified
 import Metrics (newMetrics)
@@ -19,7 +21,7 @@ import Relay.Graph qualified as Graph
 import Network.HTTP.Types
 import Network.Wai (Application)
 import Servant (serve)
-import Network.Wai.Test (simpleBody)
+import Network.Wai.Test (simpleBody, simpleStatus)
 import Test.Hspec
 import Test.Hspec.Wai
 import TestUtils
@@ -111,7 +113,11 @@ spec = with makeTestApp $ describe "API (integration)" $ do
 
   describe "POST /api/v1/agent/register" $ do
     it "returns 200 with agentId and secretKey (dev mode: empty allowed list accepts any hash)" $ do
-      let body = encode $ Aeson.object ["headId" Aeson..= ("head-xyz" :: String), "binaryHash" Aeson..= ("sha256:abcdef" :: String)]
+      let body = encode $ Aeson.object
+            [ "headId"    Aeson..= ("head-xyz" :: String)
+            , "binaryHash" Aeson..= ("sha256:abcdef" :: String)
+            , "wsUrl"     Aeson..= ("ws://127.0.0.1:19001" :: String)
+            ]
       resp <- request methodPost "/api/v1/agent/register" [("Content-Type", "application/json")] body
       liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
         Nothing -> expectationFailure "Could not parse response"
@@ -119,6 +125,45 @@ spec = with makeTestApp $ describe "API (integration)" $ do
           KM.member "agentId" o `shouldBe` True
           KM.member "secretKey" o `shouldBe` True
         Just other -> expectationFailure $ "Expected object, got: " <> show other
+
+    it "does NOT create a head row immediately — head only appears after an Open Greetings is pushed" $ do
+      let regBody = encode $ Aeson.object
+            [ "headId"    Aeson..= ("agent-lazy-head" :: String)
+            , "binaryHash" Aeson..= ("sha256:deadbeef" :: String)
+            , "wsUrl"     Aeson..= ("ws://127.0.0.1:19003" :: String)
+            ]
+      regResp <- request methodPost "/api/v1/agent/register" [("Content-Type", "application/json")] regBody
+      -- Extract secretKey from registration response
+      secretKey <- liftIO $ case Aeson.decode @Aeson.Value (simpleBody regResp) of
+        Just (Aeson.Object o) | Just (Aeson.String sk) <- KM.lookup "secretKey" o -> pure sk
+        _ -> fail "could not parse secretKey from register response"
+      -- Head must NOT exist yet
+      get "/api/v1/heads/agent-lazy-head" `shouldRespondWith` 404
+      -- Push an Open Greetings event
+      let greetings = Aeson.object
+            [ "tag"        Aeson..= ("Greetings" :: String)
+            , "headStatus" Aeson..= ("Open" :: String)
+            , "hydraHeadId" Aeson..= ("agent-lazy-head" :: String)
+            , "currentSlot" Aeson..= (0 :: Int)
+            , "snapshotUtxo" Aeson..= Aeson.object []
+            , "env" Aeson..= Aeson.object
+                ["participants" Aeson..= ([] :: [String])]
+            ]
+          evtBody = encode $ Aeson.object ["event" Aeson..= greetings]
+          authHdr = ("Authorization", "Bearer " <> encodeUtf8 secretKey)
+          hashHdr = ("X-Agent-Binary-Hash", "sha256:deadbeef")
+      _ <- request methodPost "/api/v1/agent/events"
+            [("Content-Type", "application/json"), authHdr, hashHdr] evtBody
+      -- Head must now exist as Open
+      resp <- get "/api/v1/heads/agent-lazy-head"
+      liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
+        Nothing -> expectationFailure "could not parse GET /api/v1/heads/agent-lazy-head response"
+        Just (Aeson.Object o) -> do
+          KM.lookup "headId" o `shouldBe` Just (Aeson.String "agent-lazy-head")
+          KM.lookup "host"   o `shouldBe` Just (Aeson.String "127.0.0.1")
+          KM.lookup "port"   o `shouldBe` Just (Aeson.Number 19003)
+          KM.lookup "status" o `shouldBe` Just (Aeson.String "Open")
+        Just other -> expectationFailure $ "expected object, got: " <> show other
 
   describe "POST /api/v1/agent/events" $ do
     it "returns 401 when Authorization header is missing" $ do
@@ -144,6 +189,41 @@ spec = with makeTestApp $ describe "API (integration)" $ do
       let body = encode $ Aeson.object ["walletAddress" Aeson..= ("addr1qxtest" :: String)]
       request methodPost "/api/v1/heads/nonexistent/claim-ownership" [("Content-Type", "application/json")] body
         `shouldRespondWith` 404
+
+    it "returns 404 when wallet has no UTxO in the head snapshot" $ do
+      let claimAddr = "addr_test1vp5cxztpc6hep9ds7fjgmle3l225tk8ske3rmwr9adu0m6qchmx5z" :: T.Text
+          body = encode $ Aeson.object ["walletAddress" Aeson..= claimAddr]
+      liftIO $ withTestPool $ \pool ->
+        Db.upsertHead pool "claim-no-utxo" "localhost" 19001 "Open" Nothing
+      request methodPost "/api/v1/heads/claim-no-utxo/claim-ownership" [("Content-Type", "application/json")] body
+        `shouldRespondWith` 404
+
+    it "returns 200 and keyHash when wallet has a UTxO in the head snapshot" $ do
+      let -- addr_test1vp5cxztpc6hep9ds7fjgmle3l225tk8ske3rmwr9adu0m6qchmx5z decodes to this pkh
+          claimAddr = "addr_test1vp5cxztpc6hep9ds7fjgmle3l225tk8ske3rmwr9adu0m6qchmx5z" :: T.Text
+          claimPkh  = "69830961c6af9095b0f2648dff31fa9545d8f0b6623db865eb78fde8" :: T.Text
+          utxo = HydraUtxoEntry
+            { txHash = "aabbccdd00000000000000000000000000000000000000000000000000000000"
+            , outputIndex = 0
+            , address = claimAddr
+            , lovelace = 5_000_000
+            , nativeAssets = mempty
+            , datumHash = Nothing
+            , inlineDatum = Nothing
+            , referenceScript = Nothing
+            }
+      liftIO $ withTestPool $ \pool -> do
+        Db.upsertHead pool "claim-utxo-head" "localhost" 19001 "Open" Nothing
+        Db.replaceUtxos pool "claim-utxo-head" [utxo]
+      let body = encode $ Aeson.object ["walletAddress" Aeson..= claimAddr]
+      resp <- request methodPost "/api/v1/heads/claim-utxo-head/claim-ownership" [("Content-Type", "application/json")] body
+      liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
+        Nothing -> expectationFailure "Could not parse response"
+        Just v -> do
+          simpleStatus resp `shouldBe` status200
+          case v of
+            Aeson.Object o -> KM.lookup "keyHash" o `shouldBe` Just (Aeson.String claimPkh)
+            _ -> expectationFailure "Expected JSON object"
 
   describe "GET /api/v1/relay/invoices" $ do
     it "returns empty list when no invoices exist" $ do

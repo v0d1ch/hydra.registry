@@ -398,7 +398,7 @@ spec = describe "Db (integration)" $ around withTestPool $ do
 
   describe "insertAgentRegistration / lookupAgentBySecretHash" $ do
     it "stores an agent registration and retrieves it by secret hash" $ \pool -> do
-      Db.insertAgentRegistration pool "agent-1" "head-1" "secrethashABC" "sha256:binaryhashXYZ"
+      Db.insertAgentRegistration pool "agent-1" "head-1" "secrethashABC" "sha256:binaryhashXYZ" "127.0.0.1" 4001
       mAgent <- Db.lookupAgentBySecretHash pool "secrethashABC"
       case mAgent of
         Nothing -> expectationFailure "Agent not found after insert"
@@ -407,6 +407,8 @@ spec = describe "Db (integration)" $ around withTestPool $ do
           reg.agentHeadId   `shouldBe` "head-1"
           reg.agentSecretHash `shouldBe` "secrethashABC"
           reg.agentBinaryHash `shouldBe` "sha256:binaryhashXYZ"
+          reg.agentWsHost   `shouldBe` "127.0.0.1"
+          reg.agentWsPort   `shouldBe` 4001
 
     it "returns Nothing for an unknown secret hash" $ \pool -> do
       mAgent <- Db.lookupAgentBySecretHash pool "nonexistent-hash"
@@ -414,7 +416,7 @@ spec = describe "Db (integration)" $ around withTestPool $ do
 
   describe "updateAgentLastSeen" $ do
     it "sets last_seen_at for a known agent" $ \pool -> do
-      Db.insertAgentRegistration pool "agent-2" "head-1" "secrethashDEF" "sha256:binaryhash000"
+      Db.insertAgentRegistration pool "agent-2" "head-1" "secrethashDEF" "sha256:binaryhash000" "127.0.0.1" 4001
       now <- getCurrentTime
       Db.updateAgentLastSeen pool "agent-2" now
       mAgent <- Db.lookupAgentBySecretHash pool "secrethashDEF"

@@ -498,6 +498,20 @@ export function getUserKeyHash(walletAddress: string): Promise<{ keyHash: string
   return request<{ keyHash: string | null }>(`/api/v1/users/${encodeURIComponent(walletAddress)}/keyhash`)
 }
 
+// ─── Claim ownership ───
+
+export interface ClaimOwnershipResponse {
+  verified: boolean
+  keyHash: string
+}
+
+export function claimOwnership(headId: string, walletAddress: string): Promise<ClaimOwnershipResponse> {
+  return request<ClaimOwnershipResponse>(`/api/v1/heads/${headId}/claim-ownership`, {
+    method: 'POST',
+    body: JSON.stringify({ walletAddress }),
+  })
+}
+
 export function setUserKeyHash(walletAddress: string, keyHash: string): Promise<{ keyHash: string | null }> {
   return request<{ keyHash: string | null }>(`/api/v1/users/${encodeURIComponent(walletAddress)}/keyhash`, {
     method: 'PUT',

@@ -36,7 +36,7 @@ main = do
       Nothing -> fail "First message is not Greetings — cannot determine head ID"
 
     TIO.hPutStrLn stderr $ "Head ID: " <> headId'
-    st <- loadOrRegister mgr stateFile registryUrl headId' binaryHash
+    st <- loadOrRegister mgr stateFile registryUrl headId' (T.pack wsUrl) binaryHash
     TIO.hPutStrLn stderr $ "Agent ID: " <> st.agentId
 
     case decode @Value firstMsg of

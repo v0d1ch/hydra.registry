@@ -326,12 +326,14 @@ userProfileSchema =
 -- unique secret per agent and stores only its SHA-256 hash. The agent
 -- receives the plaintext secret once and uses it as a Bearer token.
 data AgentRegistration f = AgentRegistration
-  { agentId          :: Column f Text
-  , agentHeadId      :: Column f Text
-  , agentSecretHash  :: Column f Text
-  , agentBinaryHash  :: Column f Text
+  { agentId           :: Column f Text
+  , agentHeadId       :: Column f Text
+  , agentSecretHash   :: Column f Text
+  , agentBinaryHash   :: Column f Text
+  , agentWsHost       :: Column f Text
+  , agentWsPort       :: Column f Int32
   , agentRegisteredAt :: Column f UTCTime
-  , agentLastSeenAt  :: Column f (Maybe UTCTime)
+  , agentLastSeenAt   :: Column f (Maybe UTCTime)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -349,6 +351,8 @@ agentRegistrationSchema =
           , agentHeadId       = "head_id"
           , agentSecretHash   = "secret_key_hash"
           , agentBinaryHash   = "binary_hash"
+          , agentWsHost       = "ws_host"
+          , agentWsPort       = "ws_port"
           , agentRegisteredAt = "registered_at"
           , agentLastSeenAt   = "last_seen_at"
           }

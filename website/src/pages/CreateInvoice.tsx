@@ -173,7 +173,7 @@ export default function CreateInvoice() {
                 >
                   <option value="">Select a head…</option>
                   {heads.map(h => (
-                    <option key={h.headId} value={h.headId}>{h.headId} ({h.host}:{h.port})</option>
+                    <option key={h.headId} value={h.headId}>{h.headId}</option>
                   ))}
                 </select>
                 {selectedHeadId && routingHeadCount !== null && (

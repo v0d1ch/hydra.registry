@@ -42,8 +42,8 @@ instance Aeson.ToJSON AgentState where
   toJSON s = Aeson.object ["agentId" Aeson..= s.agentId, "secretKey" Aeson..= s.secretKey]
 
 -- | Load existing agent state from file, or register with the registry and persist it.
-loadOrRegister :: Manager -> FilePath -> Text -> Text -> Text -> IO AgentState
-loadOrRegister mgr stateFile registryUrl headId' binaryHash = do
+loadOrRegister :: Manager -> FilePath -> Text -> Text -> Text -> Text -> IO AgentState
+loadOrRegister mgr stateFile registryUrl headId' wsUrl binaryHash = do
   exists <- doesFileExist stateFile
   if exists
     then do
@@ -54,14 +54,14 @@ loadOrRegister mgr stateFile registryUrl headId' binaryHash = do
           hPutStrLn stderr "State file is corrupt. Delete it and restart."
           exitFailure
     else do
-      st <- register mgr registryUrl headId' binaryHash
+      st <- register mgr registryUrl headId' wsUrl binaryHash
       BSL.writeFile stateFile (encode st)
       pure st
 
-register :: Manager -> Text -> Text -> Text -> IO AgentState
-register mgr registryUrl headId' binaryHash = do
+register :: Manager -> Text -> Text -> Text -> Text -> IO AgentState
+register mgr registryUrl headId' wsUrl binaryHash = do
   let url = T.unpack registryUrl <> "/api/v1/agent/register"
-      body = encode $ Aeson.object ["headId" Aeson..= headId', "binaryHash" Aeson..= binaryHash]
+      body = encode $ Aeson.object ["headId" Aeson..= headId', "binaryHash" Aeson..= binaryHash, "wsUrl" Aeson..= wsUrl]
   req <- parseRequest url
   let req' = req
         { method = "POST"

@@ -166,9 +166,13 @@ initDb pool =
       \  head_id TEXT NOT NULL,\
       \  secret_key_hash TEXT NOT NULL UNIQUE,\
       \  binary_hash TEXT NOT NULL,\
+      \  ws_host TEXT NOT NULL DEFAULT '',\
+      \  ws_port INT NOT NULL DEFAULT 4001,\
       \  registered_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
       \  last_seen_at TIMESTAMPTZ\
-      \);"
+      \);\
+      \ALTER TABLE agent_registrations ADD COLUMN IF NOT EXISTS ws_host TEXT NOT NULL DEFAULT '';\
+      \ALTER TABLE agent_registrations ADD COLUMN IF NOT EXISTS ws_port INT NOT NULL DEFAULT 4001;"
 
 -- | Insert a new head or update on conflict.
 --
@@ -1281,8 +1285,8 @@ setUserKeyHash pool walletAddr kh =
 -- ─── Agent registrations ───
 
 -- | Insert a new agent registration. The secret key is stored pre-hashed by the caller.
-insertAgentRegistration :: Pool -> Text -> Text -> Text -> Text -> IO ()
-insertAgentRegistration pool aid hid secretHash binaryHash = do
+insertAgentRegistration :: Pool -> Text -> Text -> Text -> Text -> Text -> Int -> IO ()
+insertAgentRegistration pool aid hid secretHash binaryHash wsHost wsPort = do
   now <- getCurrentTime
   runSession pool $
     Session.statement () $
@@ -1297,6 +1301,8 @@ insertAgentRegistration pool aid hid secretHash binaryHash = do
                       , agentHeadId       = lit hid
                       , agentSecretHash   = lit secretHash
                       , agentBinaryHash   = lit binaryHash
+                      , agentWsHost       = lit wsHost
+                      , agentWsPort       = lit (fromIntegral @Int @Int32 wsPort)
                       , agentRegisteredAt = lit now
                       , agentLastSeenAt   = lit Nothing
                       }

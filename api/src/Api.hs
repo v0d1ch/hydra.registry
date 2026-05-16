@@ -1815,11 +1815,22 @@ handleAgentRegister :: Pool -> [Text] -> AgentRegisterRequest -> Handler AgentRe
 handleAgentRegister pool allowedHashes req = do
   when (not (null allowedHashes) && req.binaryHash `notElem` allowedHashes) $
     throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash not in allowed list"}
+  let (wsHost, wsPort) = parseWsHostPort req.wsUrl
   agentId' <- liftIO $ T.replace "-" "" . T.pack . UUID.toString <$> UUID.nextRandom
   secretKey <- liftIO $ T.replace "-" "" . T.pack . UUID.toString <$> UUID.nextRandom
   let secretHash = hashSecret secretKey
-  liftIO $ Db.insertAgentRegistration pool agentId' req.headId secretHash req.binaryHash
+  liftIO $ Db.insertAgentRegistration pool agentId' req.headId secretHash req.binaryHash wsHost wsPort
   pure $ AgentRegisterResponse{agentId = agentId', secretKey}
+
+parseWsHostPort :: Text -> (Text, Int)
+parseWsHostPort url =
+  let stripped = fromMaybe (fromMaybe url (T.stripPrefix "ws://" url)) (T.stripPrefix "wss://" url)
+      hostPort = T.takeWhile (/= '/') stripped
+      (host', portPart) = T.breakOn ":" hostPort
+      port' = case T.stripPrefix ":" portPart of
+        Just p -> fromMaybe 4001 (readMaybe @Int (T.unpack p))
+        Nothing -> 4001
+  in (host', port')
 
 -- | POST /api/v1/agent/events
 -- Accepts a Hydra event pushed by the CLI agent.
@@ -1853,13 +1864,26 @@ handleAgentEvent pool allowedHashes eventQueue mAuthHeader mBinaryHashHeader req
   hydraEvent <- case Hydra.Client.parseHydraMessage req.event of
     Nothing -> throwError err400{errBody = Aeson.encode $ ErrorResponse "could not parse event as HydraEvent"}
     Just e -> pure e
+  -- On the first Open Greetings from this agent, create the head row.
+  -- We defer this until we know the head is actually Open so idle heads
+  -- never appear in the registry.
+  case hydraEvent of
+    HeadGreetings{greeterHeadId, greeterHeadStatus} | greeterHeadStatus == "Open" ->
+      liftIO $ Db.upsertHead pool greeterHeadId
+        agent.agentWsHost
+        (fromIntegral agent.agentWsPort)
+        greeterHeadStatus
+        Nothing
+    _ -> pure ()
   liftIO $ atomically $ writeTQueue eventQueue hydraEvent
   pure $ MessageResponse "event accepted"
 
 -- ─── Claim ownership ───
 
 -- | POST /api/v1/heads/:headId/claim-ownership
--- Verifies the wallet has a UTxO in the head snapshot, extracts the pkh, stores the link.
+-- The caller proves hydra-node access by having deposited a UTxO from their wallet into
+-- the head. We check the L2 snapshot for that address; if found, extract the payment key
+-- hash from the bech32 address and store it as the user's key hash.
 handleClaimOwnership :: Pool -> Text -> ClaimOwnershipRequest -> Handler ClaimOwnershipResponse
 handleClaimOwnership pool headId' req = do
   mHead <- liftIO $ Db.getHead pool headId'
@@ -1870,7 +1894,7 @@ handleClaimOwnership pool headId' req = do
   when (null utxos) $
     throwError err404
       { errBody = Aeson.encode $ ErrorResponse
-          "No UTxO from this wallet found in head snapshot. Commit a UTxO from your wallet to this head first."
+          "No UTxO from this wallet found in the head snapshot. Deposit a UTxO from your wallet into this head first."
       }
   pkh <- case extractPkhFromAddress req.walletAddress of
     Left e -> throwError err400{errBody = Aeson.encode $ ErrorResponse e}

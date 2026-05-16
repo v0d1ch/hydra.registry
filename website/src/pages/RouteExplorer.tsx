@@ -22,10 +22,10 @@ export default function RouteExplorer() {
   const [searchParams, setSearchParams] = useSearchParams()
   const headIdFilter = searchParams.get('headId')?.trim() ?? ''
   const [headIdInput, setHeadIdInput] = useState(headIdFilter)
-  const [registeredHeads, setRegisteredHeads] = useState<{ headId: string; host: string; port: number }[]>([])
+  const [registeredHeads, setRegisteredHeads] = useState<{ headId: string }[]>([])
 
   useEffect(() => {
-    getHeads().then(heads => setRegisteredHeads(heads.map(h => ({ headId: h.headId, host: h.host, port: h.port })))).catch(() => {})
+    getHeads().then(heads => setRegisteredHeads(heads.map(h => ({ headId: h.headId })))).catch(() => {})
   }, [])
   const [invoiceId, setInvoiceId] = useState('')
   const [senderOnChainId, setSenderOnChainId] = useState('')
@@ -289,7 +289,7 @@ export default function RouteExplorer() {
             <datalist id="registered-heads">
               {registeredHeads.map(h => (
                 <option key={h.headId} value={h.headId}>
-                  {h.host}:{h.port}
+                  {h.headId}
                 </option>
               ))}
             </datalist>

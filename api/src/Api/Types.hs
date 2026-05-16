@@ -601,6 +601,7 @@ data ParticipantRouteSummary = ParticipantRouteSummary
 data AgentRegisterRequest = AgentRegisterRequest
   { headId :: Text
   , binaryHash :: Text
+  , wsUrl :: Text
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
