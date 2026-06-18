@@ -73,6 +73,9 @@ processEvent logger pool chainSlotVar bus mHtlcScriptHash = \case
     Db.updateHeadStatus pool finalizedHeadId "Finalized"
     Db.replaceUtxos pool finalizedHeadId finalizedUtxos
     Db.updateLastMessageAt pool finalizedHeadId
+    case mHtlcScriptHash of
+      Just scriptHash -> HtlcWatcher.processUtxoSnapshot logger pool bus finalizedHeadId scriptHash finalizedUtxos
+      Nothing -> pure ()
   ConnectionLost{lostHeadId} -> do
     logWarn logger "Connection lost to head" [("headId", toJSON lostHeadId)]
     Db.updateHeadStatus pool lostHeadId "unreachable"

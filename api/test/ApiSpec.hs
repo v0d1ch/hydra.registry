@@ -1,6 +1,6 @@
 module ApiSpec (spec) where
 
-import Api (hopTimeoutSlot, hopUrgency, participantActionsFor, routeRolesFor)
+import Api (hopTimeoutMarginSlots, hopTimeoutSlot, hopUrgency, participantActionsFor, routeRolesFor)
 import Api.Types (ParticipantAction (..))
 import Data.Functor.Identity (Identity)
 import Data.Int (Int32, Int64)
@@ -175,6 +175,44 @@ spec = describe "Api" $ do
             [ mkHop 0 me bridge "locked" (Just "preimg") 100
             ]
       participantActionsFor chainSlot me hops `shouldBe` []
+
+    it "3-hop stuck: bridge sees Refund once its timeout passes but upstream sender does not yet" $ do
+      -- Scenario: hop 2 (bridge2→carol) was never created so carol never
+      -- revealed the preimage. hop 1's timeout has passed; hop 0's has not.
+      let alice   = "alice-pkh"
+          bridge1 = "bridge1-pkh"
+          bridge2 = "bridge2-pkh"
+          chain   = 700 :: Int64
+          hops    =
+            [ mkHop 0 alice   bridge1 "locked" Nothing 1200
+            , mkHop 1 bridge1 bridge2 "locked" Nothing 600
+            ]
+      -- bridge1 is sender of hop 1: 700 >= 600 → refund
+      map (.kind) (participantActionsFor chain bridge1 hops) `shouldBe` ["refund"]
+      -- alice is sender of hop 0: 700 < 1200 → no action yet
+      participantActionsFor chain alice hops `shouldBe` []
+
+    it "3-hop stuck: original sender sees Refund only after their own timeout passes" $ do
+      let alice   = "alice-pkh"
+          bridge1 = "bridge1-pkh"
+          bridge2 = "bridge2-pkh"
+          chain   = 1300 :: Int64
+          hops    =
+            [ mkHop 0 alice   bridge1 "locked" Nothing 1200
+            , mkHop 1 bridge1 bridge2 "locked" Nothing 600
+            ]
+      map (.kind) (participantActionsFor chain alice hops) `shouldBe` ["refund"]
+
+    it "upstream hop timeout always exceeds downstream by at least hopTimeoutMarginSlots" $ do
+      -- Guarantees every bridge has a window to learn the outcome of its
+      -- downstream hop before its own upstream lock can be refunded.
+      let base = 100_000_000
+          n    = 3
+          gaps =
+            [ hopTimeoutSlot base n i - hopTimeoutSlot base n (i + 1)
+            | i <- [0 .. n - 2]
+            ]
+      all (>= hopTimeoutMarginSlots) gaps `shouldBe` True
 
   describe "hopTimeoutSlot" $ do
     -- The downstream-most hop (largest hopIndex) should be the *first*

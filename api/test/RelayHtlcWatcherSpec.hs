@@ -326,6 +326,20 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       hop1.hopHtlcStatus `shouldBe` "claimed"
       hop1.hopClaimedAt `shouldSatisfy` (/= Nothing)
 
+    it "marks hop claimed when HTLC UTxO disappears via sender refund (L2 refund path)" $ \pool -> do
+      -- After the timeout passes the sender submits a Refund tx on L2.
+      -- From the watcher's perspective this is indistinguishable from a
+      -- receiver Claim — the HTLC UTxO simply disappears from the snapshot.
+      -- Both paths result in hopHtlcStatus = "claimed".
+      setupTestPayment pool "head-A" "addr_alice" "addr_bob"
+      now <- getCurrentTime
+      Db.updateHopLocked pool "hop-1" "lock-tx-refund" now
+      -- Empty snapshot: UTxO was spent by a refund tx
+      runWatcher pool "head-A" testScriptHash []
+      hops <- Db.getRouteHops pool "route-1"
+      let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
+      hop1.hopHtlcStatus `shouldBe` "claimed"
+
     it "does not claim when locked HTLC UTxO is still present" $ \pool -> do
       setupTestPayment pool "head-A" "addr_alice" "addr_bob"
 

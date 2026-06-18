@@ -156,6 +156,7 @@ test-suite hydra-registry-api-test
     , wai
     , wai-extra
   other-modules:
+    IndexerSpec
     ApiIntegrationSpec
     ApiTypesSpec
     ConfigSpec
