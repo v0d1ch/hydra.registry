@@ -1598,8 +1598,7 @@ handleLockTxCbor pool chainSlotVar mScriptCbor rid idx req = do
           , protocolParamsJson = ppText
           , plutusEnvelope = envOpt
           }
-  result <- liftIO $ Tx.buildLockTx lockArgs
-  case result of
+  case Tx.buildLockTx lockArgs of
     Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
     Right br -> pure br
 
@@ -1664,8 +1663,7 @@ handleClaimTxCbor pool chainSlotVar rid idx req = do
           , feeLovelace = fee
           , protocolParamsJson = ppText
           }
-  result <- liftIO $ Tx.buildClaimTx claimArgs
-  case result of
+  case Tx.buildClaimTx claimArgs of
     Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
     Right br -> pure br
 
@@ -1715,8 +1713,7 @@ handleRefundTxCbor pool _chainSlotVar rid idx req = do
           , feeLovelace = fee
           , protocolParamsJson = ppText
           }
-  result <- liftIO $ Tx.buildRefundTx refundArgs
-  case result of
+  case Tx.buildRefundTx refundArgs of
     Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
     Right br -> pure br
 
@@ -1747,8 +1744,7 @@ handlePublishRefTxCbor pool mScriptCbor hid req = do
           , protocolParamsJson = ppText
           , plutusEnvelope = plutusEnvelopeJson scriptCbor
           }
-  result <- liftIO $ Tx.buildPublishRefTx pubArgs
-  case result of
+  case Tx.buildPublishRefTx pubArgs of
     Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
     Right br -> pure br
 

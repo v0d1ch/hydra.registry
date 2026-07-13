@@ -99,7 +99,7 @@ hydra.registry/
 │   │   │   ├── Htlc.hs        # CBOR encoding for datum/redeemer
 │   │   │   └── Submit.hs      # one-shot WS forwarder for signed tx CBOR
 │   │   ├── Tx/
-│   │   │   └── Builder.hs     # cardano-cli shell-out: lock/claim/refund/publish
+│   │   │   └── Builder.hs     # native cardano-api tx building: lock/claim/refund/publish
 │   │   ├── Indexer.hs         # event loop + reconnectAllHeads
 │   │   ├── Logging.hs         # structured JSON logging
 │   │   ├── Metrics.hs         # Prometheus counters
@@ -140,13 +140,17 @@ hydra.registry/
 
 ### 4.1 Stack
 
-- **Language:** Haskell, GHC 9.10
+- **Language:** Haskell, GHC 9.6.7 (from hydra's `cabalOnly` dev shell; see §8.1)
 - **Web:** Servant (`API` type at `Api.hs:80`)
 - **DB:** Rel8 over Hasql, PostgreSQL 16
 - **Concurrency:** `async` + STM (`TVar`, `TQueue`)
 - **WebSockets:** `Network.WebSockets` for hydra-node connections
+- **Cardano:** `hydra-cardano-api` / `cardano-api` (Conway era), built from the
+  local `~/code/hydra` checkout as cabal source packages against CHaP
 - **Logging:** Aeson-encoded JSON to stdout
-- **Build:** Cabal, no Stack
+- **Build:** Cabal, no Stack; `api/cabal.project` mirrors hydra's own
+  index-states, `allow-newer` and plutus constraints so the shared
+  `~/.cabal/store` is reused between the two projects
 
 ### 4.2 Module map
 
@@ -326,7 +330,7 @@ Servant type in `api/src/Api.hs:80`. Routes group thematically:
 | Relay graph & invoices | `GET /api/v1/relay/graph`, `POST /api/v1/relay/invoices`, `GET …/{id}` | graph response includes nodes + edges for the UI viz |
 | Routing & payments | `POST /api/v1/relay/routes`, `POST …/{id}/execute`, `GET /api/v1/relay/payments/{id}`, `POST /api/v1/relay/preimage/{hash}` | preimage broadcast unblocks bridge claims |
 | HTLC blueprints | `GET /api/v1/htlc/validator`, `POST /api/v1/relay/payments/{routeId}/hops/{i}/{lock,claim,refund}-tx` | returns CBOR + slot bounds; **caller signs and submits** |
-| Server-built tx (Conway envelope) | `POST /api/v1/relay/payments/{r}/hops/{i}/{lock,claim,refund}-tx-cbor`, `POST /api/v1/heads/{id}/publish-ref-script-tx-cbor` | server fetches head's `/protocol-parameters`, picks a wallet UTxO + collateral from the indexed snapshot, shells `cardano-cli build-raw`, returns Conway envelope JSON for the user to sign **offline** with their own keys |
+| Server-built tx (Conway envelope) | `POST /api/v1/relay/payments/{r}/hops/{i}/{lock,claim,refund}-tx-cbor`, `POST /api/v1/heads/{id}/publish-ref-script-tx-cbor` | server fetches head's `/protocol-parameters`, picks a wallet UTxO + collateral from the indexed snapshot, builds the tx natively in-process via `hydra-cardano-api` (`Tx.Builder`), returns Conway envelope JSON for the user to sign **offline** with their own keys |
 | Submit | `POST /api/v1/heads/{id}/submit` | accepts signed CBOR, forwards to head's WS as `NewTx`, reports `TxValid` / `TxInvalid` synchronously |
 | Live state | `GET /api/v1/relay/payments/{r}/events` (SSE), `GET /api/v1/relay/participants/{pkh}/routes` | SSE pushes lock/claim/preimage/completion events; participant routes feed shows roles + computed eligible actions per hop |
 | Static files | catch-all `Raw` | serves `website/dist/` |
@@ -402,7 +406,7 @@ The watcher is invoked from `Indexer.processEvent` on every Greetings/SnapshotCo
 | PostgreSQL | bidirectional | Hasql pool, conn str via `HYDRA_DB_CONN_STR` |
 | hydra-node WebSockets | inbound events, outbound `NewTx` | one socket per registered head; URL = `ws://host:port` |
 | hydra-explorer | inbound polling | HTTP GET on `HYDRA_EXPLORER_URL/heads`, every `HYDRA_EXPLORER_POLL_INTERVAL` seconds (default 30 s) |
-| cardano-node / cardano-cli | **none directly** | the registry never calls cardano-cli; clients build/sign/submit themselves |
+| cardano-node / cardano-cli | **none** | tx assembly is native (`hydra-cardano-api`); the server needs no cardano-cli binary at runtime, and clients sign/submit themselves |
 
 The registry is intentionally a passive observer of L1 — all chain time information flows through Hydra Greetings (`currentSlot`).
 
@@ -490,9 +494,39 @@ graph LR
   backend --> pg
 ```
 
-- `nix develop` provides GHC 9.10, cabal, Node, PostgreSQL, websocat, jq, hydra-node, cardano-node.
+- `nix develop` provides GHC 9.6.7, cabal, Node, PostgreSQL, websocat, jq, hydra-node, cardano-node.
 - `./dev.sh` initialises a local Postgres in the repo, builds and runs the API on `:8080`, runs Vite on `:5173` with proxy.
 - For end-to-end relay testing: in separate terminals, `testnet/run.sh preview`, `testnet/hydra.sh preview`, `testnet/open-heads.sh preview`. Then register the heads via `POST /api/v1/heads/register` from the UI.
+
+### 8.1 Dev shell & toolchain
+
+The dev shell (`flake.nix`) extends **hydra's `cabalOnly` shell** (input
+`github:cardano-scaling/hydra/2.2.0`) instead of assembling its own GHC:
+that inherits the haskell.nix GHC 9.6.7 plus every Cardano C library
+(libsodium-vrf, libblst, libsecp256k1, librust_accumulator, lmdb,
+liburing) needed to compile the hydra packages. Three rules keep it
+working:
+
+- **One glibc.** The flake's `nixpkgs` follows `hydra/nixpkgs`, and any
+  library that gets **linked into the Haskell build** (libpq!) must come
+  from `nixpkgs-2411` (glibc 2.40) — the generation the haskell.nix GHC
+  was built against. Mixing generations fails at build time with
+  ``version `GLIBC_2.42' not found`` when hsc2hs probe binaries load the
+  library.
+- **One cabal config.** `api/cabal.project` copies hydra's index-states,
+  `allow-newer`, plutus `constraints` and `package *` stanzas verbatim,
+  and adds the hydra packages from `~/code/hydra` as source packages.
+  Keeping these identical lets the shared `~/.cabal/store/ghc-9.6.7`
+  serve both projects.
+- **Stale pkg-config units.** If a `*-configure` store unit (e.g.
+  `postgresql-libpq-configure`) was built against a different shell, its
+  baked-in library paths survive environment changes; evict the unit dir
+  plus its `package.db/*.conf` and `ghc-pkg recache` to force rebuild.
+
+Note the version split: the *shell* (toolchain, hydra-node binary) is
+pinned to the hydra `2.2.0` tag, while the *source packages* build from
+the local `~/code/hydra` checkout, which may be ahead. Keep the checkout
+compatible with the pinned CHaP index-state when pulling hydra master.
 
 ---
 
@@ -530,6 +564,10 @@ These are tracked outside this doc (in conversation tasks and memory). At a glan
 *Last full review:* 2026-04-30. Update the date and the relevant sections together when significant structural change lands.
 
 *Recent updates:*
+- 2026-07-13 — Toolchain migration + native transaction building:
+  - Dev shell now extends hydra 2.2.0's `cabalOnly` shell (GHC 9.6.7, haskell.nix) instead of a self-assembled GHC 9.10 package set; `nixpkgs` follows `hydra/nixpkgs`, postgres comes from `nixpkgs-2411` to keep one glibc across the toolchain (§8.1).
+  - `api/cabal.project` gained CHaP + the hydra packages from `~/code/hydra` as source packages, mirroring hydra's own solver configuration for store reuse.
+  - `Tx.Builder` rewritten from `cardano-cli conway transaction build-raw` shell-out to **native, pure tx construction via `hydra-cardano-api`** (Conway). Same four builders and `BuildResult` envelope shape; no temp dirs, no subprocess, no cardano-cli runtime dependency. Script-integrity hash now computed from the head's decoded `PParams`. `TxBuilderSpec` asserts on decoded tx bodies (inputs, inline datum round-trip, redeemer exec-units, collateral, validity bounds) instead of argv strings.
 - 2026-04-30 — Smooth-UX foundation: SSE event stream for live SPA timelines, server-side tx assembly via cardano-cli shell-out (the SPA never touches signing keys), and a per-pkh dashboard feed with computed action eligibility.
   - `Relay.EventBus` — STM broadcast `TChan` of `HopLocked` / `HopClaimed` / `PreimageRevealed` / `RouteCompleted`. Watcher publishes; SSE handler at `GET /relay/payments/{r}/events` filters per route.
   - `GET /relay/participants/{pkh}/routes` — dashboard feed with `roles` + `actions` computed by `participantActionsFor` (rules: locker can lock when upstream is ready; receiver can claim when preimage is in DB; sender can refund after timeout).

@@ -1,3 +1,11 @@
+-- | Native construction of the four HTLC transaction shapes, using
+-- @hydra-cardano-api@ (Conway era) instead of shelling out to
+-- @cardano-cli conway transaction build-raw@.
+--
+-- The builders are pure: given fully-resolved arguments they either
+-- return the unsigned transaction (CBOR + txId + text envelope) or a
+-- descriptive error. Fees and execution units are explicit, exactly as
+-- they were with @build-raw@ — nothing is balanced or estimated here.
 module Tx.Builder
   ( BuildResult (..)
   , LockArgs (..)
@@ -9,35 +17,25 @@ module Tx.Builder
   , buildRefundTx
   , buildPublishRefTx
   , extractPkhFromAddress
-  , -- exposed for unit tests
-    lockTxArgs
-  , claimTxArgs
-  , refundTxArgs
-  , publishRefTxArgs
   , htlcExecUnits
   )
 where
 
+import Cardano.Api qualified as CApi
 import Codec.Binary.Bech32 qualified as Bech32
-import Control.Exception (IOException, bracket, try)
-import Data.Aeson (Value)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
+import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as Base16
-import Data.ByteString.Lazy qualified as BSL
+import Data.Function ((&))
 import Data.Int (Int64)
-import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Text.Encoding qualified as T
-import Data.UUID qualified as UUID
-import Data.UUID.V4 qualified as UUID
+import Data.Text.Encoding qualified as TE
 import GHC.Generics (Generic)
-import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive)
-import System.Exit (ExitCode (..))
-import System.FilePath ((</>))
-import System.Process (readProcessWithExitCode)
+import Hydra.Cardano.Api
+import Text.Read (readMaybe)
 
 -- | Result of a successful tx build.
 --
@@ -48,15 +46,15 @@ import System.Process (readProcessWithExitCode)
 data BuildResult = BuildResult
   { cborHex :: Text
   , txId :: Text
-  , envelope :: Value
+  , envelope :: Aeson.Value
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Aeson.FromJSON)
 
 instance Aeson.ToJSON BuildResult where
-  toJSON BuildResult{txId, envelope} =
+  toJSON BuildResult{txId = tid, envelope} =
     case envelope of
-      Aeson.Object km -> Aeson.Object (KM.insert (Key.fromString "txId") (Aeson.String txId) km)
+      Aeson.Object km -> Aeson.Object (KM.insert (Key.fromString "txId") (Aeson.String tid) km)
       other -> other
 
 -- ─── argument records ──────────────────────────────────────────────────
@@ -77,50 +75,50 @@ data LockArgs = LockArgs
   , -- | Plutus Data CBOR for the HTLC datum, hex-encoded.
     datumCborHex :: Text
   , -- | When @Just@: the head has a shared HTLC ref-script UTxO and
-    -- the lock output omits the inline script. When @Nothing@: a
-    -- Plutus envelope file is written and inlined as the output's
-    -- @reference_script@.
+    -- the lock output omits the inline script. When @Nothing@: the
+    -- 'plutusEnvelope' is attached as the output's reference script.
     sharedRefUtxo :: Maybe Text
   , -- | Lovelace to lock at the script address.
     lockAmount :: Int64
-  , -- | @--invalid-hereafter@ slot.
+  , -- | Upper validity bound (@--invalid-hereafter@ equivalent).
     validityUpperSlot :: Int64
-  , -- | Pkh of the locker (sender of this hop). Set as
-    -- @--required-signer-hash@.
+  , -- | Pkh of the locker (sender of this hop), listed as a
+    -- required signer.
     requiredSignerPkhHex :: Text
   , -- | Fee in lovelace.
     feeLovelace :: Int64
   , -- | Conway protocol-parameters JSON (the response body from
-    -- the head's @GET /protocol-parameters@). The builder writes
-    -- it to its own temp dir before invoking @cardano-cli@.
+    -- the head's @GET /protocol-parameters@). Unused for the lock
+    -- tx (nothing is executed), kept for interface stability.
     protocolParamsJson :: Text
   , -- | Plutus V3 envelope JSON (with @cborHex@) for the HTLC
     -- validator. Required only when 'sharedRefUtxo' is 'Nothing'.
-    plutusEnvelope :: Maybe Value
+    plutusEnvelope :: Maybe Aeson.Value
   }
 
 -- | Inputs required to build an HTLC claim tx — the claimer spends
 -- the locked HTLC UTxO using a 'Claim(preimage)' redeemer.
 data ClaimArgs = ClaimArgs
-  { -- | @"<txhash>"@ of the lock tx; we always use index 0.
+  { -- | @"<txhash>"@ of the lock tx.
     htlcInputTxHash :: Text
   , htlcInputIndex :: Int
   , -- | The head's published ref-script UTxO
-    -- (@"<txhash>#<ix>"@). Claims always use --spending-tx-in-reference;
-    -- the lock output's own inline ref script can't satisfy it because
-    -- the same UTxO can't be both input and reference input.
+    -- (@"<txhash>#<ix>"@). Claims always spend via the reference
+    -- script; the lock output's own inline ref script can't satisfy
+    -- it because the same UTxO can't be both input and reference
+    -- input.
     refScriptUtxo :: Text
-  , -- | Plutus Data CBOR for @Claim(preimage)@.
+  , -- | Plutus Data CBOR for @Claim(preimage)@, hex-encoded.
     redeemerCborHex :: Text
   , -- | Pure-ADA collateral input — @"<txhash>#<ix>"@.
     collateralUtxo :: Text
   , -- | Lovelace value of the collateral input.
     collateralLovelace :: Int64
-  , -- | @--tx-total-collateral@ — pledged amount (≤ collateralLovelace).
+  , -- | Pledged collateral (≤ collateralLovelace).
     totalCollateralLovelace :: Int64
   , -- | Where the claim output goes (typically the claimer's
     -- wallet address inside the head). Also receives the
-    -- return-collateral if one is needed.
+    -- return-collateral.
     walletAddress :: Text
   , -- | Lovelace value of the locked HTLC UTxO; the claim output
     -- gets @htlcOutputLovelace - feeLovelace@.
@@ -133,7 +131,7 @@ data ClaimArgs = ClaimArgs
   }
 
 -- | Inputs for an HTLC refund tx (mirror of claim, but with the
--- @Refund@ redeemer and @--invalid-before@).
+-- @Refund@ redeemer and a lower validity bound).
 data RefundArgs = RefundArgs
   { htlcInputTxHash :: Text
   , htlcInputIndex :: Int
@@ -155,8 +153,7 @@ data RefundArgs = RefundArgs
 -- operator's wallet address. After submission, the operator
 -- registers the resulting @"<txhash>#<ix>"@ via
 -- @POST /heads/{id}/ref-script@ so future locks can drop their
--- min-ada and future claims can use --spending-tx-in-reference
--- against this UTxO.
+-- min-ada and future claims can spend via this UTxO.
 data PublishRefArgs = PublishRefArgs
   { inputUtxo :: Text
   , inputLovelace :: Int64
@@ -167,7 +164,7 @@ data PublishRefArgs = PublishRefArgs
   , feeLovelace :: Int64
   , protocolParamsJson :: Text
   , -- | Plutus V3 envelope JSON for the HTLC validator.
-    plutusEnvelope :: Value
+    plutusEnvelope :: Aeson.Value
   }
 
 -- ─── exec units ───────────────────────────────────────────────────────
@@ -179,6 +176,14 @@ data PublishRefArgs = PublishRefArgs
 -- estimated per-tx — our validator is small and shape-stable.
 htlcExecUnits :: (Integer, Integer)
 htlcExecUnits = (10_000_000_000, 4_000_000)
+
+htlcExecutionUnits :: ExecutionUnits
+htlcExecutionUnits =
+  let (steps, mem) = htlcExecUnits
+   in ExecutionUnits
+        { executionSteps = fromInteger steps
+        , executionMemory = fromInteger mem
+        }
 
 -- | Extract the 28-byte payment key hash from a bech32 Cardano address.
 -- Works for enterprise addresses (addr1/addr_test1) where byte[0] is the
@@ -192,293 +197,255 @@ extractPkhFromAddress addr =
       Nothing -> Left "invalid bech32 data part"
       Just bytes
         | BS.length bytes < 29 -> Left "address too short"
-        | otherwise -> Right $ T.decodeUtf8 $ Base16.encode $ BS.take 28 $ BS.drop 1 bytes
+        | otherwise -> Right $ TE.decodeUtf8 $ Base16.encode $ BS.take 28 $ BS.drop 1 bytes
 
 -- ─── builders ──────────────────────────────────────────────────────────
 
--- | Build a lock tx. May fail if @cardano-cli@ exits non-zero, the
--- output envelope can't be parsed, or 'sharedRefUtxo' is 'Nothing'
--- but no 'plutusEnvelope' is supplied.
-buildLockTx :: LockArgs -> IO (Either Text BuildResult)
-buildLockTx args =
-  case (args.sharedRefUtxo, args.plutusEnvelope) of
+-- | Build a lock tx: wallet input → script output (inline datum,
+-- optional inline ref script) + change output.
+buildLockTx :: LockArgs -> Either Text BuildResult
+buildLockTx args = do
+  refScript <- case (args.sharedRefUtxo, args.plutusEnvelope) of
+    (Just _, _) -> pure ReferenceScriptNone
+    (Nothing, Just env) -> mkScriptRef <$> parsePlutusEnvelope env
     (Nothing, Nothing) ->
-      pure (Left "lock: no shared ref-script UTxO and no plutus envelope was supplied")
-    _ ->
-      withTempDir $ \dir -> do
-        let datumPath = dir </> "datum.cbor"
-            envPath = dir </> "htlc.plutus.json"
-            ppPath = dir </> "pp.json"
-            outPath = dir </> "tx.raw"
-        writeBinFromHex datumPath args.datumCborHex
-        BS.writeFile ppPath (T.encodeUtf8 args.protocolParamsJson)
-        case args.plutusEnvelope of
-          Just env -> BSL.writeFile envPath (Aeson.encode env)
-          Nothing -> pure ()
-        runBuildAndPackage outPath (lockTxArgs args datumPath envPath ppPath outPath)
+      Left "lock: no shared ref-script UTxO and no plutus envelope was supplied"
+  txIn <- parseUtxoRef args.inputUtxo
+  scriptAddr <- parseAddress args.scriptAddress
+  walletAddr <- parseAddress args.walletAddress
+  datum <- parseScriptData "datum" args.datumCborHex
+  signer <- parsePkh args.requiredSignerPkhHex
+  let change = args.inputLovelace - args.lockAmount - args.feeLovelace
+      content =
+        defaultTxBodyContent
+          & setTxIns [withWitness txIn]
+          & setTxOuts
+            [ TxOut
+                scriptAddr
+                (lovelaceToValue (Coin (fromIntegral args.lockAmount)))
+                (TxOutDatumInline datum)
+                refScript
+            , TxOut
+                walletAddr
+                (lovelaceToValue (Coin (fromIntegral change)))
+                TxOutDatumNone
+                ReferenceScriptNone
+            ]
+          & setTxFee (TxFeeExplicit (Coin (fromIntegral args.feeLovelace)))
+          & setTxValidityUpperBound (TxValidityUpperBound (SlotNo (fromIntegral args.validityUpperSlot)))
+          & setTxExtraKeyWits (TxExtraKeyWitnesses [signer])
+  packageTx "lock" content
 
--- | Build a claim tx.
-buildClaimTx :: ClaimArgs -> IO (Either Text BuildResult)
-buildClaimTx args = withTempDir $ \dir -> do
-  let redeemerPath = dir </> "redeemer.cbor"
-      ppPath = dir </> "pp.json"
-      outPath = dir </> "tx.raw"
-  writeBinFromHex redeemerPath args.redeemerCborHex
-  BS.writeFile ppPath (T.encodeUtf8 args.protocolParamsJson)
-  runBuildAndPackage outPath (claimTxArgs args redeemerPath ppPath outPath)
+-- | Build a claim tx: spend the HTLC UTxO via the published
+-- reference script with the @Claim(preimage)@ redeemer.
+buildClaimTx :: ClaimArgs -> Either Text BuildResult
+buildClaimTx args =
+  spendHtlcTx
+    "claim"
+    SpendHtlcArgs
+      { inputTxHash = args.htlcInputTxHash
+      , inputIndex = args.htlcInputIndex
+      , refScriptUtxo = args.refScriptUtxo
+      , redeemerCborHex = args.redeemerCborHex
+      , collateralUtxo = args.collateralUtxo
+      , collateralLovelace = args.collateralLovelace
+      , totalCollateralLovelace = args.totalCollateralLovelace
+      , walletAddress = args.walletAddress
+      , htlcOutputLovelace = args.htlcOutputLovelace
+      , requiredSignerPkhHex = args.requiredSignerPkhHex
+      , feeLovelace = args.feeLovelace
+      , protocolParamsJson = args.protocolParamsJson
+      , validityLower = TxValidityNoLowerBound
+      , validityUpper = TxValidityUpperBound (SlotNo (fromIntegral args.validityUpperSlot))
+      }
 
--- | Build a refund tx.
-buildRefundTx :: RefundArgs -> IO (Either Text BuildResult)
-buildRefundTx args = withTempDir $ \dir -> do
-  let redeemerPath = dir </> "redeemer.cbor"
-      ppPath = dir </> "pp.json"
-      outPath = dir </> "tx.raw"
-  writeBinFromHex redeemerPath args.redeemerCborHex
-  BS.writeFile ppPath (T.encodeUtf8 args.protocolParamsJson)
-  runBuildAndPackage outPath (refundTxArgs args redeemerPath ppPath outPath)
-
--- | Build a publish-ref-script tx.
-buildPublishRefTx :: PublishRefArgs -> IO (Either Text BuildResult)
-buildPublishRefTx args = withTempDir $ \dir -> do
-  let envPath = dir </> "htlc.plutus.json"
-      ppPath = dir </> "pp.json"
-      outPath = dir </> "tx.raw"
-  BSL.writeFile envPath (Aeson.encode args.plutusEnvelope)
-  BS.writeFile ppPath (T.encodeUtf8 args.protocolParamsJson)
-  runBuildAndPackage outPath (publishRefTxArgs args envPath ppPath outPath)
-
--- ─── pure command-line generation (exposed for tests) ─────────────────
-
--- | Conway @transaction build-raw@ argv for a lock tx, given the
--- on-disk paths for the datum binary, the (optional) plutus
--- envelope JSON, the protocol-parameters JSON, and the output tx
--- file.
-lockTxArgs :: LockArgs -> FilePath -> FilePath -> FilePath -> FilePath -> [String]
-lockTxArgs args datumPath envPath ppPath outPath =
-  let lockOutFlags =
-        [ "--tx-out"
-        , T.unpack args.scriptAddress <> "+" <> show args.lockAmount
-        , "--tx-out-inline-datum-cbor-file"
-        , datumPath
-        ]
-          <> case args.sharedRefUtxo of
-            -- With a shared ref UTxO, the lock output omits the
-            -- inline script. (Future locks can't reference *this*
-            -- output's script anyway — they'd hit
-            -- BabbageNonDisjointRefInputs — so the inline-on-output
-            -- form is only useful in the no-shared-ref case.)
-            Just _ -> []
-            Nothing -> ["--tx-out-reference-script-file", envPath]
-      change = args.inputLovelace - args.lockAmount - args.feeLovelace
-   in [ "conway"
-      , "transaction"
-      , "build-raw"
-      , "--tx-in"
-      , T.unpack args.inputUtxo
-      ]
-        <> lockOutFlags
-        <> [ "--tx-out"
-           , T.unpack args.walletAddress <> "+" <> show change
-           , "--invalid-hereafter"
-           , show args.validityUpperSlot
-           , "--required-signer-hash"
-           , T.unpack args.requiredSignerPkhHex
-           , "--fee"
-           , show args.feeLovelace
-           , "--protocol-params-file"
-           , ppPath
-           , "--out-file"
-           , outPath
-           ]
-
--- | Conway @transaction build-raw@ argv for a claim tx.
-claimTxArgs :: ClaimArgs -> FilePath -> FilePath -> FilePath -> [String]
-claimTxArgs args redeemerPath ppPath outPath =
-  let (steps, mem) = htlcExecUnits
-      claimOut = args.htlcOutputLovelace - args.feeLovelace
-      returnCollateral = args.collateralLovelace - args.totalCollateralLovelace
-   in [ "conway"
-      , "transaction"
-      , "build-raw"
-      , "--tx-in"
-      , T.unpack args.htlcInputTxHash <> "#" <> show args.htlcInputIndex
-      , "--spending-tx-in-reference"
-      , T.unpack args.refScriptUtxo
-      , "--spending-plutus-script-v3"
-      , "--spending-reference-tx-in-inline-datum-present"
-      , "--spending-reference-tx-in-redeemer-cbor-file"
-      , redeemerPath
-      , "--spending-reference-tx-in-execution-units"
-      , "(" <> show steps <> "," <> show mem <> ")"
-      , "--tx-in-collateral"
-      , T.unpack args.collateralUtxo
-      , "--tx-out-return-collateral"
-      , T.unpack args.walletAddress <> "+" <> show returnCollateral
-      , "--tx-total-collateral"
-      , show args.totalCollateralLovelace
-      , "--tx-out"
-      , T.unpack args.walletAddress <> "+" <> show claimOut
-      , "--invalid-hereafter"
-      , show args.validityUpperSlot
-      , "--required-signer-hash"
-      , T.unpack args.requiredSignerPkhHex
-      , "--fee"
-      , show args.feeLovelace
-      , "--protocol-params-file"
-      , ppPath
-      , "--out-file"
-      , outPath
-      ]
-
--- | Conway @transaction build-raw@ argv for a refund tx — mirror of
--- claim, but with @--invalid-before@ (refund must happen *after*
+-- | Build a refund tx — mirror of claim, but with the @Refund@
+-- redeemer and a lower validity bound (refund must happen *after*
 -- the timeout).
-refundTxArgs :: RefundArgs -> FilePath -> FilePath -> FilePath -> [String]
-refundTxArgs args redeemerPath ppPath outPath =
-  let (steps, mem) = htlcExecUnits
-      refundOut = args.htlcOutputLovelace - args.feeLovelace
-      returnCollateral = args.collateralLovelace - args.totalCollateralLovelace
-   in [ "conway"
-      , "transaction"
-      , "build-raw"
-      , "--tx-in"
-      , T.unpack args.htlcInputTxHash <> "#" <> show args.htlcInputIndex
-      , "--spending-tx-in-reference"
-      , T.unpack args.refScriptUtxo
-      , "--spending-plutus-script-v3"
-      , "--spending-reference-tx-in-inline-datum-present"
-      , "--spending-reference-tx-in-redeemer-cbor-file"
-      , redeemerPath
-      , "--spending-reference-tx-in-execution-units"
-      , "(" <> show steps <> "," <> show mem <> ")"
-      , "--tx-in-collateral"
-      , T.unpack args.collateralUtxo
-      , "--tx-out-return-collateral"
-      , T.unpack args.walletAddress <> "+" <> show returnCollateral
-      , "--tx-total-collateral"
-      , show args.totalCollateralLovelace
-      , "--tx-out"
-      , T.unpack args.walletAddress <> "+" <> show refundOut
-      , "--invalid-before"
-      , show args.validityLowerSlot
-      , "--required-signer-hash"
-      , T.unpack args.requiredSignerPkhHex
-      , "--fee"
-      , show args.feeLovelace
-      , "--protocol-params-file"
-      , ppPath
-      , "--out-file"
-      , outPath
-      ]
+buildRefundTx :: RefundArgs -> Either Text BuildResult
+buildRefundTx args =
+  spendHtlcTx
+    "refund"
+    SpendHtlcArgs
+      { inputTxHash = args.htlcInputTxHash
+      , inputIndex = args.htlcInputIndex
+      , refScriptUtxo = args.refScriptUtxo
+      , redeemerCborHex = args.redeemerCborHex
+      , collateralUtxo = args.collateralUtxo
+      , collateralLovelace = args.collateralLovelace
+      , totalCollateralLovelace = args.totalCollateralLovelace
+      , walletAddress = args.walletAddress
+      , htlcOutputLovelace = args.htlcOutputLovelace
+      , requiredSignerPkhHex = args.requiredSignerPkhHex
+      , feeLovelace = args.feeLovelace
+      , protocolParamsJson = args.protocolParamsJson
+      , validityLower = TxValidityLowerBound (SlotNo (fromIntegral args.validityLowerSlot))
+      , validityUpper = TxValidityNoUpperBound
+      }
 
--- | Conway @transaction build-raw@ argv for a publish-ref-script tx.
-publishRefTxArgs :: PublishRefArgs -> FilePath -> FilePath -> FilePath -> [String]
-publishRefTxArgs args envPath ppPath outPath =
+-- | Build a publish-ref-script tx: wallet input → small output
+-- carrying the validator as an inline reference script + change.
+-- A plain key-witnessed tx: no scripts execute.
+buildPublishRefTx :: PublishRefArgs -> Either Text BuildResult
+buildPublishRefTx args = do
+  script <- parsePlutusEnvelope args.plutusEnvelope
+  txIn <- parseUtxoRef args.inputUtxo
+  walletAddr <- parseAddress args.walletAddress
   let change = args.inputLovelace - args.refOutputLovelace - args.feeLovelace
-   in [ "conway"
-      , "transaction"
-      , "build-raw"
-      , "--tx-in"
-      , T.unpack args.inputUtxo
-      , "--tx-out"
-      , T.unpack args.walletAddress <> "+" <> show args.refOutputLovelace
-      , "--tx-out-reference-script-file"
-      , envPath
-      , "--tx-out"
-      , T.unpack args.walletAddress <> "+" <> show change
-      , "--fee"
-      , show args.feeLovelace
-      , "--protocol-params-file"
-      , ppPath
-      , "--out-file"
-      , outPath
-      ]
+      content =
+        defaultTxBodyContent
+          & setTxIns [withWitness txIn]
+          & setTxOuts
+            [ TxOut
+                walletAddr
+                (lovelaceToValue (Coin (fromIntegral args.refOutputLovelace)))
+                TxOutDatumNone
+                (mkScriptRef script)
+            , TxOut
+                walletAddr
+                (lovelaceToValue (Coin (fromIntegral change)))
+                TxOutDatumNone
+                ReferenceScriptNone
+            ]
+          & setTxFee (TxFeeExplicit (Coin (fromIntegral args.feeLovelace)))
+  packageTx "publish-ref" content
 
--- ─── shell-out plumbing ──────────────────────────────────────────────
+-- ─── shared HTLC spending core ─────────────────────────────────────────
 
-runBuildAndPackage :: FilePath -> [String] -> IO (Either Text BuildResult)
-runBuildAndPackage outPath cliArgs = do
-  buildE <- runCardanoCli cliArgs
-  case buildE of
-    Left err -> pure (Left err)
-    Right () -> do
-      raw <- BSL.readFile outPath
-      case Aeson.eitherDecode raw of
-        Left e -> pure (Left ("could not parse build-raw output: " <> T.pack e))
-        Right env -> do
-          tidE <- runCardanoCliCapture ["conway", "transaction", "txid", "--tx-file", outPath]
-          case tidE of
-            Left err -> pure (Left err)
-            Right tidStdout ->
-              -- @cardano-cli transaction txid@ may emit either bare
-              -- hex or a JSON @{"txhash":"…"}@; handle both.
-              let trimmed = T.strip tidStdout
-                  txid = case Aeson.eitherDecodeStrict (T.encodeUtf8 trimmed) of
-                    Right (Aeson.Object o)
-                      | Just (Aeson.String s) <- KM.lookup (Key.fromString "txhash") o -> s
-                    _ -> trimmed
-                  cbor = case env of
-                    Aeson.Object o
-                      | Just (Aeson.String s) <- KM.lookup (Key.fromString "cborHex") o -> s
-                    _ -> ""
-               in pure $
-                    Right
-                      BuildResult
-                        { cborHex = cbor
-                        , txId = txid
-                        , envelope = env
-                        }
+-- | What claim and refund have in common: spend the HTLC UTxO via
+-- the reference script with an explicit redeemer, budget, fee and
+-- collateral; only the validity interval differs.
+data SpendHtlcArgs = SpendHtlcArgs
+  { inputTxHash :: Text
+  , inputIndex :: Int
+  , refScriptUtxo :: Text
+  , redeemerCborHex :: Text
+  , collateralUtxo :: Text
+  , collateralLovelace :: Int64
+  , totalCollateralLovelace :: Int64
+  , walletAddress :: Text
+  , htlcOutputLovelace :: Int64
+  , requiredSignerPkhHex :: Text
+  , feeLovelace :: Int64
+  , protocolParamsJson :: Text
+  , validityLower :: TxValidityLowerBound
+  , validityUpper :: TxValidityUpperBound
+  }
 
--- | Run @cardano-cli ARGS@ with no captured stdout — failure goes
--- through stderr.
-runCardanoCli :: [String] -> IO (Either Text ())
-runCardanoCli cliArgs = do
-  res <- try @IOException $ readProcessWithExitCode "cardano-cli" cliArgs ""
-  pure $ case res of
-    Left e -> Left ("cardano-cli not runnable: " <> T.pack (show e))
-    Right (ExitSuccess, _, _) -> Right ()
-    Right (ExitFailure n, out, err) ->
-      Left $
-        "cardano-cli exit "
-          <> T.pack (show n)
-          <> ": "
-          <> T.pack (lastNonEmpty out err)
+spendHtlcTx :: Text -> SpendHtlcArgs -> Either Text BuildResult
+spendHtlcTx ctx args = do
+  htlcIn <- parseUtxoRef (args.inputTxHash <> "#" <> T.pack (show args.inputIndex))
+  refIn <- parseUtxoRef args.refScriptUtxo
+  collateralIn <- parseUtxoRef args.collateralUtxo
+  walletAddr <- parseAddress args.walletAddress
+  redeemer <- parseScriptData "redeemer" args.redeemerCborHex
+  signer <- parsePkh args.requiredSignerPkhHex
+  pparams <- parsePParams args.protocolParamsJson
+  let witness =
+        CApi.ScriptWitness ScriptWitnessForSpending $
+          CApi.PlutusScriptWitness
+            scriptLanguageInEra
+            CApi.PlutusScriptV3
+            (PReferenceScript refIn)
+            InlineScriptDatum
+            redeemer
+            htlcExecutionUnits
+      payout = args.htlcOutputLovelace - args.feeLovelace
+      returnCollateral = args.collateralLovelace - args.totalCollateralLovelace
+      content =
+        defaultTxBodyContent
+          & setTxIns [(htlcIn, BuildTxWith witness)]
+          & setTxInsReference (TxInsReference [refIn] (BuildTxWith mempty))
+          & setTxInsCollateral (TxInsCollateral [collateralIn])
+          & setTxTotalCollateral
+            (CApi.TxTotalCollateral babbageBasedEra (Coin (fromIntegral args.totalCollateralLovelace)))
+          & setTxReturnCollateral
+            ( CApi.TxReturnCollateral babbageBasedEra $
+                TxOut
+                  walletAddr
+                  (lovelaceToValue (Coin (fromIntegral returnCollateral)))
+                  TxOutDatumNone
+                  ReferenceScriptNone
+            )
+          & setTxOuts
+            [ TxOut
+                walletAddr
+                (lovelaceToValue (Coin (fromIntegral payout)))
+                TxOutDatumNone
+                ReferenceScriptNone
+            ]
+          & setTxFee (TxFeeExplicit (Coin (fromIntegral args.feeLovelace)))
+          & setTxValidityLowerBound args.validityLower
+          & setTxValidityUpperBound args.validityUpper
+          & setTxExtraKeyWits (TxExtraKeyWitnesses [signer])
+          & setTxProtocolParams (BuildTxWith (Just (LedgerProtocolParameters pparams)))
+  packageTx ctx content
 
-runCardanoCliCapture :: [String] -> IO (Either Text Text)
-runCardanoCliCapture cliArgs = do
-  res <- try @IOException $ readProcessWithExitCode "cardano-cli" cliArgs ""
-  pure $ case res of
-    Left e -> Left ("cardano-cli not runnable: " <> T.pack (show e))
-    Right (ExitSuccess, out, _) -> Right (T.pack out)
-    Right (ExitFailure n, out, err) ->
-      Left $
-        "cardano-cli exit "
-          <> T.pack (show n)
-          <> ": "
-          <> T.pack (lastNonEmpty out err)
+-- ─── body construction and packaging ───────────────────────────────────
 
-lastNonEmpty :: String -> String -> String
-lastNonEmpty a b
-  | not (null b) = b
-  | otherwise = a
+-- | Build the body, wrap it in an unsigned tx and serialise the
+-- text envelope, CBOR hex, and txId.
+packageTx :: Text -> TxBodyContent BuildTx -> Either Text BuildResult
+packageTx ctx content = do
+  body <-
+    first (\e -> ctx <> ": could not build tx body: " <> T.pack (show e)) $
+      createAndValidateTransactionBody content
+  let tx = makeSignedTransaction [] body
+  pure
+    BuildResult
+      { cborHex = TE.decodeUtf8 (Base16.encode (serialiseToCBOR tx))
+      , txId = serialiseToRawBytesHexText (getTxId body)
+      , envelope = Aeson.toJSON (serialiseToTextEnvelope Nothing tx)
+      }
 
--- | Hex → bytes, written to a file. Used for datum and redeemer
--- CBOR which @cardano-cli@ wants in raw binary form.
-writeBinFromHex :: FilePath -> Text -> IO ()
-writeBinFromHex path hex =
-  case Base16.decode (T.encodeUtf8 hex) of
-    Left _ -> BS.writeFile path BS.empty
-    Right b -> BS.writeFile path b
+-- ─── parsers ───────────────────────────────────────────────────────────
 
--- | A bracketed temp directory under @/tmp@. Unique name per call;
--- recursively removed on exit even if the action raises.
-withTempDir :: (FilePath -> IO a) -> IO a
-withTempDir =
-  bracket alloc removeDirectoryRecursive
-  where
-    alloc = do
-      uuid <- UUID.toString <$> UUID.nextRandom
-      let dir = "/tmp/hydra-registry-tx-" <> uuid
-      createDirectoryIfMissing True dir
-      pure dir
+-- | Parse a @"<txhash>#<ix>"@ UTxO reference.
+parseUtxoRef :: Text -> Either Text TxIn
+parseUtxoRef t =
+  case T.splitOn "#" t of
+    [hashText, ixText] -> do
+      tid <-
+        first (\e -> "invalid tx id in \"" <> t <> "\": " <> T.pack (show e)) $
+          (deserialiseFromRawBytesHex (TE.encodeUtf8 hashText) :: Either RawBytesHexError TxId)
+      ix <-
+        maybe (Left ("invalid tx index in \"" <> t <> "\"")) Right $
+          readMaybe (T.unpack ixText)
+      pure (TxIn tid (TxIx ix))
+    _ -> Left ("invalid UTxO reference (expected \"<txhash>#<ix>\"): " <> t)
 
+-- | Parse a bech32 payment address into the Conway era.
+parseAddress :: Text -> Either Text AddressInEra
+parseAddress t =
+  maybe (Left ("invalid bech32 address: " <> t)) Right $
+    deserialiseAddress (AsAddressInEra AsConwayEra) t
+
+-- | Parse hex-encoded Plutus Data CBOR (datum or redeemer).
+parseScriptData :: Text -> Text -> Either Text HashableScriptData
+parseScriptData what hexText = do
+  bytes <- first (\e -> "invalid " <> what <> " hex: " <> T.pack e) (Base16.decode (TE.encodeUtf8 hexText))
+  first (\e -> "invalid " <> what <> " CBOR: " <> T.pack (show e)) $
+    deserialiseFromCBOR AsHashableScriptData bytes
+
+-- | Parse a 28-byte payment key hash from hex.
+parsePkh :: Text -> Either Text (Hash PaymentKey)
+parsePkh hexText =
+  first (\e -> "invalid required-signer pkh \"" <> hexText <> "\": " <> T.pack (show e)) $
+    (deserialiseFromRawBytesHex (TE.encodeUtf8 hexText) :: Either RawBytesHexError (Hash PaymentKey))
+
+-- | Parse the ledger protocol parameters JSON served by hydra-node's
+-- @GET /protocol-parameters@.
+parsePParams :: Text -> Either Text (PParams LedgerEra)
+parsePParams t =
+  first (\e -> "invalid protocol parameters JSON: " <> T.pack e) $
+    Aeson.eitherDecodeStrict (TE.encodeUtf8 t)
+
+-- | Deserialise a Plutus V3 text-envelope JSON value (@type@,
+-- @description@, @cborHex@) into the validator script.
+parsePlutusEnvelope :: Aeson.Value -> Either Text PlutusScript
+parsePlutusEnvelope v = do
+  te <- case Aeson.fromJSON v of
+    Aeson.Error e -> Left ("invalid plutus envelope JSON: " <> T.pack e)
+    Aeson.Success te -> Right te
+  first (\e -> "invalid plutus envelope: " <> T.pack (show e)) $
+    (deserialiseFromTextEnvelope te :: Either TextEnvelopeError PlutusScript)
