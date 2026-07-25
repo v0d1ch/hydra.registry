@@ -1,8 +1,10 @@
 module Main (main) where
 
 import Agent.BinaryHash (getBinaryHash)
+import Agent.CommandPoller (commandLoop, pushProtocolParams)
 import Agent.EventPusher (AgentState (..), loadOrRegister, pushEvent)
 import Agent.ReadOnly (ReadOnlyConn, withReadOnlyConn, receive)
+import Control.Concurrent.Async (race_)
 import Control.Exception (SomeException, catch, throwIO)
 import Data.Aeson (Value, decode)
 import Data.Aeson qualified as Aeson
@@ -39,11 +41,20 @@ main = do
     st <- loadOrRegister mgr stateFile registryUrl headId' (T.pack wsUrl) binaryHash
     TIO.hPutStrLn stderr $ "Agent ID: " <> st.agentId
 
+    -- Push the local node's protocol parameters so the registry never
+    -- has to fetch them from this node.
+    pushProtocolParams mgr registryUrl st binaryHash headId' wsHost wsPort
+
     case decode @Value firstMsg of
       Just v -> pushEvent mgr registryUrl st binaryHash v
       Nothing -> pure ()
 
-    loop conn mgr registryUrl st binaryHash
+    -- Event pushing and command polling run side by side; if either
+    -- dies (e.g. the node WS drops) the agent exits and systemd (or the
+    -- operator) restarts it.
+    race_
+      (loop conn mgr registryUrl st binaryHash)
+      (commandLoop mgr registryUrl st binaryHash wsHost wsPort)
 
 loop :: ReadOnlyConn -> Manager -> Text -> AgentState -> Text -> IO ()
 loop conn mgr registryUrl st binaryHash = do

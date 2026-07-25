@@ -42,14 +42,20 @@ sampleUtxoEntryWithAssets =
 -- Uses TEST_DB_CONN_STR env var, falls back to a local test database.
 withTestPool :: (Pool -> IO a) -> IO a
 withTestPool action = do
+  pool <- rawTestPool
+  Db.initDb pool
+  cleanTestData pool
+  action pool
+
+-- | A pool on the test database WITHOUT wiping it — for seeding rows
+-- mid-test next to an already-initialized application pool.
+rawTestPool :: IO Pool
+rawTestPool = do
   mConnStr <- lookupEnv "TEST_DB_CONN_STR"
   let connStr = T.pack $ case mConnStr of
         Just s -> s
         Nothing -> "host=/tmp port=5432 dbname=hydra_registry_test"
-  pool <- Db.createPool connStr
-  Db.initDb pool
-  cleanTestData pool
-  action pool
+  Db.createPool connStr
 
 -- | Remove all test data (drops and recreates tables to handle schema changes)
 cleanTestData :: Pool -> IO ()
@@ -64,6 +70,8 @@ cleanTestData pool = do
     Session.sql "DROP TABLE IF EXISTS explorer_heads CASCADE"
     Session.sql "DROP TABLE IF EXISTS user_profiles CASCADE"
     Session.sql "DROP TABLE IF EXISTS agent_registrations CASCADE"
+    Session.sql "DROP TABLE IF EXISTS agent_commands CASCADE"
+    Session.sql "DROP TABLE IF EXISTS head_protocol_params CASCADE"
   Db.initDb pool
 
 -- | Build a Greetings JSON message for testing

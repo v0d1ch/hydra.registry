@@ -98,6 +98,8 @@ hydra.registry/
 │   │   │   ├── Client.hs      # WS listener + HydraEvent ADT
 │   │   │   ├── Htlc.hs        # CBOR encoding for datum/redeemer
 │   │   │   └── Submit.hs      # one-shot WS forwarder for signed tx CBOR
+│   │   ├── L1/
+│   │   │   └── HeadScan.hs    # participants + TVL from head UTxOs via local nodes
 │   │   ├── Tx/
 │   │   │   └── Builder.hs     # native cardano-api tx building: lock/claim/refund/publish
 │   │   ├── Indexer.hs         # event loop + reconnectAllHeads
@@ -193,7 +195,7 @@ graph LR
 
 The order is deliberate; each step depends on the state set up by the previous one. Reference: `api/app/Main.hs`.
 
-1. **Load config** — `HYDRA_DB_CONN_STR`, ports, `HYDRA_HTLC_SCRIPT_HASH`, `HYDRA_HTLC_SCRIPT_CBOR`, explorer URL/poll interval, static dir.
+1. **Load config** — `HYDRA_DB_CONN_STR`, ports, `HYDRA_HTLC_SCRIPT_HASH`, `HYDRA_HTLC_SCRIPT_CBOR`, explorer URL/poll interval, `HYDRA_DEFAULT_NETWORK` (network label for registered heads the explorer hasn't indexed yet), static dir.
 2. **Open Hasql pool**, run `Db.initDb` (idempotent `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE … ADD COLUMN IF NOT EXISTS`). Schema migrations live entirely in `Db.initDb`.
 3. **Allocate shared state:**
    - `eventQueue :: TQueue HydraEvent`
@@ -406,9 +408,10 @@ The watcher is invoked from `Indexer.processEvent` on every Greetings/SnapshotCo
 | PostgreSQL | bidirectional | Hasql pool, conn str via `HYDRA_DB_CONN_STR` |
 | hydra-node WebSockets | inbound events, outbound `NewTx` | one socket per registered head; URL = `ws://host:port` |
 | hydra-explorer | inbound polling | HTTP GET on `HYDRA_EXPLORER_URL/heads`, every `HYDRA_EXPLORER_POLL_INTERVAL` seconds (default 30 s) |
-| cardano-node / cardano-cli | **none** | tx assembly is native (`hydra-cardano-api`); the server needs no cardano-cli binary at runtime, and clients sign/submit themselves |
+| local cardano-nodes | state queries | `L1.HeadScan` (in the sidecar loop): `queryUTxOByAddress` over every published head-validator address per network (`HYDRA_L1_SOCKET_{PREPROD,PREVIEW,MAINNET}`); yields participants (participation-token names) and TVL (head UTxO lovelace) with zero datum decoding |
+| cardano-node / cardano-cli | tx assembly: **none** | tx assembly is native (`hydra-cardano-api`); clients sign/submit themselves |
 
-The registry is intentionally a passive observer of L1 — all chain time information flows through Hydra Greetings (`currentSlot`).
+Chain *time* still flows exclusively through Hydra Greetings (`currentSlot`); the L1 scan reads UTxO state only.
 
 ---
 
@@ -564,6 +567,10 @@ These are tracked outside this doc (in conversation tasks and memory). At a glan
 *Last full review:* 2026-04-30. Update the date and the relevant sections together when significant structural change lands.
 
 *Recent updates:*
+- 2026-07-25 — **`HYDRA_DIRECT_WS` flag** (phase 2 of the security inversion, default **off**): all remaining registry→node connections are gated — `POST /heads/register` and `GET /heads/check` return 403, the submit fallback and `fetchPP` HTTP fallback return 503, and startup `reconnectAllHeads` is skipped. Production relies exclusively on the agent push model; `dev.sh` sets `HYDRA_DIRECT_WS=true` for local testnet workflows. Also dropped the `UNIQUE(host, port)` constraint on `heads` — push-model agents all report `127.0.0.1:4001`, which made the second agent-created head collide.
+- 2026-07-25 — **Agent command queue** (security inversion): the registry no longer needs inbound access to user hydra-nodes for the push-model flow. Agents push their node's protocol parameters at startup (`head_protocol_params`, read by `fetchPP` before any legacy HTTP fetch) and poll `POST /agent/commands/poll` (~2s) for queued work; `POST /heads/{id}/submit` enqueues the signed tx for heads with a live agent (seen ≤90s) and waits up to 30s on an in-process `Agent.CommandQueue` TMVar for the agent-reported verdict, falling back to direct WS only for legacy agent-less heads. New modules `Agent.CommandQueue` (server-side rendezvous) and `Agent.CommandPoller` (agent-side executor); new tables `agent_commands`, `head_protocol_params`; shared `requireAgent` auth. Remaining direct-WS paths (`reconnectAllHeads`, registration validation) are legacy and slated for a dev-mode flag.
+- 2026-07-25 — **L1 head scan** (`L1.HeadScan`, runs in the sidecar loop): for an Open head, one UTxO at the head validator address carries the headId (state-token policy), the participants (participation-token names = OnChainIds), and the TVL (lovelace) — no datum decoding, so it works across every published hydra version (vendored script-hash list mirrors hydra-chain-observer's registry). Fills `head_participants` and the new `explorer_heads.total_value_lovelace` from local cardano-nodes (`HYDRA_L1_SOCKET_*` env vars). This is the registry-side answer to the chain observer only fully parsing Init txs of its own protocol version. Same date: relay-graph endpoint returns all Open heads as nodes (previously edge-connected only), `GET /` SPA serving moved to nginx with client-route fallback, network selector added to the mobile menu, network selection persisted in localStorage.
+- 2026-07-24 — `HYDRA_DEFAULT_NETWORK` env var (default `Preview`): the sidecar's relay-graph rebuild previously hardcoded `"Preview"` as the network for registered heads the explorer hadn't indexed yet, which silently broke route-finding on any other network when the explorer was unavailable. Production deployments set it to the network they serve (e.g. `Preprod`); the explorer-reported network still wins once a head is indexed.
 - 2026-07-13 — Toolchain migration + native transaction building:
   - Dev shell now extends hydra 2.2.0's `cabalOnly` shell (GHC 9.6.7, haskell.nix) instead of a self-assembled GHC 9.10 package set; `nixpkgs` follows `hydra/nixpkgs`, postgres comes from `nixpkgs-2411` to keep one glibc across the toolchain (§8.1).
   - `api/cabal.project` gained CHaP + the hydra packages from `~/code/hydra` as source packages, mirroring hydra's own solver configuration for store reuse.

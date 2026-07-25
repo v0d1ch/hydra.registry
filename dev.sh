@@ -128,6 +128,7 @@ start_backend() {
   fi
   run_with_prefix "api" "$BLUE" \
     env HYDRA_DB_CONN_STR="host=$PGHOST port=5432 dbname=$DB_NAME" \
+    HYDRA_DIRECT_WS=true \
     $extra_env \
     cabal run exe:hydra-registry-api
 }

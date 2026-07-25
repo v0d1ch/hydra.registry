@@ -1,6 +1,8 @@
 module ApiIntegrationSpec (spec) where
 
+import Agent.CommandQueue (newCommandWaiters)
 import Api (AppEnv (..), api, server)
+import Db.Schema (AgentCommand (..))
 import Api.Types
 import Cache (newCache)
 import Control.Concurrent.STM
@@ -27,7 +29,14 @@ import Test.Hspec.Wai
 import TestUtils
 
 spec :: Spec
-spec = with makeTestApp $ describe "API (integration)" $ do
+spec = do
+  mainSpec
+  secureModeSpec
+
+-- | Tests against the dev-mode app (HYDRA_DIRECT_WS on), matching the
+-- behavior of local/testnet workflows.
+mainSpec :: Spec
+mainSpec = with makeTestApp $ describe "API (integration)" $ do
   describe "GET /" $ do
     it "returns root response with version" $ do
       get "/" `shouldRespondWith` 200
@@ -57,6 +66,91 @@ spec = with makeTestApp $ describe "API (integration)" $ do
           KM.lookup "htlcEnabled" o `shouldBe` Just (Aeson.Bool False)
           KM.lookup "refScriptUtxo" o `shouldBe` Just Aeson.Null
         Just other -> expectationFailure $ "Expected object, got: " <> show other
+
+  describe "GET /api/v1/relay/graph" $ do
+    it "returns participant-less open heads as unconnected nodes" $ do
+      liftIO $ withTestPool $ \pool -> do
+        Db.upsertExplorerHead pool "head-lonely" "Preprod" 1 "2.2.0" "Open" Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+        Db.upsertExplorerHead pool "head-closed" "Preprod" 1 "2.2.0" "Closed" Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+        Db.upsertExplorerHead pool "head-other-net" "Preview" 2 "2.2.0" "Open" Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+      resp <- get "/api/v1/relay/graph?network=Preprod"
+      liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
+        Just (Aeson.Object o) -> do
+          case KM.lookup "nodes" o of
+            Just (Aeson.Array ns) -> length ns `shouldBe` 1
+            _ -> expectationFailure "nodes missing"
+          case KM.lookup "edges" o of
+            Just (Aeson.Array es) -> length es `shouldBe` 0
+            _ -> expectationFailure "edges missing"
+        _ -> expectationFailure "Could not parse graph response"
+
+    it "still links heads sharing a participant" $ do
+      liftIO $ withTestPool $ \pool -> do
+        Db.upsertExplorerHead pool "head-a" "Preprod" 1 "2.2.0" "Open" Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+        Db.upsertExplorerHead pool "head-b" "Preprod" 1 "2.2.0" "Open" Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+        Db.replaceHeadParticipants pool "head-a" [("bridge-pkh", Nothing, Just "bridge-pkh", 0, Nothing)]
+        Db.replaceHeadParticipants pool "head-b" [("bridge-pkh", Nothing, Just "bridge-pkh", 0, Nothing)]
+      resp <- get "/api/v1/relay/graph?network=Preprod"
+      liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
+        Just (Aeson.Object o) -> do
+          case KM.lookup "nodes" o of
+            Just (Aeson.Array ns) -> length ns `shouldBe` 2
+            _ -> expectationFailure "nodes missing"
+          case KM.lookup "edges" o of
+            Just (Aeson.Array es) -> length es `shouldBe` 2
+            _ -> expectationFailure "edges missing"
+        _ -> expectationFailure "Could not parse graph response"
+
+  describe "agent command queue endpoints" $ do
+    it "register → push pparams → poll claims a queued command → result recorded" $ do
+      reg <-
+        request
+          methodPost
+          "/api/v1/agent/register"
+          [("Content-Type", "application/json")]
+          (encode $ Aeson.object [("headId", "head-q"), ("binaryHash", "bin-1"), ("wsUrl", "ws://127.0.0.1:4001")])
+      (secret :: T.Text) <- liftIO $ case Aeson.decode @Aeson.Value (simpleBody reg) of
+        Just (Aeson.Object o)
+          | Just (Aeson.String s) <- KM.lookup "secretKey" o -> pure s
+        _ -> fail "could not parse agent registration response"
+      let agentHdrs =
+            [ ("Content-Type", "application/json")
+            , ("Authorization", "Bearer " <> encodeUtf8 secret)
+            , ("X-Agent-Binary-Hash", "bin-1")
+            ]
+
+      -- protocol parameters: accepted for own head, rejected for others
+      request methodPut "/api/v1/agent/heads/head-q/protocol-parameters" agentHdrs (encode $ Aeson.object [("maxTxSize", Aeson.Number 123)])
+        `shouldRespondWith` 200
+      request methodPut "/api/v1/agent/heads/head-other/protocol-parameters" agentHdrs "{}"
+        `shouldRespondWith` 403
+      storedPP <- liftIO $ do
+        pool <- rawTestPool
+        Db.getHeadProtocolParams pool "head-q"
+      liftIO $ storedPP `shouldBe` Just (Aeson.object [("maxTxSize", Aeson.Number 123)])
+
+      -- queue a command; the agent poll claims it
+      liftIO $ do
+        pool <- rawTestPool
+        Db.insertAgentCommand pool "cmd-q1" "head-q" "submit_tx" "84a4beef"
+      pollResp <- request methodPost "/api/v1/agent/commands/poll" agentHdrs ""
+      liftIO $ case Aeson.decode @[Aeson.Value] (simpleBody pollResp) of
+        Just [Aeson.Object c] -> do
+          KM.lookup "commandId" c `shouldBe` Just (Aeson.String "cmd-q1")
+          KM.lookup "payload" c `shouldBe` Just (Aeson.String "84a4beef")
+        other -> expectationFailure $ "expected one polled command, got: " <> show other
+
+      -- report the verdict; command is finished in the DB
+      request methodPost "/api/v1/agent/commands/cmd-q1/result" agentHdrs (encode $ Aeson.object [("tag", "SubmitValid"), ("txId", "tx42")])
+        `shouldRespondWith` 200
+      done <- liftIO $ do
+        pool <- rawTestPool
+        Db.getAgentCommand pool "cmd-q1"
+      liftIO $ fmap (.commandStatus) done `shouldBe` Just "done"
+
+    it "rejects polling without credentials" $ do
+      request methodPost "/api/v1/agent/commands/poll" [("Content-Type", "application/json")] ""
+        `shouldRespondWith` 401
 
   describe "GET /api/v1/heads/:headId/addresses" $ do
     it "returns 404 for non-existent head" $ do
@@ -253,11 +347,41 @@ spec = with makeTestApp $ describe "API (integration)" $ do
         Just invs -> length invs `shouldBe` 1
 
 -- | Create a test Application backed by a test DB
+-- | Secure-mode tests: HYDRA_DIRECT_WS off (the production default) —
+-- every path that would dial a user's hydra-node must refuse instead.
+secureModeSpec :: Spec
+secureModeSpec = with (makeTestAppWith False) $ describe "API (secure mode, direct WS disabled)" $ do
+  describe "POST /api/v1/heads/register" $ do
+    it "refuses direct registration" $ do
+      let body = encode $ RegisterHead "some-host" 4001 Nothing
+      request methodPost "/api/v1/heads/register" [("Content-Type", "application/json")] body
+        `shouldRespondWith` 403
+
+  describe "GET /api/v1/heads/check" $ do
+    it "refuses to probe user nodes" $ do
+      get "/api/v1/heads/check?host=example.com&port=4001" `shouldRespondWith` 403
+
+  describe "POST /api/v1/heads/:headId/submit" $ do
+    it "returns 503 when the head has no live agent" $ do
+      liftIO $ do
+        pool <- rawTestPool
+        Db.upsertHead pool "head-no-agent" "127.0.0.1" 4001 "Open" Nothing
+      request
+        methodPost
+        "/api/v1/heads/head-no-agent/submit"
+        [("Content-Type", "application/json")]
+        (encode $ Aeson.object [("signedCborHex", "84a4beef")])
+        `shouldRespondWith` 503
+
 makeTestApp :: IO Application
-makeTestApp = do
+makeTestApp = makeTestAppWith True
+
+makeTestAppWith :: Bool -> IO Application
+makeTestAppWith directWsEnabled = do
   withTestPool $ \pool -> do
     eventQueue <- newTQueueIO @HydraEvent
     metrics <- newMetrics
+    waiters <- newCommandWaiters
     addrCache <- newCache 30
     relayGraphVar <- newTVarIO Graph.emptyGraph
     chainSlotVar <- newTVarIO 0
@@ -269,6 +393,7 @@ makeTestApp = do
             , eventQueue = eventQueue
             , logger = logger
             , metrics = metrics
+            , commandWaiters = waiters
             , addressCache = addrCache
             , staticDir = "./website/dist"
             , relayGraph = relayGraphVar
@@ -279,5 +404,6 @@ makeTestApp = do
             , cardanoNodeSocket = Nothing
             , cardanoNodeMagic = Nothing
             , agentAllowedHashes = []
+            , directWs = directWsEnabled
             }
     pure $ serve api (server env)

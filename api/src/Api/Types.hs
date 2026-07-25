@@ -623,6 +623,17 @@ newtype AgentEventRequest = AgentEventRequest
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
+-- | One queued command handed to an agent via
+-- @POST /api/v1/agent/commands/poll@. The agent executes it against its
+-- local hydra-node and reports back on the command's @result@ endpoint.
+data AgentCommandInfo = AgentCommandInfo
+  { commandId :: Text
+  , kind :: Text
+  , payload :: Text
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (FromJSON, ToJSON)
+
 -- ─── Claim ownership types ───
 
 -- | Request body for @POST /api/v1/heads/{id}/claim-ownership@.

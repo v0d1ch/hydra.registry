@@ -42,6 +42,7 @@ library
     Hydra.Htlc
     Hydra.Submit
     Indexer
+    L1.HeadScan
     Logging
     Metrics
     Middleware.RateLimit
@@ -52,6 +53,8 @@ library
     Relay.Slot
     Tx.Builder
     Agent.BinaryHash
+    Agent.CommandPoller
+    Agent.CommandQueue
     Agent.EventPusher
     Agent.ReadOnly
   build-depends:
@@ -73,6 +76,7 @@ library
     , http-client-tls
     , http-types
     , hydra-cardano-api
+    , hydra-node
     , mtl
     , network-uri
     , process
@@ -121,6 +125,7 @@ executable hydra-registry-agent
   build-depends:
     , base >= 4.18 && < 5
     , aeson
+    , async
     , http-client
     , http-client-tls
     , hydra-registry-api
@@ -163,9 +168,11 @@ test-suite hydra-registry-api-test
     , wai-extra
   other-modules:
     IndexerSpec
+    AgentCommandSpec
     ApiIntegrationSpec
     ApiTypesSpec
     ConfigSpec
+    L1HeadScanSpec
     DbIntegrationSpec
     ExplorerClientSpec
     HydraClientSpec
@@ -176,6 +183,7 @@ test-suite hydra-registry-api-test
     RelayGraphSpec
     RelayHtlcWatcherSpec
     RelaySlotSpec
+    SidecarSpec
     TestUtils
     TxBuilderSpec
     ValidationSpec

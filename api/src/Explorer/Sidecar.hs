@@ -16,6 +16,7 @@ import Db.Schema (ExplorerHead (..), Head (..), HeadParticipant (..))
 import Explorer.Client (ExplorerHeadEntry (..))
 import Explorer.Members (parseMembers, participantToTuple)
 import Hasql.Pool (Pool)
+import L1.HeadScan qualified as HeadScan
 import Logging (Logger, logError, logInfo, logWarn)
 import Network.HTTP.Client qualified as HTTP
 import Network.HTTP.Client.TLS qualified as HTTP
@@ -26,6 +27,10 @@ data SidecarConfig = SidecarConfig
   { explorerUrl :: Text
   , pollIntervalSeconds :: Int
   , relayGraphVar :: TVar Graph.RelayGraph
+  , defaultNetwork :: Text
+  -- ^ Network assumed for registered heads the explorer hasn't indexed yet.
+  , l1Sockets :: [(Text, FilePath)]
+  -- ^ Per-network local cardano-node sockets for the L1 head scan.
   }
 
 -- | Start the explorer sidecar polling loop.
@@ -45,6 +50,16 @@ startSidecar logger pool config = do
     case pollResult of
       Left err ->
         logError logger "Explorer sidecar poll failed" [("error", toJSON (show err))]
+      Right () -> pure ()
+    -- L1 head scan: participants + TVL straight from local cardano-nodes,
+    -- before the graph rebuild so fresh participants feed the same tick.
+    scanResult <- try @SomeException $
+      mapM_
+        (\(net, sock) -> HeadScan.scanNetwork logger net sock >>= HeadScan.applyScanResults logger pool)
+        config.l1Sockets
+    case scanResult of
+      Left err ->
+        logError logger "L1 head scan failed" [("error", toJSON (show err))]
       Right () -> pure ()
     rebuildResult <- try @SomeException $ rebuildRelayGraph logger pool config
     case rebuildResult of
@@ -125,11 +140,12 @@ rebuildRelayGraph logger pool config = do
       explorerById = Set.fromList [hid | (hid, _) <- explorerHeadsList]
       -- Locally-registered open heads that the explorer hasn't picked up
       -- yet still need to participate in the graph; we don't know their
-      -- network, so we assume "Preview" (the network most local testnet
-      -- runs use). Once the explorer indexes them, the explorer's
-      -- network value takes precedence on the next rebuild.
+      -- network, so we assume the configured default (HYDRA_DEFAULT_NETWORK,
+      -- matching the network this deployment serves). Once the explorer
+      -- indexes them, the explorer's network value takes precedence on the
+      -- next rebuild.
       registeredOnlyList =
-        [ (h.headId, "Preview" :: Text)
+        [ (h.headId, config.defaultNetwork)
         | h <- registeredHeads
         , h.headStatus == "Open"
         , not (Set.member h.headId explorerById)

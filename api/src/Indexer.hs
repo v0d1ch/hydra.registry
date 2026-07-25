@@ -93,7 +93,9 @@ registerHead logger pool eventQueue hostAddr portNum mWallet = do
         Nothing -> do
           -- If the same host:port had a different head before (e.g. the head
           -- was closed and a new one opened), evict the stale entry so the
-          -- UNIQUE (host, port) constraint doesn't block the insert below.
+          -- registry doesn't keep listening to a dead head at this endpoint.
+          -- (Only relevant for direct/dev-mode registration; push-model
+          -- agents all report 127.0.0.1 and share endpoints by design.)
           mStale <- Db.getHeadByHostPort pool hostAddr portNum
           case mStale of
             Just stale | stale.headId /= greeterHeadId ->

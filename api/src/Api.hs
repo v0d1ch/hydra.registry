@@ -27,9 +27,10 @@ import Data.Text.Encoding qualified as T (decodeUtf8, encodeUtf8)
 import Data.Time (UTCTime, addUTCTime, diffUTCTime, getCurrentTime)
 import Text.Read (readMaybe)
 import Data.UUID qualified as UUID
+import Agent.CommandQueue (CommandWaiters, awaitCommand, resolveCommand)
 import Data.UUID.V4 qualified as UUID
 import Db qualified
-import Db.Schema (AgentRegistration (..), ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
+import Db.Schema (AgentCommand (..), AgentRegistration (..), ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraEvent (..), normalizeHost, validateHydraNode)
 import Hydra.Client qualified
@@ -108,6 +109,9 @@ type ApiV1Routes =
     -- Agent push model
     :<|> "agent" :> "register" :> ReqBody '[JSON] AgentRegisterRequest :> Post '[JSON] AgentRegisterResponse
     :<|> "agent" :> "events" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> ReqBody '[JSON] AgentEventRequest :> Post '[JSON] MessageResponse
+    :<|> "agent" :> "heads" :> Capture "headId" Text :> "protocol-parameters" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> ReqBody '[JSON] Aeson.Value :> Put '[JSON] MessageResponse
+    :<|> "agent" :> "commands" :> "poll" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> Post '[JSON] [AgentCommandInfo]
+    :<|> "agent" :> "commands" :> Capture "commandId" Text :> "result" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> ReqBody '[JSON] Submit.SubmitResult :> Post '[JSON] MessageResponse
     -- Head ownership via L1 deposit
     :<|> "heads" :> Capture "headId" Text :> "claim-ownership" :> ReqBody '[JSON] ClaimOwnershipRequest :> Post '[JSON] ClaimOwnershipResponse
 
@@ -135,6 +139,7 @@ data AppEnv = AppEnv
   , eventQueue :: TQueue HydraEvent
   , logger :: Logger
   , metrics :: Metrics
+  , commandWaiters :: CommandWaiters
   , addressCache :: Cache [UtxoResponse]
   , staticDir :: FilePath
   , relayGraph :: TVar Graph.RelayGraph
@@ -153,6 +158,8 @@ data AppEnv = AppEnv
   , cardanoNodeSocket :: Maybe FilePath
   , cardanoNodeMagic :: Maybe Int
   , agentAllowedHashes :: [Text]
+  , directWs :: Bool
+  -- ^ Allow dialing user hydra-node APIs directly (dev/testnet only).
   }
 
 -- | Create the Servant server
@@ -168,11 +175,11 @@ server env =
 apiV1Server :: AppEnv -> Server ApiV1Routes
 apiV1Server env =
   handleHealth env.pool env.latestChainSlot env.cardanoNodeSocket env.cardanoNodeMagic
-    :<|> handleCheckHead env.logger env.pool
-    :<|> handleRegister env.logger env.pool env.eventQueue
+    :<|> handleCheckHead env.directWs env.logger env.pool
+    :<|> handleRegister env.directWs env.logger env.pool env.eventQueue
     :<|> handleSetRefScript env.pool
-    :<|> handlePublishRefTxCbor env.pool env.htlcScriptCbor
-    :<|> handleSubmitTx env.pool
+    :<|> handlePublishRefTxCbor env.directWs env.pool env.htlcScriptCbor
+    :<|> handleSubmitTx env.directWs env.pool env.commandWaiters
     :<|> handleListHeads env.pool
     :<|> handleHeadDetail env.pool
     :<|> handleHeadAddresses env.pool
@@ -201,13 +208,16 @@ apiV1Server env =
     :<|> handleLockTx env.pool env.latestChainSlot
     :<|> handleClaimTx env.pool env.latestChainSlot
     :<|> handleRefundTx env.pool env.latestChainSlot
-    :<|> handleLockTxCbor env.pool env.latestChainSlot env.htlcScriptCbor
-    :<|> handleClaimTxCbor env.pool env.latestChainSlot
-    :<|> handleRefundTxCbor env.pool env.latestChainSlot
+    :<|> handleLockTxCbor env.directWs env.pool env.latestChainSlot env.htlcScriptCbor
+    :<|> handleClaimTxCbor env.directWs env.pool env.latestChainSlot
+    :<|> handleRefundTxCbor env.directWs env.pool env.latestChainSlot
     :<|> handleGetUserKeyHash env.pool
     :<|> handleSetUserKeyHash env.pool
     :<|> handleAgentRegister env.pool env.agentAllowedHashes
     :<|> handleAgentEvent env.pool env.agentAllowedHashes env.eventQueue
+    :<|> handleAgentPushPParams env.pool env.agentAllowedHashes
+    :<|> handleAgentPollCommands env.pool env.agentAllowedHashes
+    :<|> handleAgentCommandResult env.pool env.agentAllowedHashes env.commandWaiters
     :<|> handleClaimOwnership env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
@@ -268,8 +278,9 @@ queryNodeSyncProgress (Just socketPath) (Just magic) = do
     Right v -> v
 
 -- | GET /api/v1/heads/check?host=...&port=...
-handleCheckHead :: Logger -> Pool -> Maybe Text -> Maybe Int -> Handler CheckHeadResponse
-handleCheckHead logger pool mHost mPort = do
+handleCheckHead :: Bool -> Logger -> Pool -> Maybe Text -> Maybe Int -> Handler CheckHeadResponse
+handleCheckHead allowDirect logger pool mHost mPort = do
+  requireDirectWs allowDirect
   hostAddr <- maybe (throwError $ err400{errBody = Aeson.encode $ ErrorResponse "host is required"}) pure mHost
   portNum <- maybe (throwError $ err400{errBody = Aeson.encode $ ErrorResponse "port is required"}) pure mPort
   result <- liftIO $ validateHydraNode logger hostAddr portNum
@@ -283,8 +294,9 @@ handleCheckHead logger pool mHost mPort = do
       throwError $ err500{errBody = Aeson.encode $ ErrorResponse "Unexpected response from Hydra node"}
 
 -- | POST /api/v1/heads/register
-handleRegister :: Logger -> Pool -> TQueue HydraEvent -> RegisterHead -> Handler RegisterHeadResponse
-handleRegister logger pool eventQueue req = do
+handleRegister :: Bool -> Logger -> Pool -> TQueue HydraEvent -> RegisterHead -> Handler RegisterHeadResponse
+handleRegister allowDirect logger pool eventQueue req = do
+  requireDirectWs allowDirect
   result <- liftIO $ Indexer.registerHead logger pool eventQueue req.host req.port req.walletAddress
   case result of
     Left err ->
@@ -687,8 +699,12 @@ enrichParticipant pool p = do
 -- ─── Relay handlers ───
 
 -- | GET /api/v1/relay/graph?network=...
--- Returns explorer heads that have participants and edges between heads sharing a participant.
--- Deduplicates edges and caps output to keep responses fast.
+-- Returns all Open heads on the requested network (explorer-observed or
+-- locally registered), with edges between heads sharing a participant.
+-- Heads without participants appear as unconnected nodes — participant
+-- data may be missing entirely (e.g. the chain observer can only fully
+-- parse Init txs of its own hydra version). Deduplicates edges and caps
+-- output to keep responses fast.
 handleRelayGraph :: Pool -> Maybe Text -> Maybe Text -> Handler SubgraphResponse
 handleRelayGraph pool mHtlcHash mNetwork = do
   network' <- maybe (throwError $ err400{errBody = Aeson.encode $ ErrorResponse "network is required"}) pure mNetwork
@@ -735,24 +751,20 @@ handleRelayGraph pool mHtlcHash mNetwork = do
           , h1 /= h2
           ]
       dedupedEdges = take 500 $ Map.elems edgeMap
-      -- Only include nodes that appear in at least one edge
-      connectedIds =
-        Set.fromList $
-          concatMap (\e -> [e.fromHead, e.toHead]) dedupedEdges
       -- Build head→participants and head→committed lovelace maps
       headParticipants :: Map.Map Text [Text]
       headParticipants =
         Map.fromListWith (<>)
           [ (p.participantHeadId, [p.participantAddress])
           | p <- participants
-          , Set.member p.participantHeadId connectedIds
+          , Set.member p.participantHeadId headIds
           ]
       headLovelace :: Map.Map Text Int64
       headLovelace =
         Map.fromListWith (+)
           [ (p.participantHeadId, p.participantCommittedLovelace)
           | p <- participants
-          , Set.member p.participantHeadId connectedIds
+          , Set.member p.participantHeadId headIds
           ]
   let explorerNodeIds = Set.fromList [eh.explorerHeadId | eh <- networkHeads]
       explorerNodes =
@@ -765,7 +777,6 @@ handleRelayGraph pool mHtlcHash mNetwork = do
             , committedLovelace = Map.findWithDefault 0 eh.explorerHeadId headLovelace
             }
         | eh <- networkHeads
-        , Set.member eh.explorerHeadId connectedIds
         ]
       -- For registered-only heads (not yet seen by the public explorer),
       -- synthesize a node entry. Network = requested filter (we have no
@@ -781,7 +792,6 @@ handleRelayGraph pool mHtlcHash mNetwork = do
             }
         | h <- registeredHeads
         , h.headStatus == "Open"
-        , Set.member h.headId connectedIds
         , not (Set.member h.headId explorerNodeIds)
         ]
   pure
@@ -1543,14 +1553,15 @@ loadHeadRow pool hid = do
 
 -- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/lock-tx-cbor
 handleLockTxCbor
-  :: Pool
+  :: Bool
+  -> Pool
   -> TVar Int64
   -> Maybe Text -- htlcScriptCbor
   -> Text
   -> Int
   -> BuildTxFromWalletRequest
   -> Handler Tx.BuildResult
-handleLockTxCbor pool chainSlotVar mScriptCbor rid idx req = do
+handleLockTxCbor allowDirect pool chainSlotVar mScriptCbor rid idx req = do
   (route, hop, sorted) <- loadHop pool rid idx
   chainSlot <- liftIO $ readTVarIO chainSlotVar
   scriptAddr <- case Htlc.htlcScriptAddress route.routeNetwork of
@@ -1577,7 +1588,7 @@ handleLockTxCbor pool chainSlotVar mScriptCbor rid idx req = do
       -- cushion. The user's wallet should comfortably cover this.
       neededInput = lockAmount + fee + 2_000_000
   inputUtxo <- pickInputUtxo pool hop.hopHeadId req.walletAddress neededInput
-  ppText <- fetchPP headRow
+  ppText <- fetchPP allowDirect pool headRow
   envOpt <- case mRefScript of
     Just _ -> pure Nothing
     Nothing -> case mScriptCbor of
@@ -1604,13 +1615,14 @@ handleLockTxCbor pool chainSlotVar mScriptCbor rid idx req = do
 
 -- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/claim-tx-cbor
 handleClaimTxCbor
-  :: Pool
+  :: Bool
+  -> Pool
   -> TVar Int64
   -> Text
   -> Int
   -> BuildClaimTxRequest
   -> Handler Tx.BuildResult
-handleClaimTxCbor pool chainSlotVar rid idx req = do
+handleClaimTxCbor allowDirect pool chainSlotVar rid idx req = do
   (_route, hop, _) <- loadHop pool rid idx
   chainSlot <- liftIO $ readTVarIO chainSlotVar
   htlcTxHash <- requireHtlcTx hop
@@ -1646,7 +1658,7 @@ handleClaimTxCbor pool chainSlotVar rid idx req = do
           { errBody = Aeson.encode $ ErrorResponse $ "locked HTLC UTxO " <> htlcTxHash <> "#0 not found in head's snapshot"
           }
   collateralUtxo <- pickCollateralUtxo pool hop.hopHeadId req.walletAddress collateralNeeded htlcRef
-  ppText <- fetchPP headRow
+  ppText <- fetchPP allowDirect pool headRow
   let claimArgs =
         Tx.ClaimArgs
           { htlcInputTxHash = htlcTxHash
@@ -1669,13 +1681,14 @@ handleClaimTxCbor pool chainSlotVar rid idx req = do
 
 -- | POST /api/v1/relay/payments/:routeId/hops/:hopIndex/refund-tx-cbor
 handleRefundTxCbor
-  :: Pool
+  :: Bool
+  -> Pool
   -> TVar Int64
   -> Text
   -> Int
   -> BuildTxFromWalletRequest
   -> Handler Tx.BuildResult
-handleRefundTxCbor pool _chainSlotVar rid idx req = do
+handleRefundTxCbor allowDirect pool _chainSlotVar rid idx req = do
   (_route, hop, _) <- loadHop pool rid idx
   htlcTxHash <- requireHtlcTx hop
   senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
@@ -1696,7 +1709,7 @@ handleRefundTxCbor pool _chainSlotVar rid idx req = do
     Just u -> pure u.utxoLovelace
     Nothing -> throwError $ err409{errBody = Aeson.encode $ ErrorResponse $ "locked HTLC UTxO " <> htlcTxHash <> "#0 not found"}
   collateralUtxo <- pickCollateralUtxo pool hop.hopHeadId req.walletAddress collateralNeeded htlcRef
-  ppText <- fetchPP headRow
+  ppText <- fetchPP allowDirect pool headRow
   let refundArgs =
         Tx.RefundArgs
           { htlcInputTxHash = htlcTxHash
@@ -1719,12 +1732,13 @@ handleRefundTxCbor pool _chainSlotVar rid idx req = do
 
 -- | POST /api/v1/heads/:headId/publish-ref-script-tx-cbor
 handlePublishRefTxCbor
-  :: Pool
+  :: Bool
+  -> Pool
   -> Maybe Text -- htlcScriptCbor
   -> Text
   -> BuildTxFromWalletRequest
   -> Handler Tx.BuildResult
-handlePublishRefTxCbor pool mScriptCbor hid req = do
+handlePublishRefTxCbor allowDirect pool mScriptCbor hid req = do
   scriptCbor <- case mScriptCbor of
     Nothing -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse "HTLC script CBOR not configured"}
     Just c -> pure c
@@ -1733,7 +1747,7 @@ handlePublishRefTxCbor pool mScriptCbor hid req = do
       fee = 300_000 :: Int64
       neededInput = refOutVal + fee + 2_000_000
   inputUtxo <- pickInputUtxo pool hid req.walletAddress neededInput
-  ppText <- fetchPP headRow
+  ppText <- fetchPP allowDirect pool headRow
   let pubArgs =
         Tx.PublishRefArgs
           { inputUtxo = inputUtxo.utxoTxHash <> "#" <> T.pack (show inputUtxo.utxoOutputIndex)
@@ -1749,19 +1763,80 @@ handlePublishRefTxCbor pool mScriptCbor hid req = do
     Right br -> pure br
 
 -- | POST /api/v1/heads/:headId/submit
-handleSubmitTx :: Pool -> Text -> SubmitTxRequest -> Handler Submit.SubmitResult
-handleSubmitTx pool hid req = do
-  headRow <- loadHeadRow pool hid
-  liftIO $ Submit.submitToHead headRow.headHost (fromIntegral headRow.headPort) req.signedCborHex
+-- Prefers the agent command queue: the head's agent picks the signed tx
+-- up on its next poll, submits it via its /local/ hydra-node, and reports
+-- the verdict back — the registry never dials the user's node. Falls back
+-- to the legacy direct-WS path only when no live agent exists.
+handleSubmitTx :: Bool -> Pool -> CommandWaiters -> Text -> SubmitTxRequest -> Handler Submit.SubmitResult
+handleSubmitTx allowDirect pool waiters hid req = do
+  mAgent <- liftIO $ Db.lookupActiveAgentForHead pool hid agentLivenessSeconds
+  case mAgent of
+    Just _ -> do
+      cmdId <- liftIO $ T.replace "-" "" . T.pack . UUID.toString <$> UUID.nextRandom
+      liftIO $ Db.insertAgentCommand pool cmdId hid "submit_tx" req.signedCborHex
+      mResult <- liftIO $ awaitCommand waiters cmdId submitWaitSeconds
+      case mResult of
+        Just r -> pure r
+        Nothing -> do
+          liftIO $ Db.failAgentCommand pool cmdId "agent did not report a result in time"
+          pure Submit.SubmitTimeout
+    Nothing
+      | allowDirect -> do
+          headRow <- loadHeadRow pool hid
+          liftIO $ Submit.submitToHead headRow.headHost (fromIntegral headRow.headPort) req.signedCborHex
+      | otherwise -> do
+          _ <- loadHeadRow pool hid -- 404 for unknown heads
+          throwError $
+            err503
+              { errBody =
+                  Aeson.encode $
+                    ErrorResponse "no live agent for this head and direct node access is disabled; run hydra-registry-agent next to the hydra-node"
+              }
+
+-- | An agent counts as live when it polled (or pushed an event) this
+-- recently; the poll interval is a few seconds, so 90s is generous.
+agentLivenessSeconds :: Int
+agentLivenessSeconds = 90
+
+-- | How long the submit handler waits for the agent's verdict: one poll
+-- interval + local WS submit (15s budget) + reporting, with headroom.
+submitWaitSeconds :: Int
+submitWaitSeconds = 30
+
+-- | Reject handlers that would dial a user's hydra-node when
+-- HYDRA_DIRECT_WS is off (the production default).
+requireDirectWs :: Bool -> Handler ()
+requireDirectWs allowDirect =
+  unless allowDirect $
+    throwError $
+      err403
+        { errBody =
+            Aeson.encode $
+              ErrorResponse "direct hydra-node access is disabled on this registry; use the agent push model (hydra-registry-agent)"
+        }
 
 -- | Fetch protocol params for a head and translate any error into
 -- an HTTP error so the handlers above don't have to repeat themselves.
-fetchPP :: Head Identity -> Handler Text
-fetchPP h = do
-  res <- liftIO $ fetchProtocolParams h.headHost (fromIntegral h.headPort)
-  case res of
-    Left e -> throwError $ err502{errBody = Aeson.encode $ ErrorResponse e}
-    Right t -> pure t
+fetchPP :: Bool -> Pool -> Head Identity -> Handler Text
+fetchPP allowDirect pool h = do
+  -- Prefer agent-pushed parameters: the registry should never need to
+  -- reach a user's hydra-node (its API is unauthenticated).
+  mStored <- liftIO $ Db.getHeadProtocolParams pool h.headId
+  case mStored of
+    Just v -> pure $ T.decodeUtf8 $ BSL.toStrict $ Aeson.encode v
+    Nothing
+      | allowDirect -> do
+          res <- liftIO $ fetchProtocolParams h.headHost (fromIntegral h.headPort)
+          case res of
+            Left e -> throwError $ err502{errBody = Aeson.encode $ ErrorResponse e}
+            Right t -> pure t
+      | otherwise ->
+          throwError $
+            err503
+              { errBody =
+                  Aeson.encode $
+                    ErrorResponse "protocol parameters not available: the head's agent has not pushed them and direct node access is disabled"
+              }
 
 -- ─── existing helpers ────────────────────────────────────────────────
 
@@ -1839,22 +1914,7 @@ handleAgentEvent
   -> AgentEventRequest
   -> Handler MessageResponse
 handleAgentEvent pool allowedHashes eventQueue mAuthHeader mBinaryHashHeader req = do
-  authToken <- case mAuthHeader of
-    Nothing -> throwError err401{errBody = Aeson.encode $ ErrorResponse "Authorization header required"}
-    Just h | T.isPrefixOf "Bearer " h -> pure $ T.drop 7 h
-    Just _ -> throwError err401{errBody = Aeson.encode $ ErrorResponse "Authorization must be Bearer token"}
-  binaryHashHdr <- case mBinaryHashHeader of
-    Nothing -> throwError err400{errBody = Aeson.encode $ ErrorResponse "X-Agent-Binary-Hash header required"}
-    Just h -> pure h
-  let secretHash = hashSecret authToken
-  mAgent <- liftIO $ Db.lookupAgentBySecretHash pool secretHash
-  agent <- case mAgent of
-    Nothing -> throwError err401{errBody = Aeson.encode $ ErrorResponse "invalid or unknown agent secret"}
-    Just a -> pure a
-  when (agent.agentBinaryHash /= binaryHashHdr) $
-    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash mismatch"}
-  when (not (null allowedHashes) && binaryHashHdr `notElem` allowedHashes) $
-    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash not in allowed list"}
+  agent <- requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader
   now <- liftIO getCurrentTime
   liftIO $ Db.updateAgentLastSeen pool agent.agentId now
   hydraEvent <- case Hydra.Client.parseHydraMessage req.event of
@@ -1873,6 +1933,70 @@ handleAgentEvent pool allowedHashes eventQueue mAuthHeader mBinaryHashHeader req
     _ -> pure ()
   liftIO $ atomically $ writeTQueue eventQueue hydraEvent
   pure $ MessageResponse "event accepted"
+
+-- | Authenticate an agent request: Bearer secret + binary-hash header,
+-- checked against the registration row and the optional allowlist.
+requireAgent :: Pool -> [Text] -> Maybe Text -> Maybe Text -> Handler (AgentRegistration Identity)
+requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader = do
+  authToken <- case mAuthHeader of
+    Nothing -> throwError err401{errBody = Aeson.encode $ ErrorResponse "Authorization header required"}
+    Just h | T.isPrefixOf "Bearer " h -> pure $ T.drop 7 h
+    Just _ -> throwError err401{errBody = Aeson.encode $ ErrorResponse "Authorization must be Bearer token"}
+  binaryHashHdr <- case mBinaryHashHeader of
+    Nothing -> throwError err400{errBody = Aeson.encode $ ErrorResponse "X-Agent-Binary-Hash header required"}
+    Just h -> pure h
+  let secretHash = hashSecret authToken
+  mAgent <- liftIO $ Db.lookupAgentBySecretHash pool secretHash
+  agent <- case mAgent of
+    Nothing -> throwError err401{errBody = Aeson.encode $ ErrorResponse "invalid or unknown agent secret"}
+    Just a -> pure a
+  when (agent.agentBinaryHash /= binaryHashHdr) $
+    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash mismatch"}
+  when (not (null allowedHashes) && binaryHashHdr `notElem` allowedHashes) $
+    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash not in allowed list"}
+  pure agent
+
+-- | PUT /api/v1/agent/heads/:headId/protocol-parameters
+-- The agent pushes its local node's protocol parameters so server-side
+-- tx building never needs to reach the user's hydra-node.
+handleAgentPushPParams :: Pool -> [Text] -> Text -> Maybe Text -> Maybe Text -> Aeson.Value -> Handler MessageResponse
+handleAgentPushPParams pool allowedHashes headId' mAuthHeader mBinaryHashHeader params = do
+  agent <- requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader
+  when (agent.agentHeadId /= headId') $
+    throwError err403{errBody = Aeson.encode $ ErrorResponse "agent is not registered for this head"}
+  liftIO $ Db.setHeadProtocolParams pool headId' params
+  pure $ MessageResponse "protocol parameters stored"
+
+-- | POST /api/v1/agent/commands/poll
+-- Hands all pending commands for the agent's head to the agent and
+-- marks them delivered. Also refreshes the agent's liveness timestamp —
+-- the submit handler only queues commands for heads with a live agent.
+handleAgentPollCommands :: Pool -> [Text] -> Maybe Text -> Maybe Text -> Handler [AgentCommandInfo]
+handleAgentPollCommands pool allowedHashes mAuthHeader mBinaryHashHeader = do
+  agent <- requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader
+  now <- liftIO getCurrentTime
+  liftIO $ Db.updateAgentLastSeen pool agent.agentId now
+  cmds <- liftIO $ Db.claimPendingCommands pool agent.agentHeadId
+  pure
+    [ AgentCommandInfo{commandId = c.commandId, kind = c.commandKind, payload = c.commandPayload}
+    | c <- cmds
+    ]
+
+-- | POST /api/v1/agent/commands/:commandId/result
+-- The agent reports the outcome of a command it executed against its
+-- local node; wakes the submit handler waiting on it (if still there).
+handleAgentCommandResult :: Pool -> [Text] -> CommandWaiters -> Text -> Maybe Text -> Maybe Text -> Submit.SubmitResult -> Handler MessageResponse
+handleAgentCommandResult pool allowedHashes waiters cmdId mAuthHeader mBinaryHashHeader result = do
+  agent <- requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader
+  mCmd <- liftIO $ Db.getAgentCommand pool cmdId
+  cmd <- case mCmd of
+    Nothing -> throwError err404{errBody = Aeson.encode $ ErrorResponse "unknown command"}
+    Just c -> pure c
+  when (cmd.commandHeadId /= agent.agentHeadId) $
+    throwError err403{errBody = Aeson.encode $ ErrorResponse "command belongs to a different head"}
+  liftIO $ Db.completeAgentCommand pool cmdId (Aeson.toJSON result)
+  _ <- liftIO $ resolveCommand waiters cmdId result
+  pure $ MessageResponse "result recorded"
 
 -- ─── Claim ownership ───
 

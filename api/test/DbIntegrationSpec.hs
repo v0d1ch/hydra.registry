@@ -303,14 +303,11 @@ spec = describe "Db (integration)" $ around withTestPool $ do
       n <- Db.countHeads pool
       n `shouldBe` 1
 
-  describe "unique (host, port) constraint" $ do
-    it "rejects two different heads at the same host and port" $ \pool -> do
-      Db.upsertHead pool "head-1" "localhost" 4001 "Open" Nothing
-      result <- try @SomeException $ Db.upsertHead pool "head-2" "localhost" 4001 "Open" Nothing
-      case result of
-        Left _  -> pure ()
-        Right _ -> expectationFailure "Expected unique-constraint violation for duplicate host:port"
-
+  -- NOTE: the DB-level UNIQUE (host, port) constraint was dropped for the
+  -- agent push model (all agents report 127.0.0.1:4001); see
+  -- AgentCommandSpec "push-model heads". Duplicate-endpoint checking for
+  -- direct registration happens at the application layer.
+  describe "heads host/port upsert" $ do
     it "allows the same head to upsert (same headId, same host:port)" $ \pool -> do
       Db.upsertHead pool "head-1" "localhost" 4001 "Open" Nothing
       Db.upsertHead pool "head-1" "localhost" 4001 "Closed" Nothing

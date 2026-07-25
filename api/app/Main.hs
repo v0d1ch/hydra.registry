@@ -1,5 +1,6 @@
 module Main where
 
+import Agent.CommandQueue (newCommandWaiters)
 import Api (AppEnv (..), api, corsMiddleware, server)
 import Blockfrost qualified
 import Cache (newCache)
@@ -54,9 +55,14 @@ main = do
   indexerAsync <- async $ Indexer.startIndexer logger pool chainSlotVar bus config.htlcScriptHash eventQueue
   logInfo logger "Indexer started" []
 
-  -- Reconnect to registered heads
-  Indexer.reconnectAllHeads logger pool eventQueue
-  logInfo logger "Reconnected to registered heads" []
+  -- Reconnect to registered heads — only in direct-WS (dev) mode; in
+  -- production, events arrive exclusively via agent push.
+  if config.directWs
+    then do
+      Indexer.reconnectAllHeads logger pool eventQueue
+      logInfo logger "Reconnected to registered heads" []
+    else
+      logInfo logger "Direct WS disabled — relying on agent push for head events" []
 
   -- Initialize relay graph
   relayGraphVar <- newTVarIO Graph.emptyGraph
@@ -67,6 +73,8 @@ main = do
           { explorerUrl = config.explorerUrl
           , pollIntervalSeconds = config.explorerPollIntervalSeconds
           , relayGraphVar = relayGraphVar
+          , defaultNetwork = config.defaultNetwork
+          , l1Sockets = config.l1Sockets
           }
   sidecarAsync <- async $ Sidecar.startSidecar logger pool sidecarConfig
   logInfo logger "Explorer sidecar started" [("url", toJSON config.explorerUrl), ("interval_s", toJSON config.explorerPollIntervalSeconds)]
@@ -96,6 +104,9 @@ main = do
   -- Address cache (30 second TTL)
   addrCache <- newCache 30
 
+  -- Agent command queue waiters (submit handler ↔ agent result endpoint)
+  waiters <- newCommandWaiters
+
   -- Graceful shutdown
   shutdownVar <- newEmptyMVar
   let shutdown = putMVar shutdownVar ()
@@ -109,6 +120,7 @@ main = do
           , eventQueue = eventQueue
           , logger = logger
           , metrics = metrics
+          , commandWaiters = waiters
           , addressCache = addrCache
           , staticDir = config.staticDir
           , relayGraph = relayGraphVar
@@ -119,6 +131,7 @@ main = do
           , cardanoNodeSocket = config.cardanoNodeSocket
           , cardanoNodeMagic = config.cardanoNodeMagic
           , agentAllowedHashes = config.agentAllowedHashes
+          , directWs = config.directWs
           }
 
   -- Build middleware stack
