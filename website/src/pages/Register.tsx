@@ -138,13 +138,17 @@ export default function Register() {
                     <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
                       <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem', fontWeight: 600 }}>Claim ownership of this head</p>
                       <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.5rem', lineHeight: 1.6 }}>
-                        To prove you control this head, deposit a UTxO from your connected wallet into it via the hydra-node API:
+                        To prove you control this head, deposit a UTxO from your connected wallet into it.
+                        Run this <strong style={{ color: 'var(--text)' }}>on the machine where your hydra-node runs</strong> — it
+                        talks to your node's local API; the registry is not involved in this step:
                       </p>
-                      <pre style={{ fontSize: '0.75rem', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '4px', padding: '0.5rem 0.75rem', overflowX: 'auto', marginBottom: '0.5rem', color: 'var(--text)' }}>{`curl http://localhost:4001/commit \\
+                      <pre style={{ fontSize: '0.75rem', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '4px', padding: '0.5rem 0.75rem', overflowX: 'auto', marginBottom: '0.5rem', color: 'var(--text)' }}>{`curl http://127.0.0.1:4001/commit \\
   -H 'Content-Type: application/json' \\
   -d '{"utxo": {}}'`}</pre>
                       <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem', lineHeight: 1.6 }}>
-                        Sign the returned CBOR with your wallet and submit it to L1. Once the snapshot confirms and your address appears in the head, click below.
+                        Sign the returned CBOR with your wallet and submit it to L1. Your agent streams the
+                        confirming snapshot to the registry; once your wallet address shows up in the head's
+                        UTxO set here, click below to verify.
                       </p>
                       <button
                         type="button"
@@ -225,30 +229,49 @@ export default function Register() {
         transition={{ duration: 0.4, delay: 0.1 }}
       >
         <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '0.75rem' }}>Register a head</h2>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem', lineHeight: 1.6 }}>
+          Heads are registered automatically by the <strong style={{ color: 'var(--text)' }}>hydra-registry-agent</strong>,
+          which runs on the same machine as your hydra-node. It reads events from the node's{' '}
+          <em>local</em> WebSocket and pushes them here, publishes your node's protocol parameters,
+          and relays the transactions you sign on this site to your node for submission — all over
+          outbound connections only.
+        </p>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem', lineHeight: 1.6 }}>
-          Heads are registered automatically by the <strong style={{ color: 'var(--text)' }}>hydra-registry-agent</strong>.
-          Run it alongside your hydra-node — it reads events locally and pushes them to this registry.
-          Your head will appear in the list above as soon as it becomes <code>Open</code>.
+          Your hydra-node's API is unauthenticated, so it must never be reachable from the internet.
+          With the agent, it never has to be — this registry cannot and does not connect to your node.
         </p>
 
-        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', fontWeight: 600 }}>1. Set environment variables</p>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', fontWeight: 600 }}>1. Build the agent</p>
+        <pre style={{
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px',
+          padding: '0.75rem 1rem', fontSize: '0.78rem', overflowX: 'auto', marginBottom: '1rem',
+          color: 'var(--text)',
+        }}>{`git clone https://github.com/v0d1ch/hydra.registry
+cd hydra.registry
+nix develop --command bash -c "cd api && cabal build exe:hydra-registry-agent"`}</pre>
+
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', fontWeight: 600 }}>2. Point it at your node and this registry</p>
         <pre style={{
           background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px',
           padding: '0.75rem 1rem', fontSize: '0.78rem', overflowX: 'auto', marginBottom: '1rem',
           color: 'var(--text)',
         }}>{`export HYDRA_NODE_WS_URL=ws://127.0.0.1:4001
 export HYDRA_REGISTRY_URL=${registryUrl}
-export HYDRA_AGENT_STATE_FILE=/tmp/hydra-agent.json`}</pre>
+export HYDRA_AGENT_STATE_FILE=$HOME/.hydra-agent-state.json`}</pre>
 
-        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', fontWeight: 600 }}>2. Run the agent</p>
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.4rem', fontWeight: 600 }}>3. Run it — and keep it running</p>
         <pre style={{
           background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px',
           padding: '0.75rem 1rem', fontSize: '0.78rem', overflowX: 'auto', marginBottom: '1rem',
           color: 'var(--text)',
-        }}>{`hydra-registry-agent`}</pre>
+        }}>{`cabal run exe:hydra-registry-agent`}</pre>
 
         <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          Once your head is Open it will appear above. Then connect your wallet and click <strong style={{ color: 'var(--text)' }}>Claim ownership</strong> to link your wallet address and key hash to the head.
+          The agent registers itself on first run (credentials are stored in the state file — keep it).
+          Once your head is <code>Open</code> it appears above; connect your wallet and click{' '}
+          <strong style={{ color: 'var(--text)' }}>Claim ownership</strong> to link your key hash to it.
+          If the agent stops, payment actions on this site fail with <em>"no live agent"</em> until it's back.
+          Full walkthrough in the <Link to="/setup" style={{ color: 'var(--accent)' }}>Setup guide → step 03</Link>.
         </p>
       </motion.div>
 

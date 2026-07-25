@@ -21,7 +21,6 @@ export default function CreateInvoice() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<InvoiceResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     getHeads()
@@ -54,23 +53,6 @@ export default function CreateInvoice() {
       .then(({ keyHash }) => { if (keyHash) setReceiverKeyHash(keyHash) })
       .catch(() => {})
   }, [walletAddress])
-
-  const resetForm = () => {
-    setPaymentHash('')
-    setAmountAda('')
-    setMemo('')
-    setExpiresMinutes('60')
-    setResult(null)
-    setError(null)
-    setCopied(false)
-  }
-
-  const copyInvoiceId = (id: string) => {
-    navigator.clipboard.writeText(id).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

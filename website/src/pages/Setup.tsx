@@ -157,26 +157,40 @@ export default function Setup() {
         <div className="prerequisite-card glow-card">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
             <span className="step-num" style={{ fontSize: '1.5rem' }}>03</span>
-            <h2 style={{ margin: 0 }}>Register your node with an indexer</h2>
+            <h2 style={{ margin: 0 }}>Run the registry agent next to your node</h2>
           </div>
           <p className="register-desc">
-            For payments to be routed to you, an indexer needs to know which heads you participate
-            in and what funds you hold. The indexer connects to your hydra-node over its WebSocket
-            API, reads the head state, and tracks each snapshot so the UTxO set stays current.
+            For payments to be routed to you, the registry needs to know which heads you participate
+            in and what funds you hold. The <code>hydra-registry-agent</code> runs on the same machine
+            as your hydra-node: it reads events from the node's <em>local</em> WebSocket, pushes them
+            to the registry, publishes your node's protocol parameters, and relays signed transactions
+            you approve on this site back to your node for submission.
           </p>
           <p className="register-desc">
-            You only need to register once per head. The indexer reconnects automatically if your
-            node restarts.
+            Every connection is <strong>outbound from your machine</strong>. Your hydra-node's API is
+            unauthenticated — anyone who can reach it controls the head — so it must never be exposed
+            to the internet, and with the agent it never has to be. The agent registers itself on first
+            run (credentials land in its state file) and your head appears in the registry as soon as
+            it is Open.
           </p>
           <div className="setup-steps">
-            <h3>What you need</h3>
-            <ul style={{ color: 'var(--text-dim)', paddingLeft: '1.2rem', lineHeight: '1.8' }}>
-              <li><strong>Host</strong> — the hostname or IP where your hydra-node is reachable (e.g. <code>localhost</code>)</li>
-              <li><strong>Port</strong> — the hydra-node WebSocket API port (check your node startup flags)</li>
-            </ul>
+            <h3>Build and run</h3>
+            <pre className="code-block">{`git clone https://github.com/v0d1ch/hydra.registry
+cd hydra.registry
+nix develop --command bash -c "cd api && cabal build exe:hydra-registry-agent"
+
+export HYDRA_NODE_WS_URL=ws://127.0.0.1:4001
+export HYDRA_REGISTRY_URL=${window.location.origin}
+export HYDRA_AGENT_STATE_FILE=$HOME/.hydra-agent-state.json
+cabal run exe:hydra-registry-agent`}</pre>
+            <p className="register-desc" style={{ marginTop: '0.75rem' }}>
+              Keep the agent running — it is also the channel that submits your signed lock, claim,
+              and refund transactions to the head. If it stops, the registry marks your head stale
+              and payment actions through this site will fail with "no live agent".
+            </p>
           </div>
           <Link to="/register" className="btn btn-primary" style={{ display: 'inline-block', marginTop: '1rem' }}>
-            Register your head →
+            See your heads →
           </Link>
         </div>
       </motion.section>

@@ -175,6 +175,22 @@ export default function Navbar() {
                 {TOP_LINKS.map(l => (
                   <Link key={l.to} to={l.to} className={`nav-dropdown-item ${isActive(l.to)}`}>{l.label}</Link>
                 ))}
+                {showNetworkSelector && (
+                  <>
+                    <div className="nav-dropdown-divider" />
+                    <div className="mobile-network-selector">
+                      {networks.map(n => (
+                        <button
+                          key={n}
+                          className={`network-btn ${network === n ? 'network-active' : ''}`}
+                          onClick={() => { setNetwork(n); setMenuOpen(false) }}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
                 {address && (
                   <>
                     <div className="nav-dropdown-divider" />

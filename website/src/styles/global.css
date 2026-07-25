@@ -342,7 +342,11 @@ main {
 
 .hero-title {
   font-family: 'Press Start 2P', monospace;
-  font-size: 3.5rem;
+  /* Fluid size: the title is one word split into per-char spans, so it
+     must never wrap — scale it down instead of letting the last glyph
+     drop to a second line. */
+  font-size: clamp(1.2rem, 5.5vw, 3.5rem);
+  white-space: nowrap;
   font-weight: 400;
   letter-spacing: 0.05em;
   color: var(--accent);
@@ -829,6 +833,13 @@ main {
   padding: 1.5rem 2rem;
   border-radius: 12px;
   border: 1px solid;
+}
+
+/* Long unbroken tokens (head ids, tx hashes, CBOR) must wrap inside
+   result boxes instead of overflowing them. */
+.register-result code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .register-result.success {
