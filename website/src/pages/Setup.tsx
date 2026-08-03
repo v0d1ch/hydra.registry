@@ -176,6 +176,33 @@ export default function Setup() {
           </p>
           <div className="setup-steps">
             <h3>Get the agent</h3>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', margin: '0.5rem 0 1rem' }}>
+              <a
+                className="btn btn-primary"
+                href="https://github.com/v0d1ch/hydra.registry/releases/latest/download/hydra-registry-agent-x86_64-linux"
+              >
+                ⬇ Linux x86_64
+              </a>
+              <a
+                className="btn btn-primary"
+                href="https://github.com/v0d1ch/hydra.registry/releases/latest/download/hydra-registry-agent-aarch64-linux"
+              >
+                ⬇ Linux ARM64
+              </a>
+              <a
+                className="btn btn-secondary"
+                href="https://github.com/v0d1ch/hydra.registry/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+              >
+                All releases &amp; checksums →
+              </a>
+            </div>
+            <p className="register-desc" style={{ marginBottom: '0.75rem' }}>
+              Each release ships a <code>.sha256</code> file next to the binary — verify before
+              running (<code>sha256sum -c</code>). The same hash is what registries pin in{' '}
+              <code>HYDRA_AGENT_ALLOWED_HASHES</code>.
+            </p>
             <pre className="code-block">{`# with nix (recommended — you already use it for hydra-node)
 nix run github:v0d1ch/hydra.registry#hydra-registry-agent
 

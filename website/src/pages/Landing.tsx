@@ -198,8 +198,8 @@ export default function Landing() {
             },
             {
               icon: '@',
-              title: 'Wallet-ready L2 balances',
-              desc: 'Wallets like Lace and Yoroi can query Hydra head balances through our Blockfrost-compatible API. See your L2 funds alongside L1.',
+              title: 'Wallet-ready L2 balances (in progress)',
+              desc: 'The registry speaks standard wallet-backend API formats, so Cardano wallets can eventually show Hydra head balances alongside L1. End-to-end wallet integration is still a work in progress.',
             },
           ].map((card, i) => (
             <motion.div key={card.title} className="about-card glow-card" variants={cardVariants} custom={i + 1}>

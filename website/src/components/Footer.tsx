@@ -27,12 +27,6 @@ export default function Footer() {
               Cardano
             </a>
           </div>
-          <div className="footer-col">
-            <h4>Wallets</h4>
-            <a href="https://www.lace.io" target="_blank" rel="noopener noreferrer">Lace</a>
-            <a href="https://namiwallet.io" target="_blank" rel="noopener noreferrer">Nami</a>
-            <a href="https://yoroi-wallet.com" target="_blank" rel="noopener noreferrer">Yoroi</a>
-          </div>
         </div>
       </div>
       <div className="footer-bottom">

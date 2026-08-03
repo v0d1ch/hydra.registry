@@ -28,7 +28,7 @@ Plus a `testnet/` harness for running cardano-node + multiple hydra-nodes locall
 graph TB
   subgraph "Browser"
     UI[React SPA]
-    WALLET[Lace / Yoroi]
+    WALLET[Cardano wallets — integration TODO]
   end
 
   subgraph "Registry process"
@@ -335,7 +335,7 @@ Servant type in `api/src/Api.hs:80`. Routes group thematically:
 | --- | --- | --- |
 | Health & metadata | `GET /`, `GET /api/v1/health`, `GET /api/v1/stats`, `GET /api/v1/metrics` | metrics is Prometheus text format |
 | Head management | `POST /api/v1/heads/register`, `GET /api/v1/heads/check`, `GET/DELETE /api/v1/heads/{id}`, `POST /api/v1/heads/{id}/ref-script` | `ref-script` registers the head's published HTLC reference UTxO |
-| L2 UTxO querying | `GET /api/v1/heads/{id}/addresses/{addr}/{balance,utxos}`, `GET /addresses/{addr}/utxos`, `POST /api/txs/utxoForAddresses` | last two are Blockfrost / Yoroi compat for wallets |
+| L2 UTxO querying | `GET /api/v1/heads/{id}/addresses/{addr}/{balance,utxos}`, `GET /addresses/{addr}/utxos`, `POST /api/txs/utxoForAddresses` | last two speak standard wallet-backend wire formats (end-to-end wallet integration is TODO) |
 | Explorer | `GET /api/v1/explorer/heads`, `…/participants`, `GET /api/v1/explorer/stats`, `GET /api/v1/addresses/{addr}/heads` | reads `explorer_heads` + `head_participants` |
 | Relay graph & invoices | `GET /api/v1/relay/graph`, `POST /api/v1/relay/invoices`, `GET …/{id}` | graph response includes nodes + edges for the UI viz |
 | Routing & payments | `POST /api/v1/relay/routes`, `POST …/{id}/execute`, `GET /api/v1/relay/payments/{id}`, `POST /api/v1/relay/preimage/{hash}` | preimage broadcast unblocks bridge claims |
@@ -455,7 +455,7 @@ Chain *time* still flows exclusively through Hydra Greetings (`currentSlot`); th
 
 ### 5.4 Wallet integration
 
-There is **no in-page wallet SDK integration** today. Lock/claim/refund blueprints are returned as CBOR + metadata; the user signs out-of-band with `cardano-cli` and submits the signed envelope to their own hydra-node's `POST /transaction` (the UI prints both commands). The footer links to Lace/Yoroi/Nami for wallet downloads only.
+There is **no in-page wallet SDK integration** today, and end-to-end integration with external wallets is an open TODO. Lock/claim/refund blueprints are returned as CBOR + metadata; the user signs out-of-band with `cardano-cli` and submits the signed envelope to their own hydra-node's `POST /transaction` (the UI prints both commands).
 
 ### 5.5 How the frontend is served in prod
 

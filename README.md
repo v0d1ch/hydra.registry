@@ -4,7 +4,7 @@ Cross-head payment routing for Cardano Hydra.
 
 **Live instance: [hydra-registry.app](https://hydra-registry.app/)**
 
-hydra.registry is an open-source service that indexes [Hydra Head](https://hydra.family) UTxO state and exposes it through wallet-compatible APIs. It bridges the gap between Hydra's off-chain L2 state and Cardano wallets, so users can see their Hydra funds directly in Lace, Nami, Yoroi, and other wallets — no custom UI needed.
+hydra.registry is an open-source service that indexes [Hydra Head](https://hydra.family) UTxO state and exposes it through wallet-backend-format APIs. It aims to bridge the gap between Hydra's off-chain L2 state and Cardano wallets, so users can eventually see their Hydra funds directly in the wallets they already use. The wire-format endpoints exist and are tested, but **end-to-end wallet integration is still a TODO**.
 
 It also provides a **payment relay** that routes cross-head payments via HTLC (Hashed TimeLock Contracts), enabling users to send funds between Hydra heads through bridge operators who earn fees for relaying.
 
@@ -24,7 +24,7 @@ The registry is deliberately powerless:
 - **Routes payments** between Hydra heads via HTLC contracts, with Dijkstra pathfinding weighted by bridge operator fees
 - **Builds transactions natively** (lock / claim / refund / publish-ref-script) as Conway envelopes for users to sign offline
 - **Tracks payments** per hop in real time (HTLC watcher + server-sent events), including preimage broadcast to bridge operators
-- **Serves** Blockfrost- and Yoroi-compatible endpoints that wallets can query as if it were an L1 provider
+- **Serves** wallet-backend-compatible endpoints (Blockfrost-style plus a legacy UTxO query) that wallets can query as if it were an L1 provider
 - **Provides** a web interface for exploring heads, running the agent, creating invoices, executing routes, and acting on your hops (lock / claim / refund) from a dashboard
 
 ## Architecture
@@ -53,23 +53,21 @@ Full endpoint reference: [ARCHITECTURE.md](ARCHITECTURE.md) and the live [/docs]
 
 | Group | Examples | Notes |
 |---|---|---|
-| Wallet compat | `GET /addresses/{addr}/utxos`, `POST /api/txs/utxoForAddresses` | Blockfrost / Yoroi formats |
+| Wallet compat | `GET /addresses/{addr}/utxos`, `POST /api/txs/utxoForAddresses` | standard wallet-backend wire formats (integration TODO) |
 | Heads & explorer | `GET /api/v1/heads`, `GET /api/v1/explorer/heads`, `GET /api/v1/addresses/{addr}/heads` | registered + on-chain discovered heads |
 | Agent push | `POST /api/v1/agent/register`, `POST /api/v1/agent/events`, `PUT /api/v1/agent/heads/{id}/protocol-parameters` | one-way: information flows to the registry only |
 | Relay | `POST /api/v1/relay/invoices`, `POST /api/v1/relay/routes`, `POST …/routes/{id}/execute`, `GET …/payments/{id}`, SSE `…/payments/{id}/events` | invoice → route → per-hop HTLC tracking |
 | Tx building | `POST …/hops/{i}/{lock,claim,refund}-tx-cbor`, `POST /api/v1/heads/{id}/publish-ref-script-tx-cbor` | returns unsigned Conway envelopes; **you sign and submit to your own node** |
 | Ownership | `POST /api/v1/heads/{id}/claim-ownership` | prove head access via a deposited UTxO |
 
-## Wallet compatibility
+## Wallet integration (TODO)
 
-| Wallet | Format | Status |
-|--------|--------|--------|
-| Lace | Blockfrost | Supported |
-| Nami | Blockfrost | Supported |
-| Yoroi | Yoroi API | Supported |
-| Flint | Blockfrost | Likely compatible |
-| Eternl | Proprietary | Planned |
-| VESPR | Proprietary | Planned |
+The registry serves standard wallet-backend wire formats — a Blockfrost-style
+UTxO query and a legacy `utxoForAddresses` query — and both are covered by
+tests. Pointing a real wallet at the registry end-to-end has **not** been done
+yet and still takes real effort (custom backend URLs, network/era quirks,
+per-wallet testing). Until then, treat wallet support as roadmap, not a
+feature.
 
 ## Project structure
 
