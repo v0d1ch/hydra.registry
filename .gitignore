@@ -22,10 +22,14 @@ pgdata/
 .env.*
 *.pem
 *.key
+*.sk
+*.skey
 credentials.json
+.hydra-agent-state.json
 
-# Testnet data (node-db, keys, state)
+# Testnet data (node-db, keys, state) and any locally dropped binaries
 testnet/data/
+testnet/.bin/
 
 # Dependencies
 tools/node_modules/
