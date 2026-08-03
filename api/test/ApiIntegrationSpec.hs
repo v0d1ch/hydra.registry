@@ -2,6 +2,7 @@ module ApiIntegrationSpec (spec) where
 
 import Api (AppEnv (..), api, server)
 import Api.Types
+import Db.Schema (AgentRegistration (..))
 import Cache (newCache)
 import Control.Concurrent.STM
 import Data.Aeson (encode)
@@ -248,11 +249,49 @@ mainSpec = with makeTestApp $ describe "API (integration)" $ do
       request methodPost "/api/v1/agent/events" [("Content-Type", "application/json")] body
         `shouldRespondWith` 401
 
-    it "returns 400 when X-Agent-Binary-Hash header is missing" $ do
-      let body = encode $ Aeson.object ["event" Aeson..= Aeson.object []]
+    -- The binary hash is telemetry, not policy: the header is optional,
+    -- and a changed hash (agent upgraded its binary) is recorded on the
+    -- registration row rather than rejected.
+    it "accepts events without a binary-hash header (auth is the secret alone)" $ do
+      reg <-
+        request
+          methodPost
+          "/api/v1/agent/register"
+          [("Content-Type", "application/json")]
+          (encode $ Aeson.object [("headId", "head-nohash"), ("binaryHash", "sha256:v1"), ("wsUrl", "ws://127.0.0.1:4001")])
+      (secret :: T.Text) <- liftIO $ case Aeson.decode @Aeson.Value (simpleBody reg) of
+        Just (Aeson.Object o)
+          | Just (Aeson.String s) <- KM.lookup "secretKey" o -> pure s
+        _ -> fail "could not parse agent registration response"
+      let body = encode $ Aeson.object ["event" Aeson..= Aeson.object [("tag", "Greetings"), ("headStatus", "Idle")]]
       request methodPost "/api/v1/agent/events"
-        [("Content-Type", "application/json"), ("Authorization", "Bearer sometoken")] body
-        `shouldRespondWith` 400
+        [("Content-Type", "application/json"), ("Authorization", "Bearer " <> encodeUtf8 secret)] body
+        `shouldRespondWith` 200
+
+    it "records a changed binary hash instead of rejecting (agent upgrade)" $ do
+      reg <-
+        request
+          methodPost
+          "/api/v1/agent/register"
+          [("Content-Type", "application/json")]
+          (encode $ Aeson.object [("headId", "head-upgrade"), ("binaryHash", "sha256:old"), ("wsUrl", "ws://127.0.0.1:4001")])
+      (secret, agentId') <- liftIO $ case Aeson.decode @Aeson.Value (simpleBody reg) of
+        Just (Aeson.Object o)
+          | Just (Aeson.String s) <- KM.lookup "secretKey" o
+          , Just (Aeson.String a) <- KM.lookup "agentId" o -> pure (s, a)
+        _ -> fail "could not parse agent registration response"
+      let body = encode $ Aeson.object ["event" Aeson..= Aeson.object [("tag", "Greetings"), ("headStatus", "Idle")]]
+      request methodPost "/api/v1/agent/events"
+        [ ("Content-Type", "application/json")
+        , ("Authorization", "Bearer " <> encodeUtf8 secret)
+        , ("X-Agent-Binary-Hash", "sha256:new")
+        ]
+        body
+        `shouldRespondWith` 200
+      stored <- liftIO $ do
+        pool <- rawTestPool
+        Db.getAgentRegistration pool agentId'
+      liftIO $ fmap (.agentBinaryHash) stored `shouldBe` Just "sha256:new"
 
     it "returns 401 for an unknown agent secret" $ do
       let body = encode $ Aeson.object ["event" Aeson..= Aeson.object []]
@@ -389,7 +428,6 @@ makeTestAppWith directWsEnabled = do
             , htlcScriptCbor = Nothing
             , cardanoNodeSocket = Nothing
             , cardanoNodeMagic = Nothing
-            , agentAllowedHashes = []
             , directWs = directWsEnabled
             }
     pure $ serve api (server env)

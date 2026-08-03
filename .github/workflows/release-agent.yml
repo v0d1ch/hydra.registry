@@ -1,9 +1,8 @@
 name: release-agent
 
 # Tag a commit `agent-v*` (e.g. agent-v0.1.0) to build the agent and
-# attach the binary + sha256 to a GitHub Release. The sha256 doubles as
-# the value operators/registries pin in HYDRA_AGENT_ALLOWED_HASHES
-# (the agent reports `sha256:<hex>` of its own binary on every request).
+# attach the binary + sha256 to a GitHub Release. The sha256 lets
+# operators verify downloads before running them.
 on:
   push:
     tags:

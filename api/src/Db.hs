@@ -1364,6 +1364,35 @@ lookupAgentBySecretHash pool secretHash = do
     (a:_) -> Just a
 
 -- | Update the last_seen_at timestamp for an agent.
+-- | Record the binary hash an agent most recently reported. The hash is
+-- telemetry (fleet visibility), not an access-control input — it changes
+-- legitimately whenever the operator upgrades the agent binary.
+updateAgentBinaryHash :: Pool -> Text -> Text -> IO ()
+updateAgentBinaryHash pool aid newHash =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = agentRegistrationSchema
+            , from = pure ()
+            , set = \_ row -> row{agentBinaryHash = lit newHash}
+            , updateWhere = \_ row -> row.agentId ==. lit aid
+            , returning = NoReturning
+            }
+
+getAgentRegistration :: Pool -> Text -> IO (Maybe (AgentRegistration Identity))
+getAgentRegistration pool aid = do
+  rows <-
+    runSession pool $
+      Session.statement () $
+        Rel8.run $
+          Rel8.select $ do
+            row <- Rel8.each agentRegistrationSchema
+            Rel8.where_ $ row.agentId ==. lit aid
+            pure row
+  pure $ List.find (const True) rows
+
 updateAgentLastSeen :: Pool -> Text -> UTCTime -> IO ()
 updateAgentLastSeen pool aid now =
   runSession pool $

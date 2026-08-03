@@ -151,7 +151,6 @@ data AppEnv = AppEnv
   , htlcScriptCbor :: Maybe Text
   , cardanoNodeSocket :: Maybe FilePath
   , cardanoNodeMagic :: Maybe Int
-  , agentAllowedHashes :: [Text]
   , directWs :: Bool
   -- ^ Allow dialing user hydra-node APIs directly (dev/testnet only).
   }
@@ -206,9 +205,9 @@ apiV1Server env =
     :<|> handleRefundTxCbor env.directWs env.pool env.latestChainSlot
     :<|> handleGetUserKeyHash env.pool
     :<|> handleSetUserKeyHash env.pool
-    :<|> handleAgentRegister env.pool env.agentAllowedHashes
-    :<|> handleAgentEvent env.pool env.agentAllowedHashes env.eventQueue
-    :<|> handleAgentPushPParams env.pool env.agentAllowedHashes
+    :<|> handleAgentRegister env.pool
+    :<|> handleAgentEvent env.pool env.eventQueue
+    :<|> handleAgentPushPParams env.pool
     :<|> handleClaimOwnership env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
@@ -1831,11 +1830,10 @@ hashSecret :: Text -> Text
 hashSecret t = T.pack $ show (hash (T.encodeUtf8 t) :: Digest SHA256)
 
 -- | POST /api/v1/agent/register
--- Issues a per-agent secret key. Empty allowedHashes list = dev mode (any hash accepted).
-handleAgentRegister :: Pool -> [Text] -> AgentRegisterRequest -> Handler AgentRegisterResponse
-handleAgentRegister pool allowedHashes req = do
-  when (not (null allowedHashes) && req.binaryHash `notElem` allowedHashes) $
-    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash not in allowed list"}
+-- Issues a per-agent secret key. The reported binary hash is stored as
+-- telemetry; identity rests on the secret alone.
+handleAgentRegister :: Pool -> AgentRegisterRequest -> Handler AgentRegisterResponse
+handleAgentRegister pool req = do
   let (wsHost, wsPort) = parseWsHostPort req.wsUrl
   agentId' <- liftIO $ T.replace "-" "" . T.pack . UUID.toString <$> UUID.nextRandom
   secretKey <- liftIO $ T.replace "-" "" . T.pack . UUID.toString <$> UUID.nextRandom
@@ -1857,14 +1855,13 @@ parseWsHostPort url =
 -- Accepts a Hydra event pushed by the CLI agent.
 handleAgentEvent
   :: Pool
-  -> [Text]
   -> TQueue HydraEvent
   -> Maybe Text
   -> Maybe Text
   -> AgentEventRequest
   -> Handler MessageResponse
-handleAgentEvent pool allowedHashes eventQueue mAuthHeader mBinaryHashHeader req = do
-  agent <- requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader
+handleAgentEvent pool eventQueue mAuthHeader mBinaryHashHeader req = do
+  agent <- requireAgent pool mAuthHeader mBinaryHashHeader
   now <- liftIO getCurrentTime
   liftIO $ Db.updateAgentLastSeen pool agent.agentId now
   hydraEvent <- case Hydra.Client.parseHydraMessage req.event of
@@ -1884,34 +1881,34 @@ handleAgentEvent pool allowedHashes eventQueue mAuthHeader mBinaryHashHeader req
   liftIO $ atomically $ writeTQueue eventQueue hydraEvent
   pure $ MessageResponse "event accepted"
 
--- | Authenticate an agent request: Bearer secret + binary-hash header,
--- checked against the registration row and the optional allowlist.
-requireAgent :: Pool -> [Text] -> Maybe Text -> Maybe Text -> Handler (AgentRegistration Identity)
-requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader = do
+-- | Authenticate an agent request. Identity is the Bearer secret alone.
+-- The binary-hash header is telemetry, not policy: it cannot be trusted
+-- (self-reported), so it is recorded for fleet visibility — a changed
+-- hash (operator upgraded the agent) updates the registration row
+-- rather than locking the agent out.
+requireAgent :: Pool -> Maybe Text -> Maybe Text -> Handler (AgentRegistration Identity)
+requireAgent pool mAuthHeader mBinaryHashHeader = do
   authToken <- case mAuthHeader of
     Nothing -> throwError err401{errBody = Aeson.encode $ ErrorResponse "Authorization header required"}
     Just h | T.isPrefixOf "Bearer " h -> pure $ T.drop 7 h
     Just _ -> throwError err401{errBody = Aeson.encode $ ErrorResponse "Authorization must be Bearer token"}
-  binaryHashHdr <- case mBinaryHashHeader of
-    Nothing -> throwError err400{errBody = Aeson.encode $ ErrorResponse "X-Agent-Binary-Hash header required"}
-    Just h -> pure h
   let secretHash = hashSecret authToken
   mAgent <- liftIO $ Db.lookupAgentBySecretHash pool secretHash
   agent <- case mAgent of
     Nothing -> throwError err401{errBody = Aeson.encode $ ErrorResponse "invalid or unknown agent secret"}
     Just a -> pure a
-  when (agent.agentBinaryHash /= binaryHashHdr) $
-    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash mismatch"}
-  when (not (null allowedHashes) && binaryHashHdr `notElem` allowedHashes) $
-    throwError err403{errBody = Aeson.encode $ ErrorResponse "binary hash not in allowed list"}
+  case mBinaryHashHeader of
+    Just h | h /= agent.agentBinaryHash ->
+      liftIO $ Db.updateAgentBinaryHash pool agent.agentId h
+    _ -> pure ()
   pure agent
 
 -- | PUT /api/v1/agent/heads/:headId/protocol-parameters
 -- The agent pushes its local node's protocol parameters so server-side
 -- tx building never needs to reach the user's hydra-node.
-handleAgentPushPParams :: Pool -> [Text] -> Text -> Maybe Text -> Maybe Text -> Aeson.Value -> Handler MessageResponse
-handleAgentPushPParams pool allowedHashes headId' mAuthHeader mBinaryHashHeader params = do
-  agent <- requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader
+handleAgentPushPParams :: Pool -> Text -> Maybe Text -> Maybe Text -> Aeson.Value -> Handler MessageResponse
+handleAgentPushPParams pool headId' mAuthHeader mBinaryHashHeader params = do
+  agent <- requireAgent pool mAuthHeader mBinaryHashHeader
   when (agent.agentHeadId /= headId') $
     throwError err403{errBody = Aeson.encode $ ErrorResponse "agent is not registered for this head"}
   liftIO $ Db.setHeadProtocolParams pool headId' params

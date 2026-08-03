@@ -125,7 +125,6 @@ main = do
           , htlcScriptCbor = config.htlcScriptCbor
           , cardanoNodeSocket = config.cardanoNodeSocket
           , cardanoNodeMagic = config.cardanoNodeMagic
-          , agentAllowedHashes = config.agentAllowedHashes
           , directWs = config.directWs
           }
 

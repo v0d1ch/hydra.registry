@@ -15,7 +15,7 @@ The registry is deliberately powerless:
 - **It never connects to your hydra-node.** Head state reaches the registry through `hydra-registry-agent`, a small one-way telemetry binary you run next to your node. Every connection is outbound from your machine; your node's (unauthenticated) API is never exposed.
 - **The agent physically cannot write to your node.** Its node connection is a read-only WebSocket enforced at the type level, and there is no command channel back — the registry cannot queue, relay, or submit anything.
 - **Your keys never leave your machine.** The registry builds unsigned transaction envelopes; you sign offline with your own tooling and submit to your **own** node's `POST /transaction`. There is no submission endpoint on the registry, in any mode.
-- **The agent is auditable.** It is a standalone package (`agent/`) with plain Hackage dependencies — no Cardano toolchain required to read or build it. Agents authenticate with per-agent secrets; the registry stores only their hashes and can pin allowed binary hashes (`HYDRA_AGENT_ALLOWED_HASHES`).
+- **The agent is auditable.** It is a standalone package (`agent/`) with plain Hackage dependencies — no Cardano toolchain required to read or build it. Agents authenticate with per-agent secrets (the registry stores only their hashes); each agent's self-reported binary hash is recorded for fleet visibility.
 
 ## What it does
 

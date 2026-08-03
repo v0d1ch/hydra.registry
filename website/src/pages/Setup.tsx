@@ -200,8 +200,8 @@ export default function Setup() {
             </div>
             <p className="register-desc" style={{ marginBottom: '0.75rem' }}>
               Each release ships a <code>.sha256</code> file next to the binary — verify before
-              running (<code>sha256sum -c</code>). The same hash is what registries pin in{' '}
-              <code>HYDRA_AGENT_ALLOWED_HASHES</code>.
+              running (<code>sha256sum -c</code>). The agent also reports its own binary hash to
+              the registry, which records it for fleet visibility.
             </p>
             <pre className="code-block">{`# with nix (recommended — you already use it for hydra-node)
 nix run github:v0d1ch/hydra.registry#hydra-registry-agent
