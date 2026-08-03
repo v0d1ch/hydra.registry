@@ -10,7 +10,9 @@
     nixpkgs.follows = "hydra/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     cardano-node.url = "github:IntersectMBO/cardano-node/11.0.1";
-    hydra.url = "github:cardano-scaling/hydra/2.2.0";
+    # Track hydra master; the lock pins the exact rev. Bump with
+    # `nix flake update hydra` and mirror the rev in api/cabal.project.
+    hydra.url = "github:cardano-scaling/hydra/master";
   };
 
   nixConfig = {
@@ -38,6 +40,17 @@
         pkgs2411 = import hydra.inputs.nixpkgs-2411 { inherit system; };
       in
       {
+        # Standalone agent — Hackage deps only, so it builds with the
+        # stock nixpkgs Haskell set: no haskell.nix, no IOG caches, no
+        # Cardano dependency tree. Operators install it with
+        #   nix run github:v0d1ch/hydra.registry#hydra-registry-agent
+        packages = rec {
+          hydra-registry-agent =
+            pkgs.haskell.lib.justStaticExecutables
+              (pkgs.haskellPackages.callCabal2nix "hydra-registry-agent" ./agent { });
+          default = hydra-registry-agent;
+        };
+
         # Extend hydra's cabalOnly shell with registry-specific tools.
         # This inherits all Cardano C library dependencies (libsodium-vrf,
         # libblst, librust_accumulator, lmdb, liburing, …) without having to

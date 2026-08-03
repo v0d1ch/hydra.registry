@@ -15,14 +15,25 @@ index-state:
 
 packages:
   .
-  /home/v0d1ch/code/hydra/hydra-prelude
-  /home/v0d1ch/code/hydra/hydra-cardano-api
-  /home/v0d1ch/code/hydra/hydra-plutus
-  /home/v0d1ch/code/hydra/hydra-plutus-extras
-  /home/v0d1ch/code/hydra/hydra-tx
-  /home/v0d1ch/code/hydra/hydra-node
-  /home/v0d1ch/code/hydra/hydra-chain-observer
-  /home/v0d1ch/code/hydra/hydra-test-utils
+
+-- Hydra libraries pinned to a hydra master rev (2026-08-03) — the same
+-- rev the flake's hydra input locks. Never a local checkout. Bump the
+-- rev together with `nix flake update hydra`, and keep index-state,
+-- allow-newer and constraints below mirroring hydra's cabal.project at
+-- that rev so the external cardano-api/ledger/plutus tree resolves to
+-- the same store hashes as a hydra build and is reused, not recompiled.
+source-repository-package
+  type: git
+  location: https://github.com/cardano-scaling/hydra
+  tag: 7b169d66d6bdc35662723933785f4d7624d49605
+  subdir:
+    hydra-prelude
+    hydra-cardano-api
+    hydra-plutus
+    hydra-plutus-extras
+    hydra-tx
+    hydra-node
+    hydra-test-utils
 
 write-ghc-environment-files: never
 
@@ -52,10 +63,8 @@ constraints:
   plutus-ledger-api == 1.63.0.0,
   plutus-metatheory == 1.63.0.0
 
--- Same stanza as hydra's own cabal.project. Besides the parallelism it
--- keeps the store hashes of external dependencies identical to a hydra
--- build, so the shared ~/.cabal/store populated from ~/code/hydra is
--- reused instead of recompiling the cardano-api/ledger/plutus tree.
+-- Same stanza as hydra's own cabal.project (parallelism + identical
+-- external-dependency store hashes).
 package *
   ghc-options: -j8
 
@@ -81,10 +90,6 @@ package hydra-tx
   benchmarks: False
 
 package hydra-node
-  tests: False
-  benchmarks: False
-
-package hydra-chain-observer
   tests: False
   benchmarks: False
 

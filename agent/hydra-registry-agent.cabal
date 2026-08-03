@@ -1,0 +1,59 @@
+cabal-version: 3.0
+name:          hydra-registry-agent
+version:       0.1.0.0
+synopsis:      One-way telemetry agent for the Hydra Registry
+description:
+  Reads events from a local hydra-node over a read-only WebSocket and
+  pushes them to a Hydra Registry, along with the node's protocol
+  parameters. The agent conveys information only: it has no code path
+  that writes to the node, and the connection type ('ReadOnlyConn')
+  makes sending impossible at the type level. Operators submit signed
+  transactions to their own node themselves.
+license:       Apache-2.0
+author:        Sasa Bogicevic
+build-type:    Simple
+
+common shared
+  default-language: GHC2021
+  default-extensions:
+    DerivingStrategies
+    LambdaCase
+    NoFieldSelectors
+    OverloadedRecordDot
+    OverloadedStrings
+  ghc-options:
+    -Wall
+
+library
+  import: shared
+  hs-source-dirs: src
+  exposed-modules:
+    Agent.BinaryHash
+    Agent.EventPusher
+    Agent.ReadOnly
+  build-depends:
+    , base >= 4.16 && < 5
+    , aeson
+    , bytestring
+    , crypton
+    , directory
+    , http-client
+    , http-types
+    , text
+    , websockets
+
+executable hydra-registry-agent
+  import: shared
+  hs-source-dirs: app
+  main-is: Main.hs
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+  build-depends:
+    , base
+    , aeson
+    , http-client
+    , http-client-tls
+    , hydra-registry-agent
+    , text

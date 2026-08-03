@@ -1,0 +1,52 @@
+name: release-agent
+
+# Tag a commit `agent-v*` (e.g. agent-v0.1.0) to build the agent and
+# attach the binary + sha256 to a GitHub Release. The sha256 doubles as
+# the value operators/registries pin in HYDRA_AGENT_ALLOWED_HASHES
+# (the agent reports `sha256:<hex>` of its own binary on every request).
+on:
+  push:
+    tags:
+      - "agent-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            artifact: hydra-registry-agent-x86_64-linux
+          - runner: ubuntu-24.04-arm
+            artifact: hydra-registry-agent-aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.6.7"
+          cabal-version: "latest"
+
+      - name: Build
+        working-directory: agent
+        run: |
+          cabal update
+          cabal build exe:hydra-registry-agent
+
+      - name: Package
+        run: |
+          bin=$(cd agent && cabal list-bin exe:hydra-registry-agent)
+          cp "$bin" "${{ matrix.artifact }}"
+          strip "${{ matrix.artifact }}"
+          sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+          cat "${{ matrix.artifact }}.sha256"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256

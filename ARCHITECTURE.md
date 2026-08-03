@@ -80,13 +80,18 @@ The box labelled *Registry process* is one binary, one OS process. All threads s
 
 ```
 hydra.registry/
+├── agent/                     # hydra-registry-agent — standalone cabal package.
+│   │                          # Hackage deps only (no CHaP, no Cardano tree), so it
+│   │                          # builds with stock GHC and ships via the flake:
+│   │                          #   nix run github:v0d1ch/hydra.registry#hydra-registry-agent
+│   ├── src/Agent/
+│   │   ├── BinaryHash.hs      # agent's own SHA-256 (X-Agent-Binary-Hash)
+│   │   ├── EventPusher.hs     # register + push events/pparams to registry
+│   │   └── ReadOnly.hs        # type-enforced read-only node WS conn
+│   └── app/Main.hs            # one-way telemetry loop
 ├── api/                       # Haskell Servant backend
 │   ├── app/Main.hs            # process entry point + thread spawn
 │   ├── src/
-│   │   ├── Agent/
-│   │   │   ├── BinaryHash.hs  # agent's own SHA-256 (X-Agent-Binary-Hash)
-│   │   │   ├── EventPusher.hs # register + push events/pparams to registry
-│   │   │   └── ReadOnly.hs    # type-enforced read-only node WS conn
 │   │   ├── Api.hs             # Servant route table + handlers
 │   │   ├── Api/Types.hs       # request/response records
 │   │   ├── Api/Validation.hs  # Cardano address shape checks
@@ -506,7 +511,8 @@ graph LR
 ### 8.1 Dev shell & toolchain
 
 The dev shell (`flake.nix`) extends **hydra's `cabalOnly` shell** (input
-`github:cardano-scaling/hydra/2.2.0`) instead of assembling its own GHC:
+`github:cardano-scaling/hydra/master`, rev pinned by `flake.lock`)
+instead of assembling its own GHC:
 that inherits the haskell.nix GHC 9.6.7 plus every Cardano C library
 (libsodium-vrf, libblst, libsecp256k1, librust_accumulator, lmdb,
 liburing) needed to compile the hydra packages. Three rules keep it
@@ -520,18 +526,19 @@ working:
   library.
 - **One cabal config.** `api/cabal.project` copies hydra's index-states,
   `allow-newer`, plutus `constraints` and `package *` stanzas verbatim,
-  and adds the hydra packages from `~/code/hydra` as source packages.
-  Keeping these identical lets the shared `~/.cabal/store/ghc-9.6.7`
-  serve both projects.
+  and pulls the hydra libraries via `source-repository-package` at the
+  same master rev the flake locks. Keeping these identical lets the
+  shared `~/.cabal/store/ghc-9.6.7` serve both projects.
 - **Stale pkg-config units.** If a `*-configure` store unit (e.g.
   `postgresql-libpq-configure`) was built against a different shell, its
   baked-in library paths survive environment changes; evict the unit dir
   plus its `package.db/*.conf` and `ghc-pkg recache` to force rebuild.
 
-Note the version split: the *shell* (toolchain, hydra-node binary) is
-pinned to the hydra `2.2.0` tag, while the *source packages* build from
-the local `~/code/hydra` checkout, which may be ahead. Keep the checkout
-compatible with the pinned CHaP index-state when pulling hydra master.
+Shell and source packages are pinned to the **same hydra master rev** —
+no local hydra checkout is involved anywhere, by policy. To bump hydra:
+`nix flake update hydra`, copy the new rev into the
+`source-repository-package` stanza, and re-mirror index-states and
+constraints if hydra's own `cabal.project` changed them.
 
 ---
 
@@ -569,6 +576,8 @@ These are tracked outside this doc (in conversation tasks and memory). At a glan
 *Last full review:* 2026-04-30. Update the date and the relevant sections together when significant structural change lands.
 
 *Recent updates:*
+- 2026-08-03 — **Hydra dependency pinned to master rev — local checkout retired entirely**: `api/cabal.project` replaces the eight absolute `/home/v0d1ch/code/hydra/*` source paths with a `source-repository-package` at hydra master rev `7b169d66d` (subdirs: prelude, cardano-api, plutus, plutus-extras, tx, node, test-utils; chain-observer dropped from the project — the registry never used it; deployment obtains observers via `nix build github:cardano-scaling/hydra/<rev>#hydra-chain-observer`). `flake.nix` hydra input moved `2.2.0` → `master` (locked to the same rev; GHC stays 9.6.7). Policy per Sasha: `~/code/hydra` is not used for anything, even locally — bump the rev in both files deliberately. The registry now builds on any machine, and the local clone's state (branches, rebases) can no longer break or silently alter builds.
+- 2026-08-03 — **Agent split into a standalone package + distribution channels**: `agent/` is its own cabal package with Hackage-only dependencies (websockets, aeson, http-client(-tls), crypton — no CHaP, no Cardano tree, no local hydra checkout), so operators can audit and build it without the registry's toolchain. Distribution: `nix run github:v0d1ch/hydra.registry#hydra-registry-agent` (flake `packages` output via stock `haskellPackages.callCabal2nix`), GitHub Release binaries + sha256 built by `.github/workflows/release-agent.yml` on `agent-v*` tags (the sha256 is the value to pin in `HYDRA_AGENT_ALLOWED_HASHES`), or `cabal build` inside `agent/` with plain GHC. Setup page step 03 rewritten accordingly (was: clone + build inside `api/`, which required the private-path `cabal.project`). Agent modules and the executable stanza left `api/`; `directory` dep dropped from the api library.
 - 2026-08-03 — **Agent is strictly one-way; command queue removed**: operators won't hand a third-party binary a write channel to their hydra-node, so the registry can no longer submit transactions to any node, in any mode. Removed: `POST /heads/{id}/submit`, `POST /agent/commands/poll`, `POST /agent/commands/{id}/result`, modules `Agent.CommandPoller`, `Agent.CommandQueue`, `Hydra.Submit`, table `agent_commands` (dropped by migration), `AppEnv.commandWaiters`. The agent keeps two pushes only: node events → `POST /agent/events` and startup protocol-params → `PUT /agent/heads/{id}/protocol-parameters` (`pushProtocolParams` moved into `Agent.EventPusher`). Users submit signed envelopes to their own node's `POST /transaction` (which waits and returns the verdict); the SPA (`Dashboard` tx panel, `Setup` step 4) prints the curl instead of posting to the registry. `HYDRA_DIRECT_WS` now gates only read paths (registration probe, legacy `fetchPP`).
 - 2026-07-25 — **`HYDRA_DIRECT_WS` flag** (phase 2 of the security inversion, default **off**): all remaining registry→node connections are gated — `POST /heads/register` and `GET /heads/check` return 403, the submit fallback and `fetchPP` HTTP fallback return 503, and startup `reconnectAllHeads` is skipped. Production relies exclusively on the agent push model; `dev.sh` sets `HYDRA_DIRECT_WS=true` for local testnet workflows. Also dropped the `UNIQUE(host, port)` constraint on `heads` — push-model agents all report `127.0.0.1:4001`, which made the second agent-created head collide.
 - 2026-07-25 — **Agent command queue** (security inversion): the registry no longer needs inbound access to user hydra-nodes for the push-model flow. Agents push their node's protocol parameters at startup (`head_protocol_params`, read by `fetchPP` before any legacy HTTP fetch) and poll `POST /agent/commands/poll` (~2s) for queued work; `POST /heads/{id}/submit` enqueues the signed tx for heads with a live agent (seen ≤90s) and waits up to 30s on an in-process `Agent.CommandQueue` TMVar for the agent-reported verdict, falling back to direct WS only for legacy agent-less heads. New modules `Agent.CommandQueue` (server-side rendezvous) and `Agent.CommandPoller` (agent-side executor); new tables `agent_commands`, `head_protocol_params`; shared `requireAgent` auth. Remaining direct-WS paths (`reconnectAllHeads`, registration validation) are legacy and slated for a dev-mode flag.

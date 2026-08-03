@@ -1,0 +1,4 @@
+-- Standalone project: the agent builds from Hackage alone — no CHaP,
+-- no Cardano dependency tree, no local hydra checkout. This file also
+-- stops cabal from walking up to the repo-root cabal.project.
+packages: .

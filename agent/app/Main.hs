@@ -12,7 +12,7 @@ import Data.Text.IO qualified as TIO
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import System.Environment (lookupEnv)
-import System.IO (hPutStrLn, stderr)
+import System.IO (stderr)
 
 main :: IO ()
 main = do

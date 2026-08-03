@@ -162,9 +162,10 @@ export default function Setup() {
           <p className="register-desc">
             For payments to be routed to you, the registry needs to know which heads you participate
             in and what funds you hold. The <code>hydra-registry-agent</code> runs on the same machine
-            as your hydra-node: it reads events from the node's <em>local</em> WebSocket, pushes them
-            to the registry, publishes your node's protocol parameters, and relays signed transactions
-            you approve on this site back to your node for submission.
+            as your hydra-node: it reads events from the node's <em>local</em> WebSocket and pushes
+            them to the registry, along with your node's protocol parameters. It is strictly{' '}
+            <strong>one-way</strong> — the agent physically cannot send anything to your node, and
+            you always submit your own transactions yourself.
           </p>
           <p className="register-desc">
             Every connection is <strong>outbound from your machine</strong>. Your hydra-node's API is
@@ -174,19 +175,28 @@ export default function Setup() {
             it is Open.
           </p>
           <div className="setup-steps">
-            <h3>Build and run</h3>
-            <pre className="code-block">{`git clone https://github.com/v0d1ch/hydra.registry
-cd hydra.registry
-nix develop --command bash -c "cd api && cabal build exe:hydra-registry-agent"
+            <h3>Get the agent</h3>
+            <pre className="code-block">{`# with nix (recommended — you already use it for hydra-node)
+nix run github:v0d1ch/hydra.registry#hydra-registry-agent
 
-export HYDRA_NODE_WS_URL=ws://127.0.0.1:4001
+# or download the latest release binary and verify it
+curl -LO https://github.com/v0d1ch/hydra.registry/releases/latest/download/hydra-registry-agent-x86_64-linux
+curl -LO https://github.com/v0d1ch/hydra.registry/releases/latest/download/hydra-registry-agent-x86_64-linux.sha256
+sha256sum -c hydra-registry-agent-x86_64-linux.sha256
+chmod +x hydra-registry-agent-x86_64-linux
+
+# or build from source — plain GHC + cabal, no Cardano dependencies
+git clone https://github.com/v0d1ch/hydra.registry
+cd hydra.registry/agent && cabal build`}</pre>
+            <h3 style={{ marginTop: '1rem' }}>Run it</h3>
+            <pre className="code-block">{`export HYDRA_NODE_WS_URL=ws://127.0.0.1:4001
 export HYDRA_REGISTRY_URL=${window.location.origin}
 export HYDRA_AGENT_STATE_FILE=$HOME/.hydra-agent-state.json
-cabal run exe:hydra-registry-agent`}</pre>
+
+nix run github:v0d1ch/hydra.registry#hydra-registry-agent   # or ./hydra-registry-agent-x86_64-linux`}</pre>
             <p className="register-desc" style={{ marginTop: '0.75rem' }}>
-              Keep the agent running — it is also the channel that submits your signed lock, claim,
-              and refund transactions to the head. If it stops, the registry marks your head stale
-              and payment actions through this site will fail with "no live agent".
+              Keep the agent running — it is how the registry sees your head's state. If it stops,
+              your balances and payment progress shown on this site go stale until it reconnects.
             </p>
           </div>
           <Link to="/register" className="btn btn-primary" style={{ display: 'inline-block', marginTop: '1rem' }}>

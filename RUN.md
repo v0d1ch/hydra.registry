@@ -30,7 +30,10 @@ PGDATA=/my/pgdata HYDRA_HTTP_PORT=3000 ./dev.sh
 nix develop
 ```
 
-This provides GHC 9.10.3, cabal, Node.js, PostgreSQL tools, HLS, and fourmolu.
+This provides GHC 9.6.7, cabal, Node.js, PostgreSQL tools, and the hydra
+runtime binaries (hydra-node, hydra-tui) from the flake-locked hydra master
+rev. The backend's hydra library dependencies are fetched by cabal from the
+same pinned rev — no local hydra checkout is needed or used.
 
 ### 2. Start PostgreSQL
 
@@ -75,6 +78,23 @@ npm run dev        # starts Vite dev server on :5173
 
 The Vite dev server proxies `/api` requests to the backend at `localhost:8080`.
 
+### 5. The agent (optional, for operators)
+
+`hydra-registry-agent` is a standalone package in `agent/` with Hackage-only
+dependencies — it does **not** need the Cardano toolchain, CHaP, or the local
+hydra checkout that the server build uses:
+
+```bash
+cd agent
+cabal build            # plain GHC + cabal is enough
+
+# or, without cloning anything:
+nix run github:v0d1ch/hydra.registry#hydra-registry-agent
+```
+
+Release binaries with sha256 checksums are published on GitHub Releases by
+the `release-agent` workflow (tag `agent-v*`).
+
 For production, build the static files and let the backend serve them:
 
 ```bash
@@ -84,7 +104,7 @@ npm run build      # outputs to website/dist/
 
 The Haskell backend serves `website/dist/` at `/` automatically.
 
-### 5. Register a Hydra head
+### 6. Register a Hydra head
 
 Via the web UI at `http://localhost:5173/register`, or via curl:
 
@@ -102,7 +122,7 @@ curl -X POST http://localhost:8080/api/v1/heads/register \
   -d '{"host": "your-hydra-node.example.com", "port": 4001, "bridge": true, "feeLovelace": 500000}'
 ```
 
-### 6. Create a payment invoice
+### 7. Create a payment invoice
 
 The receiver creates an invoice with a BLAKE2b-256 hash of their secret:
 
@@ -118,7 +138,7 @@ curl -X POST http://localhost:8080/api/v1/relay/invoices \
   }'
 ```
 
-### 7. Find and execute a payment route
+### 8. Find and execute a payment route
 
 The sender finds routes and executes one:
 
