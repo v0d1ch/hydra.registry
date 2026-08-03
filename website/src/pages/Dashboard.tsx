@@ -6,7 +6,6 @@ import {
   buildLockTx,
   buildClaimTx,
   buildRefundTx,
-  submitTx,
   submitPreimage,
   getUserKeyHash,
   setUserKeyHash,
@@ -67,14 +66,11 @@ interface TxPanelProps {
   onDone: () => void
 }
 
-function TxPanel({ action, routeId, headId, secretHash, onDone }: TxPanelProps) {
+function TxPanel({ action, routeId, secretHash, onDone }: TxPanelProps) {
   const [walletAddress, setWalletAddress] = useState('')
   const [preimage, setPreimage] = useState('')
   const [building, setBuilding] = useState(false)
   const [builtCbor, setBuiltCbor] = useState<string | null>(null)
-  const [signedCbor, setSignedCbor] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [submitOk, setSubmitOk] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
@@ -118,33 +114,7 @@ function TxPanel({ action, routeId, headId, secretHash, onDone }: TxPanelProps) 
     })
   }
 
-  const handleSubmit = async () => {
-    setErr(null)
-    setSubmitting(true)
-    try {
-      const result = await submitTx(headId, signedCbor.trim())
-      if (result.status === 'TxInvalid') {
-        setErr(`Transaction rejected by head: ${result.error ?? 'unknown reason'}`)
-      } else {
-        setSubmitOk(true)
-        setTimeout(onDone, 1500)
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Submit failed')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
   const actionLabel = action.kind === 'lock' ? 'Lock HTLC' : action.kind === 'claim' ? 'Claim HTLC' : 'Refund HTLC'
-
-  if (submitOk) {
-    return (
-      <div className="register-result success" style={{ marginTop: '1rem' }}>
-        <p>Transaction submitted successfully. Refreshing…</p>
-      </div>
-    )
-  }
 
   return (
     <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
@@ -216,35 +186,30 @@ echo '{"type":"Tx ConwayEra","description":"","cborHex":"<paste above>"}' > tx.r
 # Sign
 cardano-cli transaction sign \\
   --tx-file tx.raw \\
-  --signing-key-file <actor>.sk \\
-  --out-file tx.signed
-
-# Get signed CBOR
-cardano-cli transaction view --tx-file tx.signed | jq -r .cborHex`}</pre>
+  --signing-key-file <your-address>.sk \\
+  --out-file tx.signed`}</pre>
 
           <p className="register-desc" style={{ margin: '1rem 0 0.5rem' }}>
-            <strong>Step 2 — Submit the signed transaction</strong>
+            <strong>Step 2 — Submit to your own hydra-node</strong>
           </p>
-          <div className="form-group" style={{ marginBottom: '0.75rem' }}>
-            <label>Paste signed CBOR hex</label>
-            <textarea
-              rows={3}
-              placeholder="84a500..."
-              value={signedCbor}
-              onChange={e => setSignedCbor(e.target.value)}
-              style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', resize: 'vertical' }}
-            />
-          </div>
+          <p className="register-desc" style={{ marginBottom: '0.5rem' }}>
+            The registry never submits transactions. Run this on the machine
+            where your hydra-node&apos;s API is reachable (adjust host/port):
+          </p>
+          <pre className="code-block" style={{ fontSize: '0.78rem' }}>{`curl -X POST http://127.0.0.1:4001/transaction \\
+  -H 'Content-Type: application/json' \\
+  --data @tx.signed`}</pre>
+          <p className="register-desc" style={{ margin: '0.5rem 0 0.75rem' }}>
+            The node validates the transaction inside the head and replies
+            with the verdict. Your agent&apos;s event stream reports the result
+            back to the registry, so this dashboard reflects it on refresh.
+          </p>
 
           {err && <div className="register-result error" style={{ marginBottom: '0.75rem' }}><p>{err}</p></div>}
 
           <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <button
-              className="btn btn-primary"
-              onClick={handleSubmit}
-              disabled={submitting || !signedCbor.trim()}
-            >
-              {submitting ? 'Submitting…' : 'Submit to Head'}
+            <button className="btn btn-primary" onClick={onDone}>
+              Done — refresh status
             </button>
             <button className="btn btn-secondary" onClick={() => setBuiltCbor(null)}>
               Back

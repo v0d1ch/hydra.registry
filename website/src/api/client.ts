@@ -440,12 +440,6 @@ export interface BuildResult {
   envelope: unknown
 }
 
-export interface SubmitResult {
-  status: string   // "TxValid" | "TxInvalid" | "submitted"
-  txId?: string
-  error?: string
-}
-
 export interface ParticipantAction {
   hopIndex: number
   kind: string   // 'lock' | 'claim' | 'refund'
@@ -484,13 +478,6 @@ export function buildRefundTx(routeId: string, hopIndex: number, walletAddress: 
   return request<BuildResult>(`/api/v1/relay/payments/${routeId}/hops/${hopIndex}/refund-tx-cbor`, {
     method: 'POST',
     body: JSON.stringify({ walletAddress }),
-  })
-}
-
-export function submitTx(headId: string, signedCborHex: string): Promise<SubmitResult> {
-  return request<SubmitResult>(`/api/v1/heads/${headId}/submit`, {
-    method: 'POST',
-    body: JSON.stringify({ signedCborHex }),
   })
 }
 

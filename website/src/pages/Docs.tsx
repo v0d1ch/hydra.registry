@@ -16,8 +16,9 @@ export default function Docs() {
         <p className="register-desc">
           A payment hops through one HTLC per Hydra head along the route. The
           registry coordinates discovery, watches for state changes, and emits
-          tx blueprints that callers (typically a bridge agent) assemble and
-          submit via their hydra-node WebSocket. This page is the ground-truth
+          tx blueprints that callers (typically a bridge operator) assemble
+          and submit to their <strong>own</strong> hydra-node — the registry
+          never submits transactions. This page is the ground-truth
           reference for what those transactions look like on the wire.
           Each participant is identified by their <em>OnChainId</em> — the
           28-byte key hash of their hydra-node's{' '}
@@ -185,9 +186,10 @@ export default function Docs() {
       >
         <h2 className="section-title">Lock transaction</h2>
         <p className="register-desc">
-          Submitted via the locker's hydra-node WebSocket as a{' '}
-          <code>NewTx</code> command. Lives entirely on L2 inside one head — no
-          L1 settlement happens at lock time.
+          Submitted by the locker to their own hydra-node (HTTP{' '}
+          <code>POST /transaction</code>, or <code>NewTx</code> over WS).
+          Lives entirely on L2 inside one head — no L1 settlement happens at
+          lock time.
         </p>
         <pre className="code-block">{`tx_inputs:
   - one or more L2 UTxOs from the locker totalling >= amount + fees + min_ada
@@ -281,14 +283,14 @@ required_signers:
           pre-computed (datum CBOR, redeemer CBOR, script address, validity
           slot, required signer pkh, lock amount). Callers plug those into a
           tx body skeleton built by their own hydra-node helpers, then sign
-          and submit via <code>NewTx</code>.
+          and submit to their own node.
         </p>
         <p className="register-desc">
-          Why not full unsigned tx CBOR? A complete Conway tx needs Plutus
-          cost models and exec units pulled from the head's protocol
-          parameters, which the registry doesn't track. Returning blueprints
-          keeps the boundary clean and avoids a giant transitive dep on{' '}
-          <code>cardano-api</code>.
+          Prefer full unsigned tx CBOR? The <code>…-tx-cbor</code> variants of
+          these endpoints build the complete Conway envelope server-side from
+          agent-pushed protocol parameters — you only sign and submit.
+          Blueprints remain for callers who assemble transactions with their
+          own tooling.
         </p>
 
         <div className="setup-steps">

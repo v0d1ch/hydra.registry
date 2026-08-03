@@ -70,7 +70,6 @@ cleanTestData pool = do
     Session.sql "DROP TABLE IF EXISTS explorer_heads CASCADE"
     Session.sql "DROP TABLE IF EXISTS user_profiles CASCADE"
     Session.sql "DROP TABLE IF EXISTS agent_registrations CASCADE"
-    Session.sql "DROP TABLE IF EXISTS agent_commands CASCADE"
     Session.sql "DROP TABLE IF EXISTS head_protocol_params CASCADE"
   Db.initDb pool
 

@@ -1,43 +1,14 @@
 module HydraClientSpec (spec) where
 
 import Data.Aeson (Value (..))
-import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KM
 import Data.Map.Strict qualified as Map
 import Hydra.Client
-import Hydra.Submit (SubmitResult (..), classify)
 import Test.Hspec
 import TestUtils
 
 spec :: Spec
 spec = describe "Hydra.Client" $ do
-  describe "Hydra.Submit.classify" $ do
-    it "parses TxValid with transactionId at top level" $ do
-      let msg = Aeson.object
-            [ "tag"           Aeson..= ("TxValid" :: String)
-            , "headId"        Aeson..= ("head-abc" :: String)
-            , "transactionId" Aeson..= ("deadbeef" :: String)
-            ]
-      classify msg `shouldBe` Just SubmitValid{txId = "deadbeef"}
-
-    it "returns Nothing for transaction.txId nested shape (wrong shape)" $ do
-      let msg = Aeson.object
-            [ "tag"         Aeson..= ("TxValid" :: String)
-            , "transaction" Aeson..= Aeson.object ["txId" Aeson..= ("deadbeef" :: String)]
-            ]
-      classify msg `shouldBe` Just SubmitValid{txId = ""}
-
-    it "parses TxInvalid reason" $ do
-      let msg = Aeson.object
-            [ "tag"             Aeson..= ("TxInvalid" :: String)
-            , "validationError" Aeson..= Aeson.object ["reason" Aeson..= ("script failed" :: String)]
-            ]
-      classify msg `shouldBe` Just SubmitInvalid{reason = "script failed"}
-
-    it "returns Nothing for unrelated messages" $ do
-      let msg = Aeson.object [("tag", "SnapshotConfirmed")]
-      classify msg `shouldBe` Nothing
-
   describe "normalizeHost" $ do
     it "rewrites 'localhost' to '127.0.0.1' to force IPv4" $ do
       -- Linux glibc resolves 'localhost' to ::1 first; hydra-node binds

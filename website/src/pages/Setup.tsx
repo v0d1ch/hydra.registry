@@ -261,12 +261,11 @@ cabal run exe:hydra-registry-agent`}</pre>
               <div className="next-step">
                 <span className="next-num">4</span>
                 <div>
-                  <p><strong>Submit the signed transaction to the head.</strong> This creates the reference script UTxO inside the head's L2 state:</p>
-                  <pre className="code-block">{`SIGNED_CBOR=$(cat tx.signed | jq -r .cborHex)
-
-curl -X POST ${apiBase}/api/v1/heads/{headId}/submit \\
+                  <p><strong>Submit the signed transaction to your own hydra-node.</strong> The registry never submits transactions — only you talk to your node. This creates the reference script UTxO inside the head's L2 state:</p>
+                  <pre className="code-block">{`curl -X POST http://127.0.0.1:4001/transaction \\
   -H 'Content-Type: application/json' \\
-  -d "{\"signedCborHex\": \"$SIGNED_CBOR\"}"`}</pre>
+  --data @tx.signed`}</pre>
+                  <p>Adjust host/port to your node's API address. The node validates the transaction inside the head and replies with the verdict; your agent's event stream carries the new snapshot back to the registry.</p>
                 </div>
               </div>
               <div className="next-step">

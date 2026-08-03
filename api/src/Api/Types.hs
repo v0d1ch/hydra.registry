@@ -535,16 +535,6 @@ data BuildClaimTxRequest = BuildClaimTxRequest
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)
 
--- | Body for @POST /heads/{id}/submit@. The user has signed the
--- envelope they downloaded from a build endpoint and now hands the
--- signed CBOR back; the server forwards it to the head's WS as
--- @NewTx@ and reports @TxValid@ / @TxInvalid@.
-data SubmitTxRequest = SubmitTxRequest
-  { signedCborHex :: Text
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (FromJSON, ToJSON)
-
 data UserKeyHashResponse = UserKeyHashResponse
   { keyHash :: Maybe Text }
   deriving stock (Eq, Show, Generic)
@@ -619,17 +609,6 @@ data AgentRegisterResponse = AgentRegisterResponse
 -- The raw Hydra WS event JSON forwarded by the CLI agent.
 newtype AgentEventRequest = AgentEventRequest
   { event :: Value
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (FromJSON, ToJSON)
-
--- | One queued command handed to an agent via
--- @POST /api/v1/agent/commands/poll@. The agent executes it against its
--- local hydra-node and reports back on the command's @result@ endpoint.
-data AgentCommandInfo = AgentCommandInfo
-  { commandId :: Text
-  , kind :: Text
-  , payload :: Text
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

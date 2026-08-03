@@ -1,6 +1,5 @@
 module Main where
 
-import Agent.CommandQueue (newCommandWaiters)
 import Api (AppEnv (..), api, corsMiddleware, server)
 import Blockfrost qualified
 import Cache (newCache)
@@ -104,9 +103,6 @@ main = do
   -- Address cache (30 second TTL)
   addrCache <- newCache 30
 
-  -- Agent command queue waiters (submit handler ↔ agent result endpoint)
-  waiters <- newCommandWaiters
-
   -- Graceful shutdown
   shutdownVar <- newEmptyMVar
   let shutdown = putMVar shutdownVar ()
@@ -120,7 +116,6 @@ main = do
           , eventQueue = eventQueue
           , logger = logger
           , metrics = metrics
-          , commandWaiters = waiters
           , addressCache = addrCache
           , staticDir = config.staticDir
           , relayGraph = relayGraphVar

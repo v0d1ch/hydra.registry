@@ -27,10 +27,9 @@ import Data.Text.Encoding qualified as T (decodeUtf8, encodeUtf8)
 import Data.Time (UTCTime, addUTCTime, diffUTCTime, getCurrentTime)
 import Text.Read (readMaybe)
 import Data.UUID qualified as UUID
-import Agent.CommandQueue (CommandWaiters, awaitCommand, resolveCommand)
 import Data.UUID.V4 qualified as UUID
 import Db qualified
-import Db.Schema (AgentCommand (..), AgentRegistration (..), ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
+import Db.Schema (AgentRegistration (..), ExplorerHead (..), Head (..), HeadParticipant (..), Invoice (..), PaymentRoute (..), RouteHop (..), Utxo (..))
 import Hasql.Pool (Pool)
 import Hydra.Client (HydraEvent (..), normalizeHost, validateHydraNode)
 import Hydra.Client qualified
@@ -45,7 +44,6 @@ import Network.Wai.Middleware.Cors
   , simpleHeaders
   , simpleMethods
   )
-import Hydra.Submit qualified as Submit
 import Relay.EventBus (EventBus, RouteEvent (..))
 import Relay.EventBus qualified as Bus
 import Relay.Graph qualified as Graph
@@ -69,7 +67,6 @@ type ApiV1Routes =
     :<|> "heads" :> "register" :> ReqBody '[JSON] RegisterHead :> Post '[JSON] RegisterHeadResponse
     :<|> "heads" :> Capture "headId" Text :> "ref-script" :> ReqBody '[JSON] SetRefScriptRequest :> Post '[JSON] MessageResponse
     :<|> "heads" :> Capture "headId" Text :> "publish-ref-script-tx-cbor" :> ReqBody '[JSON] BuildTxFromWalletRequest :> Post '[JSON] Tx.BuildResult
-    :<|> "heads" :> Capture "headId" Text :> "submit" :> ReqBody '[JSON] SubmitTxRequest :> Post '[JSON] Submit.SubmitResult
     :<|> "heads" :> QueryParam "count" Int :> QueryParam "page" Int :> Get '[JSON] [HeadInfo]
     :<|> "heads" :> Capture "headId" Text :> Get '[JSON] EnrichedHeadDetail
     :<|> "heads" :> Capture "headId" Text :> "addresses" :> Get '[JSON] [Text]
@@ -110,8 +107,6 @@ type ApiV1Routes =
     :<|> "agent" :> "register" :> ReqBody '[JSON] AgentRegisterRequest :> Post '[JSON] AgentRegisterResponse
     :<|> "agent" :> "events" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> ReqBody '[JSON] AgentEventRequest :> Post '[JSON] MessageResponse
     :<|> "agent" :> "heads" :> Capture "headId" Text :> "protocol-parameters" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> ReqBody '[JSON] Aeson.Value :> Put '[JSON] MessageResponse
-    :<|> "agent" :> "commands" :> "poll" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> Post '[JSON] [AgentCommandInfo]
-    :<|> "agent" :> "commands" :> Capture "commandId" Text :> "result" :> Header "Authorization" Text :> Header "X-Agent-Binary-Hash" Text :> ReqBody '[JSON] Submit.SubmitResult :> Post '[JSON] MessageResponse
     -- Head ownership via L1 deposit
     :<|> "heads" :> Capture "headId" Text :> "claim-ownership" :> ReqBody '[JSON] ClaimOwnershipRequest :> Post '[JSON] ClaimOwnershipResponse
 
@@ -139,7 +134,6 @@ data AppEnv = AppEnv
   , eventQueue :: TQueue HydraEvent
   , logger :: Logger
   , metrics :: Metrics
-  , commandWaiters :: CommandWaiters
   , addressCache :: Cache [UtxoResponse]
   , staticDir :: FilePath
   , relayGraph :: TVar Graph.RelayGraph
@@ -179,7 +173,6 @@ apiV1Server env =
     :<|> handleRegister env.directWs env.logger env.pool env.eventQueue
     :<|> handleSetRefScript env.pool
     :<|> handlePublishRefTxCbor env.directWs env.pool env.htlcScriptCbor
-    :<|> handleSubmitTx env.directWs env.pool env.commandWaiters
     :<|> handleListHeads env.pool
     :<|> handleHeadDetail env.pool
     :<|> handleHeadAddresses env.pool
@@ -216,8 +209,6 @@ apiV1Server env =
     :<|> handleAgentRegister env.pool env.agentAllowedHashes
     :<|> handleAgentEvent env.pool env.agentAllowedHashes env.eventQueue
     :<|> handleAgentPushPParams env.pool env.agentAllowedHashes
-    :<|> handleAgentPollCommands env.pool env.agentAllowedHashes
-    :<|> handleAgentCommandResult env.pool env.agentAllowedHashes env.commandWaiters
     :<|> handleClaimOwnership env.pool
 
 -- | CORS middleware that allows the frontend to talk to the API
@@ -1454,11 +1445,11 @@ handleRefundTx pool chainSlotVar rid idx = do
 
 -- ─── Server-built tx CBOR (cardano-cli shell-out) ────────────────────
 --
--- These four handlers and the @/heads/{id}/submit@ handler below
--- are what powers the SPA's "download tx, sign offline, upload"
+-- These four handlers power the SPA's "download tx, sign offline"
 -- flow. They produce a Conway-envelope JSON the user saves to a
--- file and signs with their own keys; the registry never sees
--- those keys.
+-- file, signs with their own keys, and submits to their own
+-- hydra-node's @POST /transaction@; the registry never sees the
+-- keys and has no submission path to any node.
 
 -- | Fetch the head's protocol parameters via its @/protocol-parameters@
 -- HTTP endpoint and return the JSON body verbatim. Caller passes it
@@ -1762,47 +1753,6 @@ handlePublishRefTxCbor allowDirect pool mScriptCbor hid req = do
     Left err -> throwError $ err500{errBody = Aeson.encode $ ErrorResponse err}
     Right br -> pure br
 
--- | POST /api/v1/heads/:headId/submit
--- Prefers the agent command queue: the head's agent picks the signed tx
--- up on its next poll, submits it via its /local/ hydra-node, and reports
--- the verdict back — the registry never dials the user's node. Falls back
--- to the legacy direct-WS path only when no live agent exists.
-handleSubmitTx :: Bool -> Pool -> CommandWaiters -> Text -> SubmitTxRequest -> Handler Submit.SubmitResult
-handleSubmitTx allowDirect pool waiters hid req = do
-  mAgent <- liftIO $ Db.lookupActiveAgentForHead pool hid agentLivenessSeconds
-  case mAgent of
-    Just _ -> do
-      cmdId <- liftIO $ T.replace "-" "" . T.pack . UUID.toString <$> UUID.nextRandom
-      liftIO $ Db.insertAgentCommand pool cmdId hid "submit_tx" req.signedCborHex
-      mResult <- liftIO $ awaitCommand waiters cmdId submitWaitSeconds
-      case mResult of
-        Just r -> pure r
-        Nothing -> do
-          liftIO $ Db.failAgentCommand pool cmdId "agent did not report a result in time"
-          pure Submit.SubmitTimeout
-    Nothing
-      | allowDirect -> do
-          headRow <- loadHeadRow pool hid
-          liftIO $ Submit.submitToHead headRow.headHost (fromIntegral headRow.headPort) req.signedCborHex
-      | otherwise -> do
-          _ <- loadHeadRow pool hid -- 404 for unknown heads
-          throwError $
-            err503
-              { errBody =
-                  Aeson.encode $
-                    ErrorResponse "no live agent for this head and direct node access is disabled; run hydra-registry-agent next to the hydra-node"
-              }
-
--- | An agent counts as live when it polled (or pushed an event) this
--- recently; the poll interval is a few seconds, so 90s is generous.
-agentLivenessSeconds :: Int
-agentLivenessSeconds = 90
-
--- | How long the submit handler waits for the agent's verdict: one poll
--- interval + local WS submit (15s budget) + reporting, with headroom.
-submitWaitSeconds :: Int
-submitWaitSeconds = 30
-
 -- | Reject handlers that would dial a user's hydra-node when
 -- HYDRA_DIRECT_WS is off (the production default).
 requireDirectWs :: Bool -> Handler ()
@@ -1966,37 +1916,6 @@ handleAgentPushPParams pool allowedHashes headId' mAuthHeader mBinaryHashHeader 
     throwError err403{errBody = Aeson.encode $ ErrorResponse "agent is not registered for this head"}
   liftIO $ Db.setHeadProtocolParams pool headId' params
   pure $ MessageResponse "protocol parameters stored"
-
--- | POST /api/v1/agent/commands/poll
--- Hands all pending commands for the agent's head to the agent and
--- marks them delivered. Also refreshes the agent's liveness timestamp —
--- the submit handler only queues commands for heads with a live agent.
-handleAgentPollCommands :: Pool -> [Text] -> Maybe Text -> Maybe Text -> Handler [AgentCommandInfo]
-handleAgentPollCommands pool allowedHashes mAuthHeader mBinaryHashHeader = do
-  agent <- requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader
-  now <- liftIO getCurrentTime
-  liftIO $ Db.updateAgentLastSeen pool agent.agentId now
-  cmds <- liftIO $ Db.claimPendingCommands pool agent.agentHeadId
-  pure
-    [ AgentCommandInfo{commandId = c.commandId, kind = c.commandKind, payload = c.commandPayload}
-    | c <- cmds
-    ]
-
--- | POST /api/v1/agent/commands/:commandId/result
--- The agent reports the outcome of a command it executed against its
--- local node; wakes the submit handler waiting on it (if still there).
-handleAgentCommandResult :: Pool -> [Text] -> CommandWaiters -> Text -> Maybe Text -> Maybe Text -> Submit.SubmitResult -> Handler MessageResponse
-handleAgentCommandResult pool allowedHashes waiters cmdId mAuthHeader mBinaryHashHeader result = do
-  agent <- requireAgent pool allowedHashes mAuthHeader mBinaryHashHeader
-  mCmd <- liftIO $ Db.getAgentCommand pool cmdId
-  cmd <- case mCmd of
-    Nothing -> throwError err404{errBody = Aeson.encode $ ErrorResponse "unknown command"}
-    Just c -> pure c
-  when (cmd.commandHeadId /= agent.agentHeadId) $
-    throwError err403{errBody = Aeson.encode $ ErrorResponse "command belongs to a different head"}
-  liftIO $ Db.completeAgentCommand pool cmdId (Aeson.toJSON result)
-  _ <- liftIO $ resolveCommand waiters cmdId result
-  pure $ MessageResponse "result recorded"
 
 -- ─── Claim ownership ───
 

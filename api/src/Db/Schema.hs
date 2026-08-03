@@ -325,47 +325,6 @@ userProfileSchema =
           }
     }
 
--- | Per-agent registration issued by the registry. The registry generates a
--- unique secret per agent and stores only its SHA-256 hash. The agent
--- receives the plaintext secret once and uses it as a Bearer token.
--- | Commands queued for a head's agent to execute against its local
--- hydra-node (push-model inversion: the registry never dials user nodes).
-data AgentCommand f = AgentCommand
-  { commandId :: Column f Text
-  , commandHeadId :: Column f Text
-  , commandKind :: Column f Text
-  -- ^ Currently only @submit_tx@.
-  , commandPayload :: Column f Text
-  -- ^ For @submit_tx@: the signed transaction CBOR hex.
-  , commandStatus :: Column f Text
-  -- ^ pending → delivered → done | failed
-  , commandResult :: Column f (Maybe Value)
-  , commandCreatedAt :: Column f UTCTime
-  , commandUpdatedAt :: Column f UTCTime
-  }
-  deriving stock (Generic)
-  deriving anyclass (Rel8able)
-
-deriving stock instance Show (AgentCommand Identity)
-deriving stock instance Eq (AgentCommand Identity)
-
-agentCommandSchema :: TableSchema (AgentCommand Name)
-agentCommandSchema =
-  TableSchema
-    { name = "agent_commands"
-    , columns =
-        AgentCommand
-          { commandId = "command_id"
-          , commandHeadId = "head_id"
-          , commandKind = "kind"
-          , commandPayload = "payload"
-          , commandStatus = "status"
-          , commandResult = "result"
-          , commandCreatedAt = "created_at"
-          , commandUpdatedAt = "updated_at"
-          }
-    }
-
 -- | Protocol parameters pushed by a head's agent, so server-side tx
 -- building never needs to fetch them from the user's hydra-node.
 data HeadProtocolParams f = HeadProtocolParams
@@ -391,6 +350,9 @@ headProtocolParamsSchema =
           }
     }
 
+-- | Per-agent registration issued by the registry. The registry generates a
+-- unique secret per agent and stores only its SHA-256 hash. The agent
+-- receives the plaintext secret once and uses it as a Bearer token.
 data AgentRegistration f = AgentRegistration
   { agentId           :: Column f Text
   , agentHeadId       :: Column f Text

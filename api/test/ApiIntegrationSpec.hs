@@ -1,8 +1,6 @@
 module ApiIntegrationSpec (spec) where
 
-import Agent.CommandQueue (newCommandWaiters)
 import Api (AppEnv (..), api, server)
-import Db.Schema (AgentCommand (..))
 import Api.Types
 import Cache (newCache)
 import Control.Concurrent.STM
@@ -101,8 +99,8 @@ mainSpec = with makeTestApp $ describe "API (integration)" $ do
             _ -> expectationFailure "edges missing"
         _ -> expectationFailure "Could not parse graph response"
 
-  describe "agent command queue endpoints" $ do
-    it "register → push pparams → poll claims a queued command → result recorded" $ do
+  describe "agent push endpoints" $ do
+    it "register → push pparams for own head; other heads rejected" $ do
       reg <-
         request
           methodPost
@@ -129,28 +127,13 @@ mainSpec = with makeTestApp $ describe "API (integration)" $ do
         Db.getHeadProtocolParams pool "head-q"
       liftIO $ storedPP `shouldBe` Just (Aeson.object [("maxTxSize", Aeson.Number 123)])
 
-      -- queue a command; the agent poll claims it
-      liftIO $ do
-        pool <- rawTestPool
-        Db.insertAgentCommand pool "cmd-q1" "head-q" "submit_tx" "84a4beef"
-      pollResp <- request methodPost "/api/v1/agent/commands/poll" agentHdrs ""
-      liftIO $ case Aeson.decode @[Aeson.Value] (simpleBody pollResp) of
-        Just [Aeson.Object c] -> do
-          KM.lookup "commandId" c `shouldBe` Just (Aeson.String "cmd-q1")
-          KM.lookup "payload" c `shouldBe` Just (Aeson.String "84a4beef")
-        other -> expectationFailure $ "expected one polled command, got: " <> show other
-
-      -- report the verdict; command is finished in the DB
-      request methodPost "/api/v1/agent/commands/cmd-q1/result" agentHdrs (encode $ Aeson.object [("tag", "SubmitValid"), ("txId", "tx42")])
-        `shouldRespondWith` 200
-      done <- liftIO $ do
-        pool <- rawTestPool
-        Db.getAgentCommand pool "cmd-q1"
-      liftIO $ fmap (.commandStatus) done `shouldBe` Just "done"
-
-    it "rejects polling without credentials" $ do
+    -- The agent is one-way: there is no command channel for the
+    -- registry to push work back to a node. The old poll endpoint
+    -- must be gone entirely. (Unmatched POSTs fall through to the
+    -- static-site catch-all, which only serves GET — hence 405.)
+    it "has no command poll endpoint" $ do
       request methodPost "/api/v1/agent/commands/poll" [("Content-Type", "application/json")] ""
-        `shouldRespondWith` 401
+        `shouldRespondWith` 405
 
   describe "GET /api/v1/heads/:headId/addresses" $ do
     it "returns 404 for non-existent head" $ do
@@ -362,7 +345,12 @@ secureModeSpec = with (makeTestAppWith False) $ describe "API (secure mode, dire
       get "/api/v1/heads/check?host=example.com&port=4001" `shouldRespondWith` 403
 
   describe "POST /api/v1/heads/:headId/submit" $ do
-    it "returns 503 when the head has no live agent" $ do
+    -- Users submit signed transactions to their own hydra-node
+    -- (POST /transaction on the node API); the registry has no
+    -- submission path to any node, in any mode. (Unmatched POSTs
+    -- fall through to the static-site catch-all, which only serves
+    -- GET — hence 405.)
+    it "does not exist — users submit to their own node" $ do
       liftIO $ do
         pool <- rawTestPool
         Db.upsertHead pool "head-no-agent" "127.0.0.1" 4001 "Open" Nothing
@@ -371,7 +359,7 @@ secureModeSpec = with (makeTestAppWith False) $ describe "API (secure mode, dire
         "/api/v1/heads/head-no-agent/submit"
         [("Content-Type", "application/json")]
         (encode $ Aeson.object [("signedCborHex", "84a4beef")])
-        `shouldRespondWith` 503
+        `shouldRespondWith` 405
 
 makeTestApp :: IO Application
 makeTestApp = makeTestAppWith True
@@ -381,7 +369,6 @@ makeTestAppWith directWsEnabled = do
   withTestPool $ \pool -> do
     eventQueue <- newTQueueIO @HydraEvent
     metrics <- newMetrics
-    waiters <- newCommandWaiters
     addrCache <- newCache 30
     relayGraphVar <- newTVarIO Graph.emptyGraph
     chainSlotVar <- newTVarIO 0
@@ -393,7 +380,6 @@ makeTestAppWith directWsEnabled = do
             , eventQueue = eventQueue
             , logger = logger
             , metrics = metrics
-            , commandWaiters = waiters
             , addressCache = addrCache
             , staticDir = "./website/dist"
             , relayGraph = relayGraphVar

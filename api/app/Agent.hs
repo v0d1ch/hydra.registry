@@ -1,10 +1,8 @@
 module Main (main) where
 
 import Agent.BinaryHash (getBinaryHash)
-import Agent.CommandPoller (commandLoop, pushProtocolParams)
-import Agent.EventPusher (AgentState (..), loadOrRegister, pushEvent)
+import Agent.EventPusher (AgentState (..), loadOrRegister, pushEvent, pushProtocolParams)
 import Agent.ReadOnly (ReadOnlyConn, withReadOnlyConn, receive)
-import Control.Concurrent.Async (race_)
 import Control.Exception (SomeException, catch, throwIO)
 import Data.Aeson (Value, decode)
 import Data.Aeson qualified as Aeson
@@ -49,12 +47,12 @@ main = do
       Just v -> pushEvent mgr registryUrl st binaryHash v
       Nothing -> pure ()
 
-    -- Event pushing and command polling run side by side; if either
-    -- dies (e.g. the node WS drops) the agent exits and systemd (or the
-    -- operator) restarts it.
-    race_
-      (loop conn mgr registryUrl st binaryHash)
-      (commandLoop mgr registryUrl st binaryHash wsHost wsPort)
+    -- The agent is strictly one-way: it reads events from the local
+    -- node and pushes them to the registry. There is no channel back —
+    -- transactions reach the head only when the operator submits them
+    -- to their own node. If the node WS drops the agent exits and
+    -- systemd (or the operator) restarts it.
+    loop conn mgr registryUrl st binaryHash
 
 loop :: ReadOnlyConn -> Manager -> Text -> AgentState -> Text -> IO ()
 loop conn mgr registryUrl st binaryHash = do

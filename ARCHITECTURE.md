@@ -83,6 +83,10 @@ hydra.registry/
 ├── api/                       # Haskell Servant backend
 │   ├── app/Main.hs            # process entry point + thread spawn
 │   ├── src/
+│   │   ├── Agent/
+│   │   │   ├── BinaryHash.hs  # agent's own SHA-256 (X-Agent-Binary-Hash)
+│   │   │   ├── EventPusher.hs # register + push events/pparams to registry
+│   │   │   └── ReadOnly.hs    # type-enforced read-only node WS conn
 │   │   ├── Api.hs             # Servant route table + handlers
 │   │   ├── Api/Types.hs       # request/response records
 │   │   ├── Api/Validation.hs  # Cardano address shape checks
@@ -96,8 +100,7 @@ hydra.registry/
 │   │   │   └── Sidecar.hs     # poll loop + graph rebuild
 │   │   ├── Hydra/
 │   │   │   ├── Client.hs      # WS listener + HydraEvent ADT
-│   │   │   ├── Htlc.hs        # CBOR encoding for datum/redeemer
-│   │   │   └── Submit.hs      # one-shot WS forwarder for signed tx CBOR
+│   │   │   └── Htlc.hs        # CBOR encoding for datum/redeemer
 │   │   ├── L1/
 │   │   │   └── HeadScan.hs    # participants + TVL from head UTxOs via local nodes
 │   │   ├── Tx/
@@ -332,8 +335,7 @@ Servant type in `api/src/Api.hs:80`. Routes group thematically:
 | Relay graph & invoices | `GET /api/v1/relay/graph`, `POST /api/v1/relay/invoices`, `GET …/{id}` | graph response includes nodes + edges for the UI viz |
 | Routing & payments | `POST /api/v1/relay/routes`, `POST …/{id}/execute`, `GET /api/v1/relay/payments/{id}`, `POST /api/v1/relay/preimage/{hash}` | preimage broadcast unblocks bridge claims |
 | HTLC blueprints | `GET /api/v1/htlc/validator`, `POST /api/v1/relay/payments/{routeId}/hops/{i}/{lock,claim,refund}-tx` | returns CBOR + slot bounds; **caller signs and submits** |
-| Server-built tx (Conway envelope) | `POST /api/v1/relay/payments/{r}/hops/{i}/{lock,claim,refund}-tx-cbor`, `POST /api/v1/heads/{id}/publish-ref-script-tx-cbor` | server fetches head's `/protocol-parameters`, picks a wallet UTxO + collateral from the indexed snapshot, builds the tx natively in-process via `hydra-cardano-api` (`Tx.Builder`), returns Conway envelope JSON for the user to sign **offline** with their own keys |
-| Submit | `POST /api/v1/heads/{id}/submit` | accepts signed CBOR, forwards to head's WS as `NewTx`, reports `TxValid` / `TxInvalid` synchronously |
+| Server-built tx (Conway envelope) | `POST /api/v1/relay/payments/{r}/hops/{i}/{lock,claim,refund}-tx-cbor`, `POST /api/v1/heads/{id}/publish-ref-script-tx-cbor` | server fetches head's `/protocol-parameters`, picks a wallet UTxO + collateral from the indexed snapshot, builds the tx natively in-process via `hydra-cardano-api` (`Tx.Builder`), returns Conway envelope JSON for the user to sign **offline** with their own keys and submit to their **own** hydra-node's `POST /transaction`; the registry learns the outcome from the agent event stream |
 | Live state | `GET /api/v1/relay/payments/{r}/events` (SSE), `GET /api/v1/relay/participants/{pkh}/routes` | SSE pushes lock/claim/preimage/completion events; participant routes feed shows roles + computed eligible actions per hop |
 | Static files | catch-all `Raw` | serves `website/dist/` |
 
@@ -448,7 +450,7 @@ Chain *time* still flows exclusively through Hydra Greetings (`currentSlot`); th
 
 ### 5.4 Wallet integration
 
-There is **no in-page wallet SDK integration** today. Lock/claim/refund blueprints are returned as CBOR + metadata; the user signs out-of-band (currently via `cardano-cli` against a hydra-node WebSocket, eventually via the `tools/` browser helper or a dedicated `bridge-agent` CLI). The footer links to Lace/Yoroi/Nami for wallet downloads only.
+There is **no in-page wallet SDK integration** today. Lock/claim/refund blueprints are returned as CBOR + metadata; the user signs out-of-band with `cardano-cli` and submits the signed envelope to their own hydra-node's `POST /transaction` (the UI prints both commands). The footer links to Lace/Yoroi/Nami for wallet downloads only.
 
 ### 5.5 How the frontend is served in prod
 
@@ -558,7 +560,7 @@ compatible with the pinned CHaP index-state when pulling hydra master.
 
 These are tracked outside this doc (in conversation tasks and memory). At a glance:
 
-- **Bridge-agent CLI** — auto-relay HTLCs for a third-party bridge operator (planned, not built).
+- **Bridge-operator automation** — auto-relay HTLCs for a third-party bridge operator (planned, not built). Must run operator-side and submit only to the operator's own node: the registry-side agent is deliberately one-way and must stay that way.
 - **Smoother manual UX** — eventually folding tools/ into a proper signed-flow inside the SPA.
 - **Per-head shared HTLC reference script** — schema + endpoint landed; clients still need to actually publish a UTxO and POST it.
 
@@ -567,6 +569,7 @@ These are tracked outside this doc (in conversation tasks and memory). At a glan
 *Last full review:* 2026-04-30. Update the date and the relevant sections together when significant structural change lands.
 
 *Recent updates:*
+- 2026-08-03 — **Agent is strictly one-way; command queue removed**: operators won't hand a third-party binary a write channel to their hydra-node, so the registry can no longer submit transactions to any node, in any mode. Removed: `POST /heads/{id}/submit`, `POST /agent/commands/poll`, `POST /agent/commands/{id}/result`, modules `Agent.CommandPoller`, `Agent.CommandQueue`, `Hydra.Submit`, table `agent_commands` (dropped by migration), `AppEnv.commandWaiters`. The agent keeps two pushes only: node events → `POST /agent/events` and startup protocol-params → `PUT /agent/heads/{id}/protocol-parameters` (`pushProtocolParams` moved into `Agent.EventPusher`). Users submit signed envelopes to their own node's `POST /transaction` (which waits and returns the verdict); the SPA (`Dashboard` tx panel, `Setup` step 4) prints the curl instead of posting to the registry. `HYDRA_DIRECT_WS` now gates only read paths (registration probe, legacy `fetchPP`).
 - 2026-07-25 — **`HYDRA_DIRECT_WS` flag** (phase 2 of the security inversion, default **off**): all remaining registry→node connections are gated — `POST /heads/register` and `GET /heads/check` return 403, the submit fallback and `fetchPP` HTTP fallback return 503, and startup `reconnectAllHeads` is skipped. Production relies exclusively on the agent push model; `dev.sh` sets `HYDRA_DIRECT_WS=true` for local testnet workflows. Also dropped the `UNIQUE(host, port)` constraint on `heads` — push-model agents all report `127.0.0.1:4001`, which made the second agent-created head collide.
 - 2026-07-25 — **Agent command queue** (security inversion): the registry no longer needs inbound access to user hydra-nodes for the push-model flow. Agents push their node's protocol parameters at startup (`head_protocol_params`, read by `fetchPP` before any legacy HTTP fetch) and poll `POST /agent/commands/poll` (~2s) for queued work; `POST /heads/{id}/submit` enqueues the signed tx for heads with a live agent (seen ≤90s) and waits up to 30s on an in-process `Agent.CommandQueue` TMVar for the agent-reported verdict, falling back to direct WS only for legacy agent-less heads. New modules `Agent.CommandQueue` (server-side rendezvous) and `Agent.CommandPoller` (agent-side executor); new tables `agent_commands`, `head_protocol_params`; shared `requireAgent` auth. Remaining direct-WS paths (`reconnectAllHeads`, registration validation) are legacy and slated for a dev-mode flag.
 - 2026-07-25 — **L1 head scan** (`L1.HeadScan`, runs in the sidecar loop): for an Open head, one UTxO at the head validator address carries the headId (state-token policy), the participants (participation-token names = OnChainIds), and the TVL (lovelace) — no datum decoding, so it works across every published hydra version (vendored script-hash list mirrors hydra-chain-observer's registry). Fills `head_participants` and the new `explorer_heads.total_value_lovelace` from local cardano-nodes (`HYDRA_L1_SOCKET_*` env vars). This is the registry-side answer to the chain observer only fully parsing Init txs of its own protocol version. Same date: relay-graph endpoint returns all Open heads as nodes (previously edge-connected only), `GET /` SPA serving moved to nginx with client-route fallback, network selector added to the mobile menu, network selection persisted in localStorage.

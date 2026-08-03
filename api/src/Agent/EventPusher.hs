@@ -2,8 +2,10 @@ module Agent.EventPusher
   ( AgentState (..)
   , loadOrRegister
   , pushEvent
+  , pushProtocolParams
   ) where
 
+import Control.Exception (SomeException, try)
 import Data.Aeson (Value, encode, decode)
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy qualified as BSL
@@ -12,7 +14,6 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as T
 import Network.HTTP.Client
   ( Manager
-  , Request
   , RequestBody (..)
   , httpLbs
   , method
@@ -22,7 +23,7 @@ import Network.HTTP.Client
   , responseBody
   , responseStatus
   )
-import Network.HTTP.Types.Status (status200, status201)
+import Network.HTTP.Types.Status (status200, status201, statusCode)
 import System.Directory (doesFileExist)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
@@ -100,3 +101,34 @@ pushEvent mgr registryUrl st binaryHash event = do
   if status == status200 || status == status201
     then pure ()
     else hPutStrLn stderr $ "Event push failed: " <> show status
+
+-- | Fetch the local node's protocol parameters over its HTTP API (same
+-- port as the WS) and push them to the registry so server-side tx
+-- building reads them from the DB instead of dialing this node. Like
+-- everything else the agent does, this only conveys information: a
+-- read from the local node, a write to the registry.
+pushProtocolParams :: Manager -> Text -> AgentState -> Text -> Text -> String -> Int -> IO ()
+pushProtocolParams mgr registryUrl st binaryHash headId' nodeHost nodePort = do
+  result <- try @SomeException $ do
+    ppReq <- parseRequest $ "http://" <> nodeHost <> ":" <> show nodePort <> "/protocol-parameters"
+    ppResp <- httpLbs ppReq mgr
+    case decode @Value (responseBody ppResp) of
+      Nothing -> fail "could not parse protocol-parameters from local node"
+      Just pparams -> do
+        req <- parseRequest $ T.unpack registryUrl <> "/api/v1/agent/heads/" <> T.unpack headId' <> "/protocol-parameters"
+        let req' =
+              req
+                { method = "PUT"
+                , requestHeaders =
+                    [ ("Content-Type", "application/json")
+                    , ("Authorization", "Bearer " <> T.encodeUtf8 st.secretKey)
+                    , ("X-Agent-Binary-Hash", T.encodeUtf8 binaryHash)
+                    ]
+                , requestBody = RequestBodyLBS (encode pparams)
+                }
+        resp <- httpLbs req' mgr
+        pure (statusCode (responseStatus resp))
+  case result of
+    Right code | code < 300 -> hPutStrLn stderr "Pushed protocol parameters to registry"
+    Right code -> hPutStrLn stderr $ "Protocol parameters push rejected: HTTP " <> show code
+    Left e -> hPutStrLn stderr $ "Protocol parameters push failed: " <> show e

@@ -10,7 +10,7 @@ import Data.Map.Strict qualified as Map
 import Data.Ord qualified
 import Data.Set qualified as Set
 import Data.Text (Text)
-import Data.Time (UTCTime, addUTCTime, getCurrentTime)
+import Data.Time (UTCTime, getCurrentTime)
 import Db.Schema
 import Hasql.Connection.Setting qualified as Hasql.Conn
 import Hasql.Connection.Setting.Connection qualified as Hasql.ConnStr
@@ -174,17 +174,7 @@ initDb pool =
       \);\
       \ALTER TABLE agent_registrations ADD COLUMN IF NOT EXISTS ws_host TEXT NOT NULL DEFAULT '';\
       \ALTER TABLE agent_registrations ADD COLUMN IF NOT EXISTS ws_port INT NOT NULL DEFAULT 4001;\
-      \CREATE TABLE IF NOT EXISTS agent_commands (\
-      \  command_id TEXT PRIMARY KEY,\
-      \  head_id TEXT NOT NULL,\
-      \  kind TEXT NOT NULL,\
-      \  payload TEXT NOT NULL,\
-      \  status TEXT NOT NULL DEFAULT 'pending',\
-      \  result JSONB,\
-      \  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\
-      \  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\
-      \);\
-      \CREATE INDEX IF NOT EXISTS idx_agent_commands_head_status ON agent_commands (head_id, status);\
+      \DROP TABLE IF EXISTS agent_commands;\
       \CREATE TABLE IF NOT EXISTS head_protocol_params (\
       \  head_id TEXT PRIMARY KEY,\
       \  params JSONB NOT NULL,\
@@ -1388,106 +1378,6 @@ updateAgentLastSeen pool aid now =
             , returning = NoReturning
             }
 
--- ─── Agent command queue ───
-
--- | Enqueue a command for a head's agent.
-insertAgentCommand :: Pool -> Text -> Text -> Text -> Text -> IO ()
-insertAgentCommand pool cmdId hid kind payload = do
-  now <- getCurrentTime
-  runSession pool $
-    Session.statement () $
-      Rel8.run_ $
-        Rel8.insert
-          Insert
-            { into = agentCommandSchema
-            , rows =
-                Rel8.values
-                  [ AgentCommand
-                      { commandId = lit cmdId
-                      , commandHeadId = lit hid
-                      , commandKind = lit kind
-                      , commandPayload = lit payload
-                      , commandStatus = lit "pending"
-                      , commandResult = lit Nothing
-                      , commandCreatedAt = lit now
-                      , commandUpdatedAt = lit now
-                      }
-                  ]
-            , onConflict = Abort
-            , returning = NoReturning
-            }
-
--- | Atomically hand all pending commands for a head to its agent:
--- marks them delivered and returns them. A second claim returns [].
-claimPendingCommands :: Pool -> Text -> IO [AgentCommand Identity]
-claimPendingCommands pool hid = do
-  now <- getCurrentTime
-  runSession pool $
-    Session.statement () $
-      Rel8.run $
-        Rel8.update
-          Update
-            { target = agentCommandSchema
-            , from = pure ()
-            , set = \_ row -> row{commandStatus = lit "delivered", commandUpdatedAt = lit now}
-            , updateWhere = \_ row -> row.commandHeadId ==. lit hid &&. row.commandStatus ==. lit "pending"
-            , returning = Returning id
-            }
-
--- | Store an agent-reported result and finish the command.
-completeAgentCommand :: Pool -> Text -> Aeson.Value -> IO ()
-completeAgentCommand pool cmdId result = do
-  now <- getCurrentTime
-  runSession pool $
-    Session.statement () $
-      Rel8.run_ $
-        Rel8.update
-          Update
-            { target = agentCommandSchema
-            , from = pure ()
-            , set = \_ row ->
-                row
-                  { commandStatus = lit "done"
-                  , commandResult = lit (Just result)
-                  , commandUpdatedAt = lit now
-                  }
-            , updateWhere = \_ row -> row.commandId ==. lit cmdId
-            , returning = NoReturning
-            }
-
--- | Mark a command failed (e.g. the submit handler timed out waiting).
-failAgentCommand :: Pool -> Text -> Text -> IO ()
-failAgentCommand pool cmdId reason = do
-  now <- getCurrentTime
-  runSession pool $
-    Session.statement () $
-      Rel8.run_ $
-        Rel8.update
-          Update
-            { target = agentCommandSchema
-            , from = pure ()
-            , set = \_ row ->
-                row
-                  { commandStatus = lit "failed"
-                  , commandResult = lit (Just (Aeson.object [("reason", Aeson.String reason)]))
-                  , commandUpdatedAt = lit now
-                  }
-            , updateWhere = \_ row -> row.commandId ==. lit cmdId
-            , returning = NoReturning
-            }
-
-getAgentCommand :: Pool -> Text -> IO (Maybe (AgentCommand Identity))
-getAgentCommand pool cmdId = do
-  rows <-
-    runSession pool $
-      Session.statement () $
-        Rel8.run $
-          Rel8.select $ do
-            row <- Rel8.each agentCommandSchema
-            Rel8.where_ $ row.commandId ==. lit cmdId
-            pure row
-  pure $ List.find (const True) rows
-
 -- ─── Head protocol parameters (agent-pushed) ───
 
 setHeadProtocolParams :: Pool -> Text -> Aeson.Value -> IO ()
@@ -1522,19 +1412,3 @@ getHeadProtocolParams pool hid = do
             Rel8.where_ $ row.ppHeadId ==. lit hid
             pure row.ppParams
   pure $ List.find (const True) rows
-
--- | Find an agent for a head whose last poll/event was within
--- @maxAgeSeconds@ — i.e. one that will actually pick up commands.
-lookupActiveAgentForHead :: Pool -> Text -> Int -> IO (Maybe (AgentRegistration Identity))
-lookupActiveAgentForHead pool hid maxAgeSeconds = do
-  now <- getCurrentTime
-  let cutoff = addUTCTime (negate (fromIntegral maxAgeSeconds)) now
-  rows <-
-    runSession pool $
-      Session.statement () $
-        Rel8.run $
-          Rel8.select $ do
-            row <- Rel8.each agentRegistrationSchema
-            Rel8.where_ $ row.agentHeadId ==. lit hid
-            pure row
-  pure $ List.find (\a -> maybe False (> cutoff) a.agentLastSeenAt) rows

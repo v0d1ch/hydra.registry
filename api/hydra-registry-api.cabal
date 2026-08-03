@@ -40,7 +40,6 @@ library
     Explorer.Sidecar
     Hydra.Client
     Hydra.Htlc
-    Hydra.Submit
     Indexer
     L1.HeadScan
     Logging
@@ -53,8 +52,6 @@ library
     Relay.Slot
     Tx.Builder
     Agent.BinaryHash
-    Agent.CommandPoller
-    Agent.CommandQueue
     Agent.EventPusher
     Agent.ReadOnly
   build-depends:
@@ -125,7 +122,6 @@ executable hydra-registry-agent
   build-depends:
     , base >= 4.18 && < 5
     , aeson
-    , async
     , http-client
     , http-client-tls
     , hydra-registry-api
@@ -168,7 +164,7 @@ test-suite hydra-registry-api-test
     , wai-extra
   other-modules:
     IndexerSpec
-    AgentCommandSpec
+    AgentPushSpec
     ApiIntegrationSpec
     ApiTypesSpec
     ConfigSpec
