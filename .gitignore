@@ -20,6 +20,7 @@ pgdata/
 # Secrets — never commit these
 .env
 .env.*
+.deploy.env
 *.pem
 *.key
 *.sk

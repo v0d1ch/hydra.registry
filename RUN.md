@@ -240,9 +240,24 @@ A network selector in the navbar filters explorer and routing data by Mainnet, T
 
 ## Production deployment
 
+For an existing server, `./deploy.sh [all|frontend|backend]` does the whole
+cycle: builds the SPA, rsyncs repo + static files, runs the incremental
+server-side backend build, restarts the service, and health-checks the public
+URL. It reads its targets from a gitignored `.deploy.env`:
+
+```bash
+DEPLOY_SSH=user@server
+DEPLOY_WEB_SSH=root@server        # optional, defaults to DEPLOY_SSH
+DEPLOY_WEB_ROOT=/var/www/site     # optional
+DEPLOY_URL=https://example.com    # optional, enables the health check
+```
+
+Setting up a server from scratch:
+
 1. Build the frontend: `cd website && npm run build`
-2. Build the backend: `cd api && cabal build`
+2. Build the backend: `cd api && cabal build exe:hydra-registry-api`
 3. Set up PostgreSQL with proper authentication
 4. Set environment variables (especially `HYDRA_DB_CONN_STR`, `HYDRA_HTLC_SCRIPT_HASH`)
 5. Run behind a reverse proxy (nginx/caddy) with TLS termination
-6. The backend serves both the API and the website from a single binary
+6. The backend serves both the API and the website from a single binary (or
+   let nginx serve `website/dist/` statically and proxy only `/api/`)
