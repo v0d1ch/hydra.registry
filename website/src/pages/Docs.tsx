@@ -380,6 +380,91 @@ required_signers:
           </p>
         </div>
       </motion.section>
+
+      {/* End-to-end walkthrough */}
+      <motion.section
+        className="section"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25, duration: 0.5 }}
+      >
+        <h2 className="section-title">End to end: lock an HTLC with cardano-cli</h2>
+        <p className="register-desc">
+          The complete flow from nothing to a locked HTLC, using only{' '}
+          <code>cardano-cli</code>, <code>curl</code>, and coreutils. Prerequisites:
+          you hold funds <em>inside</em> an Open head that is registered here (its
+          agent is running), and the head has its HTLC reference script published
+          (Setup page, one-time). Steps 1–2 are the <strong>receiver</strong>;
+          the rest is the <strong>sender</strong>.
+        </p>
+
+        <div className="setup-steps">
+          <h3>1 — Receiver: generate the secret and its hash</h3>
+          <pre className="code-block">{`openssl rand -hex 32 > preimage.hex          # keep this private until claim time
+PAYMENT_HASH=$(xxd -r -p preimage.hex | b2sum -l 256 | cut -d' ' -f1)
+echo $PAYMENT_HASH`}</pre>
+          <p className="register-desc">
+            The validator checks <code>blake2b_256(preimage) == datum.hash</code> over
+            the raw 32 bytes — hence the <code>xxd -r -p</code> before hashing.
+            <code> b2sum -l 256</code> (GNU coreutils) is BLAKE2b with a 256-bit digest.
+          </p>
+
+          <h3>2 — Receiver: create the invoice</h3>
+          <pre className="code-block">{`curl -X POST ${window.location.origin}/api/v1/relay/invoices \\
+  -H 'Content-Type: application/json' \\
+  -d '{
+    "receiverAddress": "addr_test1...",
+    "paymentHash":     "'$PAYMENT_HASH'",
+    "amountLovelace":  5000000,
+    "expiresInSeconds": 3600
+  }'
+# → note the "invoiceId" in the response`}</pre>
+
+          <h3>3 — Sender: find and pick a route</h3>
+          <pre className="code-block">{`curl -X POST ${window.location.origin}/api/v1/relay/routes \\
+  -H 'Content-Type: application/json' \\
+  -d '{"invoiceId": "<invoiceId>", "senderAddress": "addr_test1...", "network": "Preprod"}'
+# → up to 3 routes; note the "routeId" of the one you want
+
+curl -X POST ${window.location.origin}/api/v1/relay/routes/<routeId>/execute`}</pre>
+
+          <h3>4 — Sender: build the hop-0 lock transaction</h3>
+          <pre className="code-block">{`curl -X POST ${window.location.origin}/api/v1/relay/payments/<routeId>/hops/0/lock-tx-cbor \\
+  -H 'Content-Type: application/json' \\
+  -d '{"walletAddress": "addr_test1..."}' > tx.raw`}</pre>
+          <p className="register-desc">
+            The registry picks an in-head UTxO of yours, computes the datum
+            (payment hash, receiver, timeout slot) and fees, and returns an
+            <strong> unsigned</strong> Conway text envelope — <code>tx.raw</code> is
+            directly usable by cardano-cli. Your keys are never involved server-side.
+          </p>
+
+          <h3>5 — Sign offline, submit to your own node</h3>
+          <pre className="code-block">{`cardano-cli conway transaction sign \\
+  --tx-file tx.raw \\
+  --signing-key-file <your-address>.sk \\
+  --out-file tx.signed
+
+curl -X POST http://127.0.0.1:4001/transaction \\
+  -H 'Content-Type: application/json' \\
+  --data @tx.signed`}</pre>
+          <p className="register-desc">
+            Adjust host/port to your hydra-node's API. The node validates the
+            transaction inside the head and answers with the verdict; the registry
+            never submits anything.
+          </p>
+
+          <h3>6 — Verify</h3>
+          <pre className="code-block">{`curl -s ${window.location.origin}/api/v1/relay/payments/<routeId> | jq '.hops[0].htlcStatus'
+# → "locked" once the next snapshot confirms`}</pre>
+          <p className="register-desc">
+            From here the cascade proceeds hop by hop (bridges re-lock downstream,
+            the receiver claims with the preimage, claims propagate back) — see{' '}
+            <em>The payment cascade</em> above. The Dashboard shows the same
+            build/sign/submit steps interactively whenever a hop needs you to act.
+          </p>
+        </div>
+      </motion.section>
     </div>
   )
 }

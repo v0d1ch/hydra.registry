@@ -120,10 +120,13 @@ function TxPanel({ action, routeId, secretHash, onDone }: TxPanelProps) {
     <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
       {!builtCbor ? (
         <>
-          <p className="register-desc" style={{ marginBottom: '1rem' }}>
+          <p className="register-desc" style={{ marginBottom: '0.5rem' }}>
             {action.kind === 'lock' && 'Lock funds in the HTLC contract inside this head.'}
             {action.kind === 'claim' && 'Claim the locked funds by revealing your secret preimage.'}
             {action.kind === 'refund' && 'Recover your locked funds — the timeout has passed.'}
+          </p>
+          <p className="form-hint" style={{ marginBottom: '1rem' }}>
+            <Link to="/docs">How these transactions work — full HTLC reference →</Link>
           </p>
 
           <div className="form-group" style={{ marginBottom: '0.75rem' }}>
