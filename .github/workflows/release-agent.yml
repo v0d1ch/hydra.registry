@@ -1,18 +1,31 @@
 name: release-agent
 
-# Tag a commit `agent-v*` (e.g. agent-v0.1.0) to build the agent and
-# attach the binary + sha256 to a GitHub Release. The sha256 lets
-# operators verify downloads before running them.
+# Tag a commit `agent-v*` (e.g. agent-v0.1.0) to build the agent,
+# attach the binary + sha256 to a GitHub Release, and push multi-arch
+# docker images to ghcr.io. The sha256 lets operators verify downloads
+# before running them.
+#
+# workflow_dispatch builds and pushes ONLY the docker images (no
+# release assets) — use it to produce images for an existing release
+# without re-tagging.
 on:
   push:
     tags:
       - "agent-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version tag (e.g. 0.1.0)"
+        required: true
+        default: "0.1.0"
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build:
+    if: github.event_name == 'push'
     strategy:
       matrix:
         include:
@@ -49,3 +62,68 @@ jobs:
           files: |
             ${{ matrix.artifact }}
             ${{ matrix.artifact }}.sha256
+
+  docker:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#agent-v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: agent
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/hydra-registry-agent:${{ steps.ver.outputs.version }}-${{ matrix.arch }}
+
+  # Merge the per-arch images into one multi-arch manifest tagged
+  # <version> and latest.
+  docker-manifest:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Derive version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#agent-v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch manifest
+        run: |
+          IMG="ghcr.io/${{ github.repository_owner }}/hydra-registry-agent"
+          V="${{ steps.ver.outputs.version }}"
+          docker buildx imagetools create \
+            -t "$IMG:$V" -t "$IMG:latest" \
+            "$IMG:$V-amd64" "$IMG:$V-arm64"

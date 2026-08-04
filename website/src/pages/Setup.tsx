@@ -212,6 +212,16 @@ curl -LO https://github.com/v0d1ch/hydra.registry/releases/latest/download/hydra
 sha256sum -c hydra-registry-agent-x86_64-linux.sha256
 chmod +x hydra-registry-agent-x86_64-linux
 
+# or run the docker image (multi-arch, from GitHub Container Registry).
+# --network host lets it reach the node's WS on localhost; the named
+# volume keeps the agent's identity across container recreations.
+docker run -d --name hydra-registry-agent \\
+  --network host \\
+  -v hydra-agent-state:/data \\
+  -e HYDRA_NODE_WS_URL=ws://127.0.0.1:4001 \\
+  -e HYDRA_REGISTRY_URL=${window.location.origin} \\
+  ghcr.io/v0d1ch/hydra-registry-agent:latest
+
 # or build from source — plain GHC + cabal, no Cardano dependencies
 git clone https://github.com/v0d1ch/hydra.registry
 cd hydra.registry/agent && cabal build`}</pre>
