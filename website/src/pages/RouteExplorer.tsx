@@ -106,10 +106,11 @@ export default function RouteExplorer() {
             hasHtlc: explorer.htlcEnabled,
             isUserHead: false,
             participants: participants.map(p => p.address),
-            committedLovelace: participants.reduce(
-              (acc, p) => acc + (p.committedLovelace ?? 0),
-              0,
-            ),
+            // Prefer the head-level L1-scan total; per-participant commit
+            // amounts are rarely known (explorer members parsing).
+            committedLovelace:
+              explorer.totalValueLovelace ||
+              participants.reduce((acc, p) => acc + (p.committedLovelace ?? 0), 0),
           })
           return
         }

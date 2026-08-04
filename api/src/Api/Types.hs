@@ -181,6 +181,9 @@ data ExplorerHeadInfo = ExplorerHeadInfo
   , lastUpdatedAt :: UTCTime
   , registered :: Bool
   , htlcEnabled :: Bool
+  , totalValueLovelace :: Int
+  -- ^ Committed value observed by the registry-side L1 head scan;
+  -- 0 until the scan has seen the head's UTxO.
   }
   deriving stock (Eq, Show, Generic)
   deriving anyclass (FromJSON, ToJSON)

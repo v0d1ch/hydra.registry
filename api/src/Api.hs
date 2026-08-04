@@ -638,6 +638,7 @@ explorerHeadToInfo registeredIds htlcIds eh =
     , lastUpdatedAt = eh.explorerLastUpdatedAt
     , registered = Map.member eh.explorerHeadId registeredIds
     , htlcEnabled = Set.member eh.explorerHeadId htlcIds
+    , totalValueLovelace = fromIntegral eh.explorerTotalValueLovelace
     }
 
 -- | Convert an ExplorerHead to the on-chain metadata subset
@@ -764,7 +765,13 @@ handleRelayGraph pool mHtlcHash mNetwork = do
             , hasHtlc = Set.member eh.explorerHeadId htlcIds
             , isUserHead = Set.member eh.explorerHeadId registeredOpenIds
             , participants = Map.findWithDefault [] eh.explorerHeadId headParticipants
-            , committedLovelace = Map.findWithDefault 0 eh.explorerHeadId headLovelace
+            , -- Per-participant commit amounts only exist when the explorer
+              -- could parse members (rare across the current fleet); the
+              -- L1 scan's head-level total is the reliable signal.
+              committedLovelace =
+                max
+                  (Map.findWithDefault 0 eh.explorerHeadId headLovelace)
+                  eh.explorerTotalValueLovelace
             }
         | eh <- networkHeads
         ]

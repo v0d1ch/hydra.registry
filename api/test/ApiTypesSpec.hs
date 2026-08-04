@@ -110,6 +110,7 @@ spec = describe "Api.Types" $ do
               , lastUpdatedAt = now
               , registered = True
               , htlcEnabled = False
+              , totalValueLovelace = 42_000_000
               }
       roundtrip val `shouldBe` Just val
 

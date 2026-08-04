@@ -44,6 +44,7 @@ export interface ExplorerHeadInfo {
   lastUpdatedAt: string
   registered: boolean
   htlcEnabled: boolean
+  totalValueLovelace: number
 }
 
 // ─── Participant types ───

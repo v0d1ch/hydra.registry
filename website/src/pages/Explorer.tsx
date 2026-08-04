@@ -6,6 +6,13 @@ import AnimatedCounter from '../components/AnimatedCounter'
 
 const PAGE_SIZE = 20
 
+// Per-network cardanoscan base URL for linking tx/block hashes.
+const scanBase: Record<string, string> = {
+  Mainnet: 'https://cardanoscan.io',
+  Preprod: 'https://preprod.cardanoscan.io',
+  Preview: 'https://preview.cardanoscan.io',
+}
+
 const statusColors: Record<string, string> = {
   Open: 'var(--success)',
   Closed: 'var(--error)',
@@ -90,7 +97,6 @@ export default function Explorer() {
             <label>Status</label>
             <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1) }}>
               <option value="">All</option>
-              <option value="Initializing">Initializing</option>
               <option value="Open">Open</option>
               <option value="Closed">Closed</option>
               <option value="Finalized">Finalized</option>
@@ -148,6 +154,14 @@ export default function Explorer() {
                     <span className="meta-label">Version</span>
                     <span className="meta-value">{head.version}</span>
                   </div>
+                  {head.totalValueLovelace > 0 && (
+                    <div className="meta-row">
+                      <span className="meta-label">Committed</span>
+                      <span className="meta-value">
+                        ₳ {(head.totalValueLovelace / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  )}
                   {head.snapshotNumber !== null && head.snapshotNumber > 0 && (
                     <div className="meta-row">
                       <span className="meta-label">Snapshots</span>
@@ -190,9 +204,36 @@ export default function Explorer() {
                           <span className="meta-value">{head.blockNo}</span>
                         </div>
                       )}
+                      {(() => {
+                        const blockHash = (head.point as { blockHash?: string } | null)?.blockHash
+                        if (!blockHash) return null
+                        const base = scanBase[head.network]
+                        return (
+                          <div className="meta-row">
+                            <span className="meta-label">Block hash</span>
+                            {base ? (
+                              <a
+                                className="meta-value meta-value-mono"
+                                href={`${base}/block/${blockHash}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                {blockHash.slice(0, 16)}…
+                              </a>
+                            ) : (
+                              <code className="meta-value meta-value-mono">{blockHash.slice(0, 16)}…</code>
+                            )}
+                          </div>
+                        )
+                      })()}
                       <div className="meta-row">
                         <span className="meta-label">Network magic</span>
                         <span className="meta-value">{head.networkMagic}</span>
+                      </div>
+                      <div className="meta-row">
+                        <span className="meta-label">First seen</span>
+                        <span className="meta-value">{new Date(head.firstSeenAt).toLocaleString()}</span>
                       </div>
                       <div className="meta-row">
                         <span className="meta-label">Last updated</span>
@@ -201,7 +242,19 @@ export default function Explorer() {
                       {head.seedTxIn && (
                         <div className="meta-row">
                           <span className="meta-label">Seed TxIn</span>
-                          <code className="meta-value meta-value-mono">{head.seedTxIn}</code>
+                          {scanBase[head.network] ? (
+                            <a
+                              className="meta-value meta-value-mono"
+                              href={`${scanBase[head.network]}/transaction/${head.seedTxIn.split('#')[0]}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {head.seedTxIn}
+                            </a>
+                          ) : (
+                            <code className="meta-value meta-value-mono">{head.seedTxIn}</code>
+                          )}
                         </div>
                       )}
                     </motion.div>

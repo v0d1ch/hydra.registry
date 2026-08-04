@@ -83,6 +83,19 @@ mainSpec = with makeTestApp $ describe "API (integration)" $ do
             _ -> expectationFailure "edges missing"
         _ -> expectationFailure "Could not parse graph response"
 
+    it "carries the L1-scan committed value on graph nodes" $ do
+      liftIO $ withTestPool $ \pool -> do
+        Db.upsertExplorerHead pool "head-tvl-node" "Preprod" 1 "2.2.0" "Open" Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+        Db.updateExplorerHeadTvl pool "head-tvl-node" 63_000_000
+      resp <- get "/api/v1/relay/graph?network=Preprod"
+      liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
+        Just (Aeson.Object o)
+          | Just (Aeson.Array ns) <- KM.lookup "nodes" o ->
+              case [n | Aeson.Object n <- foldr (:) [] ns, KM.lookup "headId" n == Just (Aeson.String "head-tvl-node")] of
+                [n] -> KM.lookup "committedLovelace" n `shouldBe` Just (Aeson.Number 63000000)
+                other -> expectationFailure $ "expected one matching node, got " <> show (length other)
+        _ -> expectationFailure "could not parse graph response"
+
     it "still links heads sharing a participant" $ do
       liftIO $ withTestPool $ \pool -> do
         Db.upsertExplorerHead pool "head-a" "Preprod" 1 "2.2.0" "Open" Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
@@ -184,6 +197,16 @@ mainSpec = with makeTestApp $ describe "API (integration)" $ do
   describe "GET /api/v1/explorer/heads/:headId" $ do
     it "returns 404 for non-existent explorer head" $ do
       get "/api/v1/explorer/heads/non-existent" `shouldRespondWith` 404
+
+    it "includes the total committed value from the L1 scan" $ do
+      liftIO $ withTestPool $ \pool -> do
+        Db.upsertExplorerHead pool "head-tvl" "Preprod" 1 "2.2.0" "Open" Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing
+        Db.updateExplorerHeadTvl pool "head-tvl" 42_000_000
+      resp <- get "/api/v1/explorer/heads/head-tvl"
+      liftIO $ case Aeson.decode @Aeson.Value (simpleBody resp) of
+        Just (Aeson.Object o) ->
+          KM.lookup "totalValueLovelace" o `shouldBe` Just (Aeson.Number 42000000)
+        _ -> expectationFailure "could not parse explorer head detail"
 
   describe "GET /api/v1/stats" $ do
     it "returns stats including explorerHeadCount" $ do
