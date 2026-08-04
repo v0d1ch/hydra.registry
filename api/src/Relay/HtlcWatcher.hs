@@ -2,6 +2,8 @@ module Relay.HtlcWatcher
   ( processUtxoSnapshot
   , htlcScriptAddresses
   , checkRouteCompletion
+  , Settlement (..)
+  , classifySettlement
   )
 where
 
@@ -10,6 +12,8 @@ import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KM
 import Data.Either (rights)
 import Data.Functor.Identity (Identity)
+import Data.Int (Int64)
+import Data.Maybe (catMaybes)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -22,23 +26,50 @@ import Hydra.Htlc qualified as Htlc
 import Logging
 import Relay.EventBus (EventBus, RouteEvent (..))
 import Relay.EventBus qualified as Bus
+import Relay.Slot (utcTimeToSlot)
 
--- | After each snapshot, detect HTLC lock and claim events by comparing
--- the new UTxO set against active route hops for this head.
+-- | Outcome of an HTLC UTxO disappearing (being spent) somewhere in the
+-- window @(lastSeenSlot, tipSlot]@, classified against the datum
+-- timeout. Sound on both layers because the validator's validity
+-- windows are disjoint: a claim tx's upper bound is strictly before the
+-- timeout, a refund tx's lower bound strictly after.
+data Settlement = SettledClaimed | SettledRefunded | SettlementAmbiguous
+  deriving stock (Eq, Show)
+
+classifySettlement
+  :: Int64 -- ^ current tip slot (spend happened at or before this)
+  -> Int64 -- ^ slot at which the UTxO was last known unspent
+  -> Int64 -- ^ datum timeout slot
+  -> Settlement
+classifySettlement tipSlot lastSeenSlot timeoutSlot
+  | tipSlot < timeoutSlot = SettledClaimed
+  | lastSeenSlot >= timeoutSlot = SettledRefunded
+  | otherwise = SettlementAmbiguous
+
+-- | After each snapshot, detect HTLC lock and settlement events by
+-- comparing the new UTxO set against active route hops for this head.
 --
 -- Lock: a new UTxO at the HTLC script address with an inline datum
 --       whose payment hash matches a pending hop → mark hop as 'locked'.
 --
--- Claim: a previously locked hop's HTLC tx hash is no longer in the
---        UTxO set (spent) → mark hop as 'claimed'.
+-- Settlement: a previously locked hop's HTLC tx hash is no longer in
+--       the UTxO set (spent). Classified by timing against the hop
+--       timeout — spends before it are claims, after it refunds; a
+--       window straddling the timeout stays locked with a warning.
+--
+-- Snapshots carry no chain slot, so "now" is derived from wall clock
+-- via the route's network ('Relay.Slot'), and the last-known-unspent
+-- bound is the later of the stamped @htlc_last_seen_slot@ and the
+-- hop's lock time.
 --
 -- Whenever the DB is updated the watcher also fans out the
 -- corresponding 'RouteEvent' on the supplied 'EventBus'. SSE
 -- subscribers see the transition without polling.
 processUtxoSnapshot :: Logger -> Pool -> EventBus -> Text -> Text -> [HydraUtxoEntry] -> IO ()
 processUtxoSnapshot logger pool bus headId htlcScriptHash utxos = do
-  -- Get all active (pending or locked) hops for this head
-  activeHops <- Db.getActiveHopsByHead pool headId
+  -- Get all active (pending or locked) hops for this head, with networks
+  hopsWithNet <- Db.getActiveHopsWithNetworkByHead pool headId
+  let activeHops = map fst hopsWithNet
 
   -- Detect locks: UTxOs at HTLC script address with matching payment hash.
   -- The address comparison is against the bech32-encoded script address
@@ -49,9 +80,21 @@ processUtxoSnapshot logger pool bus headId htlcScriptHash utxos = do
       htlcUtxos = filter (isHtlcUtxo scriptAddrs) utxos
   mapM_ (detectLock logger pool bus headId activeHops) htlcUtxos
 
-  -- Detect claims: locked hops whose HTLC tx is no longer in the UTxO set
+  -- Locked hops still present: stamp the last-known-unspent slot so a
+  -- later disappearance has a tight window to classify against.
   let utxoTxHashes = map (\u -> u.txHash) utxos
-  mapM_ (detectClaim logger pool bus utxoTxHashes) activeHops
+  now <- getCurrentTime
+  mapM_
+    ( \(h, net) ->
+        case (h.hopHtlcStatus == "locked", h.hopHtlcTxHash, utcTimeToSlot net now) of
+          (True, Just lockTx, Just slotNow)
+            | lockTx `elem` utxoTxHashes -> Db.updateHopHtlcLastSeen pool h.hopId slotNow
+          _ -> pure ()
+    )
+    hopsWithNet
+
+  -- Locked hops whose HTLC tx is no longer in the UTxO set: settle.
+  mapM_ (detectSettlement logger pool bus utxoTxHashes now) hopsWithNet
 
 -- | Bech32 enterprise-script addresses for the given script hash on
 -- every supported network. Filters out networks where address derivation
@@ -116,28 +159,64 @@ recordLock logger pool bus headId entry now h = do
       , at = now
       }
 
--- | Check if a locked hop's HTLC UTxO has been spent (claimed).
-detectClaim :: Logger -> Pool -> EventBus -> [Text] -> RouteHop Identity -> IO ()
-detectClaim logger pool bus utxoTxHashes hop = do
+-- | A locked hop's HTLC UTxO is gone from the snapshot — it was spent.
+-- Classify the spend by timing and settle the hop accordingly.
+detectSettlement :: Logger -> Pool -> EventBus -> [Text] -> UTCTime -> (RouteHop Identity, Text) -> IO ()
+detectSettlement logger pool bus utxoTxHashes now (hop, network) =
   case hop.hopHtlcTxHash of
     Nothing -> pure ()
-    Just lockedTxHash ->
-      -- If the locked tx hash is no longer in the UTxO set, it was spent (claimed)
-      if lockedTxHash `notElem` utxoTxHashes && hop.hopHtlcStatus == "locked"
-        then do
-          now <- getCurrentTime
-          logInfo logger "HTLC claim detected" [("hopId", Aeson.toJSON hop.hopId), ("txHash", Aeson.toJSON lockedTxHash)]
-          Db.updateHopClaimed pool hop.hopId now
-          Bus.publish
-            bus
-            HopClaimed
-              { routeId = hop.hopRouteId
-              , hopIndex = fromIntegral hop.hopIndex
-              , at = now
-              }
-          -- Check if all hops in this route are now claimed → complete the payment
-          checkRouteCompletion logger pool bus hop.hopRouteId
-        else pure ()
+    Just lockedTxHash
+      | lockedTxHash `notElem` utxoTxHashes && hop.hopHtlcStatus == "locked" ->
+          case utcTimeToSlot network now of
+            Nothing ->
+              logWarn
+                logger
+                "HTLC spend detected but network has no slot conversion — leaving hop locked"
+                [("hopId", Aeson.toJSON hop.hopId), ("network", Aeson.toJSON network)]
+            Just slotNow -> do
+              -- Last slot at which we knew the UTxO was unspent: the
+              -- stamped sighting when available, else the lock time.
+              let lowerBounds =
+                    catMaybes
+                      [ hop.hopHtlcLastSeenSlot
+                      , hop.hopLockedAt >>= utcTimeToSlot network
+                      ]
+                  lastSeen = case lowerBounds of
+                    [] -> slotNow -- no bound: trust "spend just happened"
+                    xs -> maximum xs
+              case classifySettlement slotNow lastSeen hop.hopTimeoutSlot of
+                SettledClaimed -> do
+                  logInfo logger "HTLC claim detected" [("hopId", Aeson.toJSON hop.hopId), ("txHash", Aeson.toJSON lockedTxHash)]
+                  Db.updateHopClaimed pool hop.hopId now
+                  Bus.publish
+                    bus
+                    HopClaimed
+                      { routeId = hop.hopRouteId
+                      , hopIndex = fromIntegral hop.hopIndex
+                      , at = now
+                      }
+                  -- Check if all hops in this route are now claimed → complete the payment
+                  checkRouteCompletion logger pool bus hop.hopRouteId
+                SettledRefunded -> do
+                  logInfo logger "HTLC refund detected" [("hopId", Aeson.toJSON hop.hopId), ("txHash", Aeson.toJSON lockedTxHash)]
+                  Db.updateHopRefunded pool hop.hopId
+                  Bus.publish
+                    bus
+                    HopRefunded
+                      { routeId = hop.hopRouteId
+                      , hopIndex = fromIntegral hop.hopIndex
+                      , at = now
+                      }
+                SettlementAmbiguous ->
+                  logWarn
+                    logger
+                    "HTLC spend window straddles the timeout — leaving hop locked"
+                    [ ("hopId", Aeson.toJSON hop.hopId)
+                    , ("lastSeen", Aeson.toJSON lastSeen)
+                    , ("now", Aeson.toJSON slotNow)
+                    , ("timeout", Aeson.toJSON hop.hopTimeoutSlot)
+                    ]
+    _ -> pure ()
 
 -- | Extract the payment hash from an HTLC inline datum.
 -- The datum structure is: {"hash": "<hex>", "timeout": ..., "sender": ..., "receiver": ...}

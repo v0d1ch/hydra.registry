@@ -35,25 +35,7 @@ import L1.HeadScan (networkIdFor)
 import Logging (Logger, logInfo, logWarn)
 import Relay.EventBus (EventBus, RouteEvent (..))
 import Relay.EventBus qualified as Bus
-import Relay.HtlcWatcher (checkRouteCompletion)
-
--- | Outcome of a hop's HTLC UTxO disappearing from L1 between two scans.
-data Settlement = SettledClaimed | SettledRefunded | SettlementAmbiguous
-  deriving stock (Eq, Show)
-
--- | Classify a spend that happened somewhere in @(lastSeenSlot, tipSlot]@
--- against the datum timeout. Sound because the validator's validity
--- windows are disjoint: a claim tx's upper bound is strictly before the
--- timeout, a refund tx's lower bound strictly after.
-classifySettlement
-  :: Int64 -- ^ current tip slot (spend happened at or before this)
-  -> Int64 -- ^ slot at which the UTxO was last seen (spend happened after this)
-  -> Int64 -- ^ datum timeout slot
-  -> Settlement
-classifySettlement tipSlot lastSeenSlot timeoutSlot
-  | tipSlot < timeoutSlot = SettledClaimed
-  | lastSeenSlot >= timeoutSlot = SettledRefunded
-  | otherwise = SettlementAmbiguous
+import Relay.HtlcWatcher (Settlement (..), checkRouteCompletion, classifySettlement)
 
 -- | One HTLC UTxO sitting at the script address, identified by its
 -- decoded datum. Hops are matched on secret hash /and/ receiver — every
@@ -115,11 +97,13 @@ scanNetwork logger htlcHash network socketPath =
 
 -- | Reconcile one scan's observations against all locked hops:
 --
---   * hop's HTLC present at the script address → record the tip slot
+--   * hop's HTLC present at the script address → stamp the tip slot
+--     onto @htlc_last_seen_slot@ (shared with the L2 watcher's stamps)
 --   * hop absent but previously seen → the UTxO was spent; classify by
 --     timing and mark the hop claimed or refunded (events included)
---   * hop absent and never seen on L1 → nothing to conclude (it may
---     still live inside an open head)
+--   * hop absent and never seen on L1 → nothing to conclude here (it
+--     may still live inside an open head; the L2 watcher owns that
+--     case and applies the same classification)
 applyHtlcScan :: Logger -> Pool -> EventBus -> Int64 -> [HtlcObservation] -> IO ()
 applyHtlcScan logger pool bus tipSlot observations = do
   locked <- Db.getLockedHops pool
@@ -132,8 +116,8 @@ applyHtlcScan logger pool bus tipSlot observations = do
       && normalizePkh h.hopReceiverAddress == Just o.obsReceiverPkh
 
   step h
-    | any (matches h) observations = Db.updateHopL1Seen pool h.hopId tipSlot
-    | otherwise = case h.hopL1LastSeenSlot of
+    | any (matches h) observations = Db.updateHopHtlcLastSeen pool h.hopId tipSlot
+    | otherwise = case h.hopHtlcLastSeenSlot of
         Nothing -> pure ()
         Just lastSeen -> settle h lastSeen
 

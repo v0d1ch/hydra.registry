@@ -10,6 +10,7 @@ import Db.Schema (RouteHop (..))
 import Hasql.Pool (Pool)
 import L1.HtlcScan
 import Logging (newLogger)
+import Relay.HtlcWatcher (Settlement (..), classifySettlement)
 import Logging qualified
 import Relay.EventBus qualified as Bus
 import Test.Hspec
@@ -51,7 +52,7 @@ spec = describe "L1 HTLC scan" $ do
       let logger = newLogger Logging.Error
       applyHtlcScan logger pool bus 500 [HtlcObservation secretHash senderPkh bridgePkh]
       hop <- hopByIndex pool 0
-      hop.hopL1LastSeenSlot `shouldBe` Just 500
+      hop.hopHtlcLastSeenSlot `shouldBe` Just 500
       hop.hopHtlcStatus `shouldBe` "locked"
 
     it "marks the hop claimed when it disappears before the timeout" $ \pool -> do
@@ -89,8 +90,8 @@ spec = describe "L1 HTLC scan" $ do
       applyHtlcScan logger pool bus 500 [HtlcObservation secretHash bridgePkh receiverPkh]
       h0 <- hopByIndex pool 0
       h1 <- hopByIndex pool 1
-      h0.hopL1LastSeenSlot `shouldBe` Nothing
-      h1.hopL1LastSeenSlot `shouldBe` Just 500
+      h0.hopHtlcLastSeenSlot `shouldBe` Nothing
+      h1.hopHtlcLastSeenSlot `shouldBe` Just 500
 
     it "never settles a hop that was never observed on L1" $ \pool -> do
       seedRoute pool

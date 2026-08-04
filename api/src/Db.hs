@@ -146,7 +146,7 @@ initDb pool =
       \);\
       \CREATE INDEX IF NOT EXISTS idx_route_hops_route_id ON route_hops (route_id);\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS sender_address TEXT NOT NULL DEFAULT '';\
-      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS l1_last_seen_slot BIGINT;\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS htlc_last_seen_slot BIGINT;\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS receiver_address TEXT NOT NULL DEFAULT '';\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS htlc_status TEXT NOT NULL DEFAULT 'pending';\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS htlc_tx_hash TEXT;\
@@ -996,7 +996,7 @@ insertRouteHops pool hops =
       , hopFeeLovelace = lit fee
       , hopLockedAt = lit Nothing
       , hopClaimedAt = lit Nothing
-      , hopL1LastSeenSlot = lit Nothing
+      , hopHtlcLastSeenSlot = lit Nothing
       }
 
 -- | Get hops for a route
@@ -1219,10 +1219,10 @@ updateHopRefunded pool hopId =
             , returning = NoReturning
             }
 
--- | Record the chain slot at which the L1 scan last saw a hop's HTLC
--- UTxO at the script address.
-updateHopL1Seen :: Pool -> Text -> Int64 -> IO ()
-updateHopL1Seen pool hopId slot =
+-- | Record the chain slot at which a hop's HTLC UTxO was last known
+-- unspent (stamped from L2 snapshot sightings and L1 scan sightings).
+updateHopHtlcLastSeen :: Pool -> Text -> Int64 -> IO ()
+updateHopHtlcLastSeen pool hopId slot =
   runSession pool $
     Session.statement () $
       Rel8.run_ $
@@ -1230,7 +1230,7 @@ updateHopL1Seen pool hopId slot =
           Update
             { target = routeHopSchema
             , from = pure ()
-            , set = \_ row -> row{hopL1LastSeenSlot = lit (Just slot)}
+            , set = \_ row -> row{hopHtlcLastSeenSlot = lit (Just slot)}
             , updateWhere = \_ row -> row.hopId ==. lit hopId
             , returning = NoReturning
             }
@@ -1246,6 +1246,23 @@ getLockedHops pool =
           row <- Rel8.each routeHopSchema
           Rel8.where_ $ row.hopHtlcStatus ==. lit "locked"
           pure row
+
+-- | Active (pending or locked) hops for a head, each paired with its
+-- route's network — needed to convert wall-clock time to that network's
+-- slot when classifying spends.
+getActiveHopsWithNetworkByHead :: Pool -> Text -> IO [(RouteHop Identity, Text)]
+getActiveHopsWithNetworkByHead pool headId =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          hop <- Rel8.each routeHopSchema
+          route <- Rel8.each paymentRouteSchema
+          Rel8.where_ $
+            hop.hopRouteId ==. route.routeId
+              &&. hop.hopHeadId ==. lit headId
+              &&. (hop.hopHtlcStatus ==. lit "pending" ||. hop.hopHtlcStatus ==. lit "locked")
+          pure (hop, route.routeNetwork)
 
 -- | Store the revealed preimage on all hops sharing the same secret hash.
 -- Once revealed, every hop in the cascade can use it to claim.

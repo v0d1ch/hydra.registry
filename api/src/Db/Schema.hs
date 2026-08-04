@@ -240,10 +240,11 @@ data RouteHop f = RouteHop
   , hopFeeLovelace :: Column f Int64
   , hopLockedAt :: Column f (Maybe UTCTime)
   , hopClaimedAt :: Column f (Maybe UTCTime)
-  , hopL1LastSeenSlot :: Column f (Maybe Int64)
-  -- ^ Chain slot at which the L1 HTLC scan last saw this hop's UTxO at
-  -- the script address (post-fanout). Bounds the spend window when the
-  -- UTxO later disappears, which is what classifies claim vs refund.
+  , hopHtlcLastSeenSlot :: Column f (Maybe Int64)
+  -- ^ Chain slot at which the hop's HTLC UTxO was last known unspent —
+  -- stamped by the L2 watcher (snapshot sightings) and the L1 scan
+  -- (post-fanout sightings). Bounds the spend window when the UTxO
+  -- later disappears, which is what classifies claim vs refund.
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -272,7 +273,7 @@ routeHopSchema =
           , hopFeeLovelace = "fee_lovelace"
           , hopLockedAt = "locked_at"
           , hopClaimedAt = "claimed_at"
-          , hopL1LastSeenSlot = "l1_last_seen_slot"
+          , hopHtlcLastSeenSlot = "htlc_last_seen_slot"
           }
     }
 

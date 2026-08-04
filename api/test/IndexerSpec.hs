@@ -53,7 +53,7 @@ setupLockedHop pool headId htlcTxHash = do
       , "addr_bridge"
       , "pending"
       , testPaymentHash
-      , 1000000
+      , 9999999999 -- far future: an observed spend classifies as a claim
       , 500000
       )
     ]

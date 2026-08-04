@@ -4,6 +4,7 @@ import Control.Concurrent.STM (atomically, isEmptyTChan, readTChan)
 import Data.Aeson (Value (..))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KM
+import Data.Int (Int64)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Vector qualified as Vector
@@ -37,7 +38,14 @@ testScriptAddress = case Htlc.htlcScriptAddress "Preview" of
 testPaymentHash :: Text
 testPaymentHash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 
--- | Create test invoice, route, and hops for a given head
+-- | Timeout slot far in the future on every network — spends detected
+-- while the clock is before this slot classify as claims.
+futureTimeout :: Int64
+futureTimeout = 9_999_999_999
+
+-- | Create test invoice, route, and hops for a given head. The timeout
+-- is far in the future so in-head spends read as claims; refund-path
+-- tests seed their own hops with a past timeout.
 setupTestPayment :: Pool -> Text -> Text -> Text -> IO ()
 setupTestPayment pool headId senderAddr receiverAddr = do
   now <- getCurrentTime
@@ -46,8 +54,8 @@ setupTestPayment pool headId senderAddr receiverAddr = do
   Db.insertPaymentRoute pool "route-1" "inv-1" senderAddr receiverAddr 50000000 "in_progress" (Aeson.toJSON ([] :: [Value])) 500000 "Preview"
   Db.insertRouteHops
     pool
-    [ ("hop-1", "route-1", 0, headId, "addr_bridge", senderAddr, "addr_bridge", "pending", testPaymentHash, 1000000, 500000)
-    , ("hop-2", "route-1", 1, headId, "addr_bridge", "addr_bridge", receiverAddr, "pending", testPaymentHash, 1000000, 500000)
+    [ ("hop-1", "route-1", 0, headId, "addr_bridge", senderAddr, "addr_bridge", "pending", testPaymentHash, futureTimeout, 500000)
+    , ("hop-2", "route-1", 1, headId, "addr_bridge", "addr_bridge", receiverAddr, "pending", testPaymentHash, futureTimeout, 500000)
     ]
 
 -- | Build an inline datum with a payment hash (Plutus JSON encoding)
@@ -326,19 +334,28 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       hop1.hopHtlcStatus `shouldBe` "claimed"
       hop1.hopClaimedAt `shouldSatisfy` (/= Nothing)
 
-    it "marks hop claimed when HTLC UTxO disappears via sender refund (L2 refund path)" $ \pool -> do
-      -- After the timeout passes the sender submits a Refund tx on L2.
-      -- From the watcher's perspective this is indistinguishable from a
-      -- receiver Claim — the HTLC UTxO simply disappears from the snapshot.
-      -- Both paths result in hopHtlcStatus = "claimed".
-      setupTestPayment pool "head-A" "addr_alice" "addr_bob"
+    it "classifies a spend after the timeout as refunded, not claimed" $ \pool -> do
+      -- After the timeout passes only the sender's Refund tx can spend
+      -- the HTLC (the validator's validity windows are disjoint around
+      -- the timeout). A spend observed while the clock is already past
+      -- the timeout must therefore be a refund — marking it claimed
+      -- would complete routes and pay invoices that actually failed.
       now <- getCurrentTime
-      Db.updateHopLocked pool "hop-1" "lock-tx-refund" now
-      -- Empty snapshot: UTxO was spent by a refund tx
-      runWatcher pool "head-A" testScriptHash []
-      hops <- Db.getRouteHops pool "route-1"
-      let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
-      hop1.hopHtlcStatus `shouldBe` "claimed"
+      let expiresAt = addUTCTime 3600 now
+      Db.insertInvoice pool "inv-r" "test-head" "addr_bob" testPaymentHash 1000000 Nothing "pending" expiresAt
+      Db.insertPaymentRoute pool "route-r" "inv-r" "addr_alice" "addr_bob" 1000000 "in_progress" (Aeson.toJSON ([] :: [Value])) 0 "Preview"
+      Db.insertRouteHops
+        pool
+        -- timeout slot 1_000_000 is long past on Preview
+        [("hop-r", "route-r", 0, "head-R", "addr_bridge", "addr_alice", "addr_bob", "pending", testPaymentHash, 1000000, 0)]
+      Db.updateHopLocked pool "hop-r" "lock-tx-refund" now
+      -- Empty snapshot: the HTLC UTxO was spent — necessarily by Refund
+      runWatcher pool "head-R" testScriptHash []
+      hops <- Db.getRouteHops pool "route-r"
+      map (.hopHtlcStatus) hops `shouldBe` ["refunded"]
+      -- The route must NOT be completed and the invoice NOT paid
+      mRoute <- Db.getPaymentRoute pool "route-r"
+      fmap (.routeStatus) mRoute `shouldBe` Just "in_progress"
 
     it "does not claim when locked HTLC UTxO is still present" $ \pool -> do
       setupTestPayment pool "head-A" "addr_alice" "addr_bob"
