@@ -161,7 +161,7 @@ export default function CreateInvoice() {
                 {selectedHeadId && routingHeadCount !== null && (
                   <span className="form-hint" style={{ color: routingHeadCount === 0 ? 'var(--error)' : 'var(--success)', marginTop: '0.35rem', display: 'block' }}>
                     {routingHeadCount === 0
-                      ? 'No other heads can route to this head yet — share a bridge participant with another head first.'
+                      ? 'No other heads can route to this head yet - share a bridge participant with another head first.'
                       : `${routingHeadCount} head${routingHeadCount === 1 ? '' : 's'} can route payments to this head.`}
                   </span>
                 )}
@@ -180,7 +180,7 @@ export default function CreateInvoice() {
               disabled={loading || result !== null}
             />
             <span className="form-hint">
-              Hash of your hydra-node's <code>--cardano-signing-key</code> verification key — your participant identity in the head.
+              Hash of your hydra-node's <code>--cardano-signing-key</code> verification key - your participant identity in the head.
               See <Link to="/setup" style={{ color: 'var(--accent)' }}>Setup guide → step 02</Link>.
             </span>
           </div>

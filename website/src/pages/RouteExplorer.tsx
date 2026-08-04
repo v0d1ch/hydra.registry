@@ -104,7 +104,7 @@ export default function RouteExplorer() {
             headId: explorer.headId,
             network: explorer.network,
             hasHtlc: explorer.htlcEnabled,
-            isUserHead: false,
+            isUserHead: explorer.registered,
             participants: participants.map(p => p.address),
             // Prefer the head-level L1-scan total; per-participant commit
             // amounts are rarely known (explorer members parsing).
@@ -114,7 +114,7 @@ export default function RouteExplorer() {
           })
           return
         }
-        // Explorer hasn't seen this head yet — fall back to the registered
+        // Explorer hasn't seen this head yet - fall back to the registered
         // view so a freshly-registered head shows up immediately.
         const reg = await getRegisteredHead(headIdFilter).catch(() => null)
         if (cancelled) return
@@ -264,7 +264,7 @@ export default function RouteExplorer() {
                 <>
                   {' '}
                   · {filteredGraph.edges.length === 0
-                    ? 'isolated (no neighbours yet — register a second head sharing a participant to see edges)'
+                    ? 'isolated (no neighbours yet - register a second head sharing a participant to see edges)'
                     : `${filteredGraph.nodes.length - 1} neighbour${filteredGraph.nodes.length === 2 ? '' : 's'} · ${filteredGraph.edges.length} edge${filteredGraph.edges.length === 1 ? '' : 's'}`}
                 </>
               )}
@@ -349,7 +349,7 @@ export default function RouteExplorer() {
             />
             <span className="form-hint">
               Hash of your hydra-node's <code>--cardano-signing-key</code> verification
-              key — your participant identity in the head. Routing matches this
+              key - your participant identity in the head. Routing matches this
               against head participants. Derive with:
               <pre className="code-block" style={{ marginTop: '0.4rem' }}>
                 cardano-cli address key-hash \{'\n'}

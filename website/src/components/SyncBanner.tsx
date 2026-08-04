@@ -25,7 +25,7 @@ export default function SyncBanner() {
       fontSize: '0.85rem',
       color: '#f0c040',
     }}>
-      Cardano node syncing — {syncProgress?.toFixed(2)}% complete. On-chain features (routes, HTLC transactions) will be available once sync reaches 100%.
+      Cardano node syncing - {syncProgress?.toFixed(2)}% complete. On-chain features (routes, HTLC transactions) will be available once sync reaches 100%.
     </div>
   )
 }

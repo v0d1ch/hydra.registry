@@ -25,7 +25,7 @@ utcTimeToSlot network utcTime = do
 -- | Convert an L1 slot number to a POSIX-time-in-milliseconds for the given
 -- network. Plutus script contexts represent @tx.validity_range@ as a
 -- @POSIXTime@ in milliseconds, so any field a script compares against the
--- validity range — like the HTLC validator's @datum.timeout@ — must be in
+-- validity range - like the HTLC validator's @datum.timeout@ - must be in
 -- the same unit.
 slotToPosixMs :: Text -> Int64 -> Maybe Int64
 slotToPosixMs network slot = do

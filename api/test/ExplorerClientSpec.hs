@@ -1,6 +1,6 @@
 module ExplorerClientSpec (spec) where
 
-import Data.Aeson (FromJSON, ToJSON, decode, encode, object, (.=))
+import Data.Aeson (encode, object, (.=))
 import Data.Aeson qualified as Aeson
 import Explorer.Client (ExplorerHeadEntry (..))
 import Test.Hspec

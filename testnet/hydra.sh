@@ -29,7 +29,7 @@ LOG_FILE="$DATA_DIR/hydra.log"
 mkdir -p "$DATA_DIR"
 [ -f "$LOG_FILE" ] && mv "$LOG_FILE" "${LOG_FILE}.prev" 2>/dev/null || true
 exec > >(tee "$LOG_FILE") 2>&1
-echo "==> hydra.sh started $(date -u +%Y-%m-%dT%H:%M:%SZ) — log: $LOG_FILE"
+echo "==> hydra.sh started $(date -u +%Y-%m-%dT%H:%M:%SZ) - log: $LOG_FILE"
 
 # ── Check prerequisites ──
 for cmd in cardano-cli hydra-node; do
@@ -152,7 +152,7 @@ cleanup() {
   # A second ctrl-c during cleanup short-circuits the (slow) graceful
   # close-and-fanout and hard-kills the nodes immediately.
   trap hard_kill INT
-  log "Closing heads gracefully — press Ctrl-C again to skip and hard-kill."
+  log "Closing heads gracefully - press Ctrl-C again to skip and hard-kill."
   # Hydra-nodes must still be alive for Close/Fanout to reach them.
   close_and_fanout
   log "Shutting down hydra-nodes..."
@@ -205,7 +205,7 @@ preflight_cleanup() {
       sleep 1
       waited=$((waited + 1))
     done
-    warn "Preflight: ports still busy after 30s — startup may fail"
+    warn "Preflight: ports still busy after 30s - startup may fail"
   fi
 }
 
@@ -343,7 +343,7 @@ wipe_persistence() {
 }
 wipe_persistence
 
-# Each hydra-node has the same shape — only the keys, ports, and
+# Each hydra-node has the same shape - only the keys, ports, and
 # persistence dir differ between the four invocations. start_node packs
 # that up so the launches below stay readable.
 #
@@ -405,7 +405,7 @@ echo ""
 # starts. Set HYDRA_SKIP_INIT=1 to opt out (e.g. when manually testing
 # initial-state behaviour).
 if [ "${HYDRA_SKIP_INIT:-0}" = "1" ]; then
-  warn "HYDRA_SKIP_INIT=1 set — heads will stay Idle until you run ./testnet/open-heads.sh"
+  warn "HYDRA_SKIP_INIT=1 set - heads will stay Idle until you run ./testnet/open-heads.sh"
 else
   log "Waiting for all 4 hydra-node APIs to come online..."
   for port in $ALICE_API_PORT $IDA_H1_API_PORT $BOB_API_PORT $IDA_H2_API_PORT; do
@@ -424,7 +424,7 @@ else
       echo "    port $p → $hid"
     done
   else
-    warn "open-heads.sh exited non-zero — heads may not be Open. Check the log above."
+    warn "open-heads.sh exited non-zero - heads may not be Open. Check the log above."
   fi
 fi
 
@@ -432,7 +432,7 @@ echo ""
 echo -e "  ${YELLOW}Next steps:${NC}"
 echo -e "  1. Start the registry: ./dev.sh"
 echo -e "  2. Register both heads at http://localhost:5173/register"
-echo -e "     (any one port from each head — e.g. $ALICE_API_PORT for Head 1, $BOB_API_PORT for Head 2)"
+echo -e "     (any one port from each head - e.g. $ALICE_API_PORT for Head 1, $BOB_API_PORT for Head 2)"
 echo -e "  3. Test the relay flow on http://localhost:5173"
 echo ""
 echo -e "  Press Ctrl+C to gracefully Close + Fanout heads, then stop hydra-nodes."

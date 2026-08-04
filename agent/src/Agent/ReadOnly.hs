@@ -8,7 +8,7 @@ import Data.ByteString.Lazy qualified as BSL
 import Network.WebSockets qualified as WS
 
 -- | A WebSocket connection that exposes only @receive@.
--- There is no @send@ or @close@ function on this type —
+-- There is no @send@ or @close@ function on this type -
 -- the type system enforces that the CLI agent is read-only.
 newtype ReadOnlyConn = ReadOnlyConn WS.Connection
 

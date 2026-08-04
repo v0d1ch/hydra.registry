@@ -40,7 +40,7 @@ data RouteEvent
       , hopIndex :: Int
       , at :: UTCTime
       }
-  | -- | A locked hop's HTLC was spent after its timeout — the locker
+  | -- | A locked hop's HTLC was spent after its timeout - the locker
     --   took the refund path. Observed by the L1 scan after a head
     --   closed with the hop in flight.
     HopRefunded
@@ -71,7 +71,7 @@ routeEventRouteId = \case
   PreimageRevealed{routeId} -> routeId
   RouteCompleted{routeId} -> routeId
 
--- | Constructor name as a short tag — used as the SSE
+-- | Constructor name as a short tag - used as the SSE
 -- @event:@ field name so a frontend can dispatch on it without
 -- parsing the JSON body.
 routeEventTag :: RouteEvent -> Text
@@ -85,7 +85,7 @@ routeEventTag = \case
 -- | Fan-out broadcast channel. Every 'subscribe' returns an
 -- independent reader; events 'publish'ed after a subscriber attaches
 -- are visible to that subscriber. Events published before any
--- subscriber attached are dropped — there is no replay.
+-- subscriber attached are dropped - there is no replay.
 newtype EventBus = EventBus
   { busChan :: TChan RouteEvent
   }

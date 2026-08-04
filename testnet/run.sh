@@ -78,7 +78,7 @@ preflight_cleanup() {
       waited=$((waited + 1))
     done
   fi
-  # Stale unix socket from a hard kill — cardano-node refuses to bind if it
+  # Stale unix socket from a hard kill - cardano-node refuses to bind if it
   # still exists on disk.
   if [ -S "$NODE_SOCKET" ]; then
     log "Preflight: removing stale socket $NODE_SOCKET"
@@ -156,7 +156,7 @@ if [ ! -d "$NODE_DB/db/immutable" ] || [ -z "$(ls -A "$NODE_DB/db/immutable" 2>/
     --download-dir "$NODE_DB" \
     --include-ancillary \
     --json
-  log "Mithril snapshot restored (with ledger state — node will skip replay)."
+  log "Mithril snapshot restored (with ledger state - node will skip replay)."
 else
   log "Node DB already exists, skipping Mithril bootstrap."
 fi
@@ -172,7 +172,7 @@ run_with_prefix "node" "$BLUE" \
     --socket-path "$NODE_SOCKET" \
     --config "$CONFIGS_DIR/config.json"
 
-# Wait for socket — chunk validation can take a long time on first run
+# Wait for socket - chunk validation can take a long time on first run
 log "Waiting for cardano-node socket..."
 WAITED=0
 while [ ! -S "$NODE_SOCKET" ]; do

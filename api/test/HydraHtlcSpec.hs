@@ -124,7 +124,7 @@ spec = do
         Left e -> expectationFailure ("expected Right, got Left " <> show e)
 
     it "round-trips: decoding the produced address recovers header+scriptHash" $ do
-      let Right addr = htlcScriptAddress "Preview"
+      let addr = either (error . show) id (htlcScriptAddress "Preview")
       case Bech32.decodeLenient addr of
         Left e -> expectationFailure ("bech32 decode failed: " <> show e)
         Right (_, dp) -> case Bech32.dataPartToBytes dp of
@@ -153,7 +153,7 @@ decodeHex t = case Base16.decode (TE.encodeUtf8 t) of
 
 encodeBech32 :: Text -> ByteString -> Text
 encodeBech32 hrpText bs =
-  let Right hrp = Bech32.humanReadablePartFromText hrpText
+  let hrp = either (error . show) id (Bech32.humanReadablePartFromText hrpText)
    in Bech32.encodeLenient hrp (Bech32.dataPartFromBytes bs)
 
 isLeft :: Either a b -> Bool

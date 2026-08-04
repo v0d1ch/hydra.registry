@@ -1,4 +1,4 @@
-# Hydra Registry — Architecture
+# Hydra Registry - Architecture
 
 > This document is the source of truth for how the Hydra Registry payment-relay system is put together. Update it whenever significant structure, modules, tables, threads, or routes change. Smaller fixes do not need an entry here; cross-cutting refactors do.
 
@@ -6,7 +6,7 @@
 
 ## 1. What this system is
 
-The Hydra Registry is a **cross-Hydra-head payment relay** for Cardano. It indexes L2 UTxO state from a set of registered Hydra nodes, exposes that state through a Blockfrost-compatible HTTP API for wallets, and — the headline feature — routes payments across multiple heads via an HTLC (Hash Time-Locked Contract) cascade so funds locked into one head can be claimed in another without ever leaving L2.
+The Hydra Registry is a **cross-Hydra-head payment relay** for Cardano. It indexes L2 UTxO state from a set of registered Hydra nodes, exposes that state through a Blockfrost-compatible HTTP API for wallets, and - the headline feature - routes payments across multiple heads via an HTLC (Hash Time-Locked Contract) cascade so funds locked into one head can be claimed in another without ever leaving L2.
 
 The hops are stitched together by **shared participants**: if Alice runs a node in head A and Bob runs a node in head B, and both share a third participant (Ida, the bridge), then a payment from Alice to Bob locks an HTLC in A redeemable by Ida, and Ida re-locks an equivalent HTLC in B redeemable by Bob, both pinned to the same payment hash. Bob reveals the preimage to claim in B, Ida sees the preimage on chain (technically: in the L2 snapshot) and uses it to claim in A.
 
@@ -28,7 +28,7 @@ Plus a `testnet/` harness for running cardano-node + multiple hydra-nodes locall
 graph TB
   subgraph "Browser"
     UI[React SPA]
-    WALLET[Cardano wallets — integration TODO]
+    WALLET[Cardano wallets - integration TODO]
   end
 
   subgraph "Registry process"
@@ -80,7 +80,7 @@ The box labelled *Registry process* is one binary, one OS process. All threads s
 
 ```
 hydra.registry/
-├── agent/                     # hydra-registry-agent — standalone cabal package.
+├── agent/                     # hydra-registry-agent - standalone cabal package.
 │   │                          # Hackage deps only (no CHaP, no Cardano tree), so it
 │   │                          # builds with stock GHC and ships via the flake:
 │   │                          #   nix run github:v0d1ch/hydra.registry#hydra-registry-agent
@@ -158,8 +158,10 @@ hydra.registry/
 - **WebSockets:** `Network.WebSockets` for hydra-node connections
 - **Cardano:** `hydra-cardano-api` / `cardano-api` (Conway era), built from the
   hydra master rev pinned in `api/cabal.project` (`source-repository-package`)
-  against CHaP — never from a local checkout
+  against CHaP - never from a local checkout
 - **Logging:** Aeson-encoded JSON to stdout
+- **Warnings:** both packages build with `-Wall -Werror` - new warnings are
+  build failures, fix them, don't ship them
 - **Build:** Cabal, no Stack; `api/cabal.project` mirrors hydra's own
   index-states, `allow-newer` and plutus constraints so the shared
   `~/.cabal/store` is reused between the two projects
@@ -205,7 +207,7 @@ graph LR
 
 The order is deliberate; each step depends on the state set up by the previous one. Reference: `api/app/Main.hs`.
 
-1. **Load config** — `HYDRA_DB_CONN_STR`, ports, `HYDRA_HTLC_SCRIPT_HASH`, `HYDRA_HTLC_SCRIPT_CBOR`, explorer URL/poll interval, `HYDRA_DEFAULT_NETWORK` (network label for registered heads the explorer hasn't indexed yet), static dir.
+1. **Load config** - `HYDRA_DB_CONN_STR`, ports, `HYDRA_HTLC_SCRIPT_HASH`, `HYDRA_HTLC_SCRIPT_CBOR`, explorer URL/poll interval, `HYDRA_DEFAULT_NETWORK` (network label for registered heads the explorer hasn't indexed yet), static dir.
 2. **Open Hasql pool**, run `Db.initDb` (idempotent `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE … ADD COLUMN IF NOT EXISTS`). Schema migrations live entirely in `Db.initDb`.
 3. **Allocate shared state:**
    - `eventQueue :: TQueue HydraEvent`
@@ -214,7 +216,7 @@ The order is deliberate; each step depends on the state set up by the previous o
    - rate-limit map, address cache, metrics handles
 4. **Spawn indexer thread** (`Indexer.startIndexer`). Reads `eventQueue` forever; on each event updates DB rows for the head, runs `HtlcWatcher.processUtxoSnapshot` if the HTLC script hash is configured, and bumps `chainSlotVar` from any `currentSlot` carried in a Greetings event.
 5. **Reconnect to all registered heads** (`Indexer.reconnectAllHeads`). For each row in `heads`, open a WebSocket to `host:port` and push parsed events into `eventQueue`.
-6. **Spawn explorer sidecar** (`Explorer.Sidecar.runSidecar`). Polls `hydra-explorer` every N seconds, syncs `explorer_heads` and `head_participants`, runs the L1 scans through the local node sockets — `L1.HeadScan` (participants + TVL from head UTxOs) and `L1.HtlcScan` (post-close HTLC settlements at the script address: presence stamps `route_hops.htlc_last_seen_slot`, disappearance classifies claim vs refund by spend-window timing against the hop timeout and publishes `HopClaimed`/`HopRefunded`; a failed scan is skipped, never treated as an empty UTxO set). The L2 watcher applies the same classification to in-head spends (`Relay.HtlcWatcher.classifySettlement`, wall-clock → slot via `Relay.Slot`), stamping the same column on every snapshot sighting. Then the sidecar atomically rebuilds the relay graph into `relayGraphVar`. The graph rebuild is independent of the explorer poll — sidecar swallows poll failures so the graph stays current even when explorer is unreachable.
+6. **Spawn explorer sidecar** (`Explorer.Sidecar.runSidecar`). Polls `hydra-explorer` every N seconds, syncs `explorer_heads` and `head_participants`, runs the L1 scans through the local node sockets - `L1.HeadScan` (participants + TVL from head UTxOs) and `L1.HtlcScan` (post-close HTLC settlements at the script address: presence stamps `route_hops.htlc_last_seen_slot`, disappearance classifies claim vs refund by spend-window timing against the hop timeout and publishes `HopClaimed`/`HopRefunded`; a failed scan is skipped, never treated as an empty UTxO set). The L2 watcher applies the same classification to in-head spends (`Relay.HtlcWatcher.classifySettlement`, wall-clock → slot via `Relay.Slot`), stamping the same column on every snapshot sighting. Then the sidecar atomically rebuilds the relay graph into `relayGraphVar`. The graph rebuild is independent of the explorer poll - sidecar swallows poll failures so the graph stays current even when explorer is unreachable.
 7. **Spawn expiry sweep** (`Relay.ExpirySweep.runSweep`, every 60 s).
 8. **Spawn rate-limit cleanup** (every 60 s).
 9. **Build `AppEnv`** bundling all the above.
@@ -328,7 +330,7 @@ erDiagram
   }
 ```
 
-Schema and column declarations live in `api/src/Db/Schema.hs`; CRUD in `api/src/Db.hs`. `explorer_heads` deliberately has **no FK** to `heads` — the explorer indexes every Hydra head on chain, regardless of whether anyone has registered it with us.
+Schema and column declarations live in `api/src/Db/Schema.hs`; CRUD in `api/src/Db.hs`. `explorer_heads` deliberately has **no FK** to `heads` - the explorer indexes every Hydra head on chain, regardless of whether anyone has registered it with us.
 
 ### 4.6 API surface
 
@@ -344,7 +346,7 @@ Servant type in `api/src/Api.hs:80`. Routes group thematically:
 | Routing & payments | `POST /api/v1/relay/routes`, `POST …/{id}/execute`, `GET /api/v1/relay/payments/{id}`, `POST /api/v1/relay/preimage/{hash}` | preimage broadcast unblocks bridge claims |
 | HTLC blueprints | `GET /api/v1/htlc/validator`, `POST /api/v1/relay/payments/{routeId}/hops/{i}/{lock,claim,refund}-tx` | returns CBOR + slot bounds; **caller signs and submits** |
 | Server-built tx (Conway envelope) | `POST /api/v1/relay/payments/{r}/hops/{i}/{lock,claim,refund}-tx-cbor`, `POST /api/v1/heads/{id}/publish-ref-script-tx-cbor` | server fetches head's `/protocol-parameters`, picks a wallet UTxO + collateral from the indexed snapshot, builds the tx natively in-process via `hydra-cardano-api` (`Tx.Builder`), returns Conway envelope JSON for the user to sign **offline** with their own keys and submit to their **own** hydra-node's `POST /transaction`; the registry learns the outcome from the agent event stream |
-| Agent push | `POST /api/v1/agent/register`, `POST /api/v1/agent/events`, `PUT /api/v1/agent/heads/{id}/protocol-parameters` | one-way telemetry from operator machines; identity is the Bearer per-agent secret alone (registry stores only its SHA-256). The self-reported `X-Agent-Binary-Hash` is recorded as fleet telemetry — never an access-control input, since a hostile binary could report anything |
+| Agent push | `POST /api/v1/agent/register`, `POST /api/v1/agent/events`, `PUT /api/v1/agent/heads/{id}/protocol-parameters` | one-way telemetry from operator machines; identity is the Bearer per-agent secret alone (registry stores only its SHA-256). The self-reported `X-Agent-Binary-Hash` is recorded as fleet telemetry - never an access-control input, since a hostile binary could report anything |
 | Live state | `GET /api/v1/relay/payments/{r}/events` (SSE), `GET /api/v1/relay/participants/{pkh}/routes` | SSE pushes lock/claim/preimage/completion events; participant routes feed shows roles + computed eligible actions per hop |
 | Static files | catch-all `Raw` | serves `website/dist/` |
 
@@ -407,7 +409,7 @@ Important properties:
 
 The watcher is invoked from `Indexer.processEvent` on every Greetings/SnapshotConfirmed event. It diffs the new UTxO set against the previous one and:
 
-- A **new** UTxO at the HTLC script address whose datum's `payment_hash` matches a `route_hops.secret_hash` → mark that hop `locked`, record `htlc_tx_hash`. Address comparison is **bech32-equality against the script address derived from the configured script hash for every supported network** (`htlcScriptAddresses`), not a substring match against hex — bech32 is base32 so the hex hash never appears literally.
+- A **new** UTxO at the HTLC script address whose datum's `payment_hash` matches a `route_hops.secret_hash` → mark that hop `locked`, record `htlc_tx_hash`. Address comparison is **bech32-equality against the script address derived from the configured script hash for every supported network** (`htlcScriptAddresses`), not a substring match against hex - bech32 is base32 so the hex hash never appears literally.
 - A **disappeared** HTLC UTxO whose tx ref matches a previously-locked hop → mark `claimed`. The watcher doesn't try to extract the preimage from the redeemer; the API receives it via `POST /relay/preimage/{hash}` and propagates.
 
 `Hydra.Client.parseHydraMessage` for `SnapshotConfirmed` merges `snapshot.utxo` ∪ `snapshot.utxoToCommit` so the indexer sees an incremental commit's deposit on the *first* snapshot that incorporates it, instead of waiting for a follow-up snapshot.
@@ -479,9 +481,9 @@ graph LR
 
 Three scripts orchestrate a full local Cardano + Hydra setup:
 
-1. `testnet/run.sh <network>` — boots `cardano-node` for `preview` or `preprod`, restoring from a Mithril snapshot to skip multi-day replay.
-2. `testnet/hydra.sh <network>` — generates per-participant keys, launches **four hydra-nodes forming two heads** (Alice+Ida and Bob+Ida; Ida is the shared participant / bridge), tees logs.
-3. `testnet/open-heads.sh <network>` — opens both heads and (optionally) commits funds via incremental commit.
+1. `testnet/run.sh <network>` - boots `cardano-node` for `preview` or `preprod`, restoring from a Mithril snapshot to skip multi-day replay.
+2. `testnet/hydra.sh <network>` - generates per-participant keys, launches **four hydra-nodes forming two heads** (Alice+Ida and Bob+Ida; Ida is the shared participant / bridge), tees logs.
+3. `testnet/open-heads.sh <network>` - opens both heads and (optionally) commits funds via incremental commit.
 
 State per network lives under `testnet/data/{preview,preprod}/`: protocol params, genesis, per-actor keys, hydra logs.
 
@@ -524,7 +526,7 @@ working:
 
 - **One glibc.** The flake's `nixpkgs` follows `hydra/nixpkgs`, and any
   library that gets **linked into the Haskell build** (libpq!) must come
-  from `nixpkgs-2411` (glibc 2.40) — the generation the haskell.nix GHC
+  from `nixpkgs-2411` (glibc 2.40) - the generation the haskell.nix GHC
   was built against. Mixing generations fails at build time with
   ``version `GLIBC_2.42' not found`` when hsc2hs probe binaries load the
   library.
@@ -538,7 +540,7 @@ working:
   baked-in library paths survive environment changes; evict the unit dir
   plus its `package.db/*.conf` and `ghc-pkg recache` to force rebuild.
 
-Shell and source packages are pinned to the **same hydra master rev** —
+Shell and source packages are pinned to the **same hydra master rev** -
 no local hydra checkout is involved anywhere, by policy. To bump hydra:
 `nix flake update hydra`, copy the new rev into the
 `source-repository-package` stanza, and re-mirror index-states and
@@ -550,8 +552,8 @@ constraints if hydra's own `cabal.project` changed them.
 
 `.github/workflows/ci.yml`, two jobs:
 
-- **test** — `ubuntu-latest`, Postgres 16 service, Nix install, cabal cache, `cabal build all` + `cabal test` against the service DB.
-- **frontend** — Node 22, `npm ci`, `tsc -b`, `vite build`.
+- **test** - `ubuntu-latest`, Postgres 16 service, Nix install, cabal cache, `cabal build all` + `cabal test` against the service DB.
+- **frontend** - Node 22, `npm ci`, `tsc -b`, `vite build`.
 
 ---
 
@@ -563,7 +565,7 @@ constraints if hydra's own `cabal.project` changed them.
 - **TDD:** new behaviour gets a failing test first, then implementation.
 - **Routing identity:** the registry routes by Cardano **key hash** (= 28-byte hash of the participant's `--cardano-signing-key`, also called `OnChainId` in hydra-node), not by bech32 wallet address. Receivers pick where claimed funds land at claim-tx build time.
 - **Slot vs POSIX-ms:** anything compared against `tx.validity_range` inside a Plutus script is POSIX-ms; anything compared against `tx_validity_lower/upper_bound` at the Cardano-CLI level is slot. The `route_hops.timeout_slot` column is a slot; `datum.timeout` in the HTLC datum is POSIX-ms. Don't mix them.
-- **`localhost` resolves to IPv6 first** on Linux glibc, but `hydra-node` binds IPv4 only. `Hydra.Client.normalizeHost` rewrites `"localhost"` → `"127.0.0.1"` before any WS connect; non-loopback hostnames are passed through. If you need to register a hydra-node by hostname (not IP) and it doesn't have an A-record, document it explicitly — there's no fallback past the rewrite today.
+- **`localhost` resolves to IPv6 first** on Linux glibc, but `hydra-node` binds IPv4 only. `Hydra.Client.normalizeHost` rewrites `"localhost"` → `"127.0.0.1"` before any WS connect; non-loopback hostnames are passed through. If you need to register a hydra-node by hostname (not IP) and it doesn't have an A-record, document it explicitly - there's no fallback past the rewrite today.
 
 ---
 
@@ -571,10 +573,10 @@ constraints if hydra's own `cabal.project` changed them.
 
 These are tracked outside this doc (in conversation tasks and memory). At a glance:
 
-- **Bridge-operator automation** — auto-relay HTLCs for a third-party bridge operator (planned, not built). Must run operator-side and submit only to the operator's own node: the registry-side agent is deliberately one-way and must stay that way.
-- **L1 HTLC preimage recovery** — the L1 scan classifies settlements but polling cannot see redeemers; recovering the preimage from an L1 claim (restoring cross-closure claim continuity for upstream bridges) needs a chain-sync follower on the same node sockets.
-- **Smoother manual UX** — eventually folding tools/ into a proper signed-flow inside the SPA.
-- **Per-head shared HTLC reference script** — schema + endpoint landed; clients still need to actually publish a UTxO and POST it.
+- **Bridge-operator automation** - auto-relay HTLCs for a third-party bridge operator (planned, not built). Must run operator-side and submit only to the operator's own node: the registry-side agent is deliberately one-way and must stay that way.
+- **L1 HTLC preimage recovery** - the L1 scan classifies settlements but polling cannot see redeemers; recovering the preimage from an L1 claim (restoring cross-closure claim continuity for upstream bridges) needs a chain-sync follower on the same node sockets.
+- **Smoother manual UX** - eventually folding tools/ into a proper signed-flow inside the SPA.
+- **Per-head shared HTLC reference script** - schema + endpoint landed; clients still need to actually publish a UTxO and POST it.
 
 ---
 

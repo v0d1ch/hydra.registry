@@ -23,7 +23,7 @@ export default function Setup() {
       >
         <h1 className="section-title">Setup Guide</h1>
         <p className="register-desc">
-          Payments on Hydra use Hash Time-Lock Contracts (HTLCs) — trustless scripts that let a sender
+          Payments on Hydra use Hash Time-Lock Contracts (HTLCs) - trustless scripts that let a sender
           lock funds for a receiver, who claims them by revealing a secret. If the receiver doesn't
           claim before the timeout, the sender gets a refund. This guide covers what you need to
           participate as a sender, receiver, or bridge operator.
@@ -60,7 +60,7 @@ export default function Setup() {
               <div className="next-step">
                 <span className="next-num" style={{ background: 'rgba(0,212,170,0.15)', color: 'var(--success)' }}>🔑</span>
                 <div>
-                  <p><strong>Claiming (receiver side).</strong> The final receiver claims the HTLC by submitting a transaction that includes the secret preimage. The validator checks that <code>sha256(preimage) == secretHash</code> and that the receiver's signature is present. Once claimed, the preimage is visible in the head's snapshot — bridge operators use it to claim their own HTLCs back up the chain.</p>
+                  <p><strong>Claiming (receiver side).</strong> The final receiver claims the HTLC by submitting a transaction that includes the secret preimage. The validator checks that <code>sha256(preimage) == secretHash</code> and that the receiver's signature is present. Once claimed, the preimage is visible in the head's snapshot - bridge operators use it to claim their own HTLCs back up the chain.</p>
                 </div>
               </div>
               <div className="next-step">
@@ -90,12 +90,12 @@ export default function Setup() {
           </div>
           <p className="register-desc">
             Each participant runs their own <code>hydra-node</code> connected to a shared Hydra Head.
-            Transactions — including HTLC locks and claims — are submitted to the head and confirmed
+            Transactions - including HTLC locks and claims - are submitted to the head and confirmed
             instantly by all participants' nodes via the multi-party snapshot protocol.
           </p>
           <p className="register-desc">
             Your node watches the head's UTxO set. When a lock transaction addressed to your key
-            appears in a snapshot, your node has already confirmed it — no on-chain finality wait.
+            appears in a snapshot, your node has already confirmed it - no on-chain finality wait.
           </p>
           <p className="register-desc">
             Follow the{' '}
@@ -123,7 +123,7 @@ export default function Setup() {
           </div>
           <p className="register-desc">
             Your <strong>key hash</strong> is a 28-byte hex string derived from your Cardano payment
-            verification key. It is the identity that HTLC contracts are addressed to — both the
+            verification key. It is the identity that HTLC contracts are addressed to - both the
             lock transaction (which names you as receiver) and your claim transaction reference it.
           </p>
           <p className="register-desc">
@@ -135,7 +135,7 @@ export default function Setup() {
   --payment-verification-key-file <your-actor>.vk`}</pre>
           <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             Share this with anyone who needs to send you a payment or route through you. It is safe
-            to publish — it's a hash, not a secret key.
+            to publish - it's a hash, not a secret key.
           </p>
           <div className="register-result" style={{ marginTop: '1rem', background: 'rgba(255,255,255,0.03)' }}>
             <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
@@ -164,12 +164,12 @@ export default function Setup() {
             in and what funds you hold. The <code>hydra-registry-agent</code> runs on the same machine
             as your hydra-node: it reads events from the node's <em>local</em> WebSocket and pushes
             them to the registry, along with your node's protocol parameters. It is strictly{' '}
-            <strong>one-way</strong> — the agent physically cannot send anything to your node, and
+            <strong>one-way</strong> - the agent physically cannot send anything to your node, and
             you always submit your own transactions yourself.
           </p>
           <p className="register-desc">
             Every connection is <strong>outbound from your machine</strong>. Your hydra-node's API is
-            unauthenticated — anyone who can reach it controls the head — so it must never be exposed
+            unauthenticated - anyone who can reach it controls the head - so it must never be exposed
             to the internet, and with the agent it never has to be. The agent registers itself on first
             run (credentials land in its state file) and your head appears in the registry as soon as
             it is Open.
@@ -207,11 +207,11 @@ export default function Setup() {
               </a>
             </div>
             <p className="register-desc" style={{ marginBottom: '0.75rem' }}>
-              Each release ships a <code>.sha256</code> file next to the binary — verify before
+              Each release ships a <code>.sha256</code> file next to the binary - verify before
               running (<code>sha256sum -c</code>). The agent also reports its own binary hash to
               the registry, which records it for fleet visibility.
             </p>
-            <pre className="code-block">{`# with nix (recommended — you already use it for hydra-node)
+            <pre className="code-block">{`# with nix (recommended - you already use it for hydra-node)
 # (vanilla nix: add --extra-experimental-features 'nix-command flakes')
 nix run github:v0d1ch/hydra.registry#hydra-registry-agent
 
@@ -231,7 +231,7 @@ docker run -d --name hydra-registry-agent \\
   -e HYDRA_REGISTRY_URL=${window.location.origin} \\
   ghcr.io/v0d1ch/hydra-registry-agent:latest
 
-# or build from source — plain GHC + cabal, no Cardano dependencies
+# or build from source - plain GHC + cabal, no Cardano dependencies
 git clone https://github.com/v0d1ch/hydra.registry
 cd hydra.registry/agent && cabal build`}</pre>
             <h3 style={{ marginTop: '1rem' }}>Run it</h3>
@@ -241,7 +241,7 @@ export HYDRA_AGENT_STATE_FILE=$HOME/.hydra-agent-state.json
 
 nix run github:v0d1ch/hydra.registry#hydra-registry-agent   # or ./hydra-registry-agent-x86_64-linux`}</pre>
             <p className="register-desc" style={{ marginTop: '0.75rem' }}>
-              Keep the agent running — it is how the registry sees your head's state. If it stops,
+              Keep the agent running - it is how the registry sees your head's state. If it stops,
               your balances and payment progress shown on this site go stale until it reconnects.
             </p>
           </div>
@@ -269,13 +269,13 @@ nix run github:v0d1ch/hydra.registry#hydra-registry-agent   # or ./hydra-registr
             Every HTLC lock and claim transaction references the same Plutus validator. Rather than
             embedding the full script in every transaction, it lives as a single
             <strong> reference script UTxO inside the head</strong> that all transactions point to.
-            This is done once per head by whoever operates it — two ways to get it in there.
+            This is done once per head by whoever operates it - two ways to get it in there.
           </p>
 
           <div className="setup-steps">
-            <h3>Path A — deposit it with your funds (recommended)</h3>
+            <h3>Path A - deposit it with your funds (recommended)</h3>
             <p className="register-desc" style={{ marginTop: '0.75rem' }}>
-              Create the script-carrying UTxO on <strong>L1</strong> and deposit it into the head —
+              Create the script-carrying UTxO on <strong>L1</strong> and deposit it into the head -
               the script rides in with your funding, no in-head transaction needed and no
               requirement to already hold funds inside the head. Costs ~6 ADA min-ADA, parked at
               your own address and returned at fanout.
@@ -309,17 +309,17 @@ cardano-cli conway transaction sign --tx-file deposit-tx.json \\
 curl -X POST http://127.0.0.1:4001/cardano-transaction \\
   -H 'Content-Type: application/json' --data @deposit-tx.signed
 
-# 5. After the deposit is incremented into the head (deposit period —
+# 5. After the deposit is incremented into the head (deposit period -
 #    your agent's snapshots will show the UTxO arrive; deposited UTxOs
 #    keep their outref), register it:
 curl -X POST ${apiBase}/api/v1/heads/{headId}/ref-script \\
   -H 'Content-Type: application/json' -d '{"utxo": "'$REF_TXID'#0"}'`}</pre>
 
-            <h3 style={{ marginTop: '2rem' }}>Path B — publish from inside the head</h3>
+            <h3 style={{ marginTop: '2rem' }}>Path B - publish from inside the head</h3>
             <p className="register-desc" style={{ marginTop: '0.75rem' }}>
               For heads where you already hold funds <strong>inside</strong>: build an in-head
               transaction that creates the reference UTxO. You need the address you funded the
-              head from — the transaction is built by the registry, signed locally with that
+              head from - the transaction is built by the registry, signed locally with that
               address's key, and submitted to your own node.
             </p>
             <div className="next-steps">
@@ -333,7 +333,7 @@ curl -X POST ${apiBase}/api/v1/heads/{headId}/ref-script \\
                     to your head, or query the registry (replace the port if you configured a different one):
                   </p>
                   <pre className="code-block">{`curl ${apiBase}/api/v1/heads/{headId}/addresses`}</pre>
-                  <p>Pick the address you control — the one whose <code>.sk</code> key file you have.</p>
+                  <p>Pick the address you control - the one whose <code>.sk</code> key file you have.</p>
                 </div>
               </div>
               <div className="next-step">
@@ -344,7 +344,7 @@ curl -X POST ${apiBase}/api/v1/heads/{headId}/ref-script \\
   -H 'Content-Type: application/json' \\
   -d '{"walletAddress": "addr_test1..."}' \\
   > tx.raw`}</pre>
-                  <p>The response is already a cardano-cli text envelope. Keep the file — it also contains a <code>txId</code> field you need in step 5.</p>
+                  <p>The response is already a cardano-cli text envelope. Keep the file - it also contains a <code>txId</code> field you need in step 5.</p>
                 </div>
               </div>
               <div className="next-step">
@@ -360,7 +360,7 @@ curl -X POST ${apiBase}/api/v1/heads/{headId}/ref-script \\
               <div className="next-step">
                 <span className="next-num">4</span>
                 <div>
-                  <p><strong>Submit the signed transaction to your own hydra-node.</strong> The registry never submits transactions — only you talk to your node. This creates the reference script UTxO inside the head's L2 state:</p>
+                  <p><strong>Submit the signed transaction to your own hydra-node.</strong> The registry never submits transactions - only you talk to your node. This creates the reference script UTxO inside the head's L2 state:</p>
                   <pre className="code-block">{`curl -X POST http://127.0.0.1:4001/transaction \\
   -H 'Content-Type: application/json' \\
   --data @tx.signed`}</pre>

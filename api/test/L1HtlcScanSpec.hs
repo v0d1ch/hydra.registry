@@ -29,7 +29,7 @@ spec = describe "L1 HTLC scan" $ do
   describe "classifySettlement (pure)" $ do
     -- Spend happened in (lastSeen, tip]. Claim requires validity upper
     -- strictly before timeout; refund requires validity lower strictly
-    -- after timeout — the windows are disjoint around the timeout.
+    -- after timeout - the windows are disjoint around the timeout.
     it "classifies as claimed when the whole window is before the timeout" $
       classifySettlement 800 500 1000 `shouldBe` SettledClaimed
 
@@ -86,7 +86,7 @@ spec = describe "L1 HTLC scan" $ do
       seedRoute pool
       bus <- Bus.newEventBus
       let logger = newLogger Logging.Error
-      -- Observation matches hop 1's receiver — hop 0 must be untouched.
+      -- Observation matches hop 1's receiver - hop 0 must be untouched.
       applyHtlcScan logger pool bus 500 [HtlcObservation secretHash bridgePkh receiverPkh]
       h0 <- hopByIndex pool 0
       h1 <- hopByIndex pool 1

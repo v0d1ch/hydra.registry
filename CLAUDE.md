@@ -4,7 +4,7 @@ These rules apply in every session. They override default behaviour.
 
 ## Workflow
 
-**TDD — tests first, always.**
+**TDD - tests first, always.**
 Write the test file with expected behaviour, verify it compiles but fails, then write the implementation to make it pass. Never add tests as an afterthought.
 
 **No git operations.**
@@ -30,7 +30,7 @@ new/removed modules, tables, threads, top-level routes, external services, env v
 ## Security
 
 **Never handle signing keys.**
-The server and SPA must never see, store, ask for, suggest paths to, or reference the user's Cardano signing keys (`.sk` files). The server's job ends at producing an unsigned CBOR for the user to download and sign locally. Use the placeholder `<your-address>.sk` in any CLI commands shown in the UI — never a user-supplied path, never ask where the key lives.
+The server and SPA must never see, store, ask for, suggest paths to, or reference the user's Cardano signing keys (`.sk` files). The server's job ends at producing an unsigned CBOR for the user to download and sign locally. Use the placeholder `<your-address>.sk` in any CLI commands shown in the UI - never a user-supplied path, never ask where the key lives.
 
 ## Hydra Node Questions
 

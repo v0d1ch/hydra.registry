@@ -123,10 +123,10 @@ function TxPanel({ action, routeId, secretHash, onDone }: TxPanelProps) {
           <p className="register-desc" style={{ marginBottom: '0.5rem' }}>
             {action.kind === 'lock' && 'Lock funds in the HTLC contract inside this head.'}
             {action.kind === 'claim' && 'Claim the locked funds by revealing your secret preimage.'}
-            {action.kind === 'refund' && 'Recover your locked funds — the timeout has passed.'}
+            {action.kind === 'refund' && 'Recover your locked funds - the timeout has passed.'}
           </p>
           <p className="form-hint" style={{ marginBottom: '1rem' }}>
-            <Link to="/docs">How these transactions work — full HTLC reference →</Link>
+            <Link to="/docs">How these transactions work - full HTLC reference →</Link>
           </p>
 
           <div className="form-group" style={{ marginBottom: '0.75rem' }}>
@@ -137,7 +137,7 @@ function TxPanel({ action, routeId, secretHash, onDone }: TxPanelProps) {
               value={walletAddress}
               onChange={e => setWalletAddress(e.target.value)}
             />
-            <span className="form-hint">Your address inside this Hydra head — where change and output go.</span>
+            <span className="form-hint">Your address inside this Hydra head - where change and output go.</span>
           </div>
 
           {action.kind === 'claim' && (
@@ -145,7 +145,7 @@ function TxPanel({ action, routeId, secretHash, onDone }: TxPanelProps) {
               <label>Secret preimage (hex)</label>
               <input
                 type="text"
-                placeholder="32-byte hex — the secret you generated when creating the invoice"
+                placeholder="32-byte hex - the secret you generated when creating the invoice"
                 value={preimage}
                 onChange={e => setPreimage(e.target.value)}
               />
@@ -169,7 +169,7 @@ function TxPanel({ action, routeId, secretHash, onDone }: TxPanelProps) {
       ) : (
         <>
           <p className="register-desc" style={{ marginBottom: '0.5rem' }}>
-            <strong>Step 1 — Sign this transaction offline</strong>
+            <strong>Step 1 - Sign this transaction offline</strong>
           </p>
           <div style={{ position: 'relative' }}>
             <pre className="code-block" style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap', maxHeight: '8rem', overflow: 'auto', fontSize: '0.7rem' }}>
@@ -193,7 +193,7 @@ cardano-cli transaction sign \\
   --out-file tx.signed`}</pre>
 
           <p className="register-desc" style={{ margin: '1rem 0 0.5rem' }}>
-            <strong>Step 2 — Submit to your own hydra-node</strong>
+            <strong>Step 2 - Submit to your own hydra-node</strong>
           </p>
           <p className="register-desc" style={{ marginBottom: '0.5rem' }}>
             The registry never submits transactions. Run this on the machine
@@ -212,7 +212,7 @@ cardano-cli transaction sign \\
 
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <button className="btn btn-primary" onClick={onDone}>
-              Done — refresh status
+              Done - refresh status
             </button>
             <button className="btn btn-secondary" onClick={() => setBuiltCbor(null)}>
               Back
@@ -373,12 +373,12 @@ function RouteCard({ summary, onRefresh }: RouteCardProps) {
       {showPreimageReveal && !revealOk && (
         <div className="register-result" style={{ marginBottom: '1rem', borderColor: '#f0c040', background: 'rgba(240,192,64,0.05)' }}>
           <p style={{ margin: '0 0 0.75rem', color: '#f0c040', fontWeight: 600 }}>
-            A hop is locked and waiting — reveal your secret to trigger the claim cascade
+            A hop is locked and waiting - reveal your secret to trigger the claim cascade
           </p>
           <div className="form-group" style={{ marginBottom: '0.5rem' }}>
             <input
               type="text"
-              placeholder="Your secret (hex) — from openssl rand -hex 32"
+              placeholder="Your secret (hex) - from openssl rand -hex 32"
               value={preimageInput}
               onChange={e => setPreimageInput(e.target.value)}
             />
@@ -482,7 +482,7 @@ export default function Dashboard() {
       >
         <h1 className="section-title">Dashboard</h1>
         <p className="register-desc">
-          Enter your Cardano key hash to see all your active payments and take action on each hop —
+          Enter your Cardano key hash to see all your active payments and take action on each hop -
           lock funds, claim with your secret, or refund after a timeout.
         </p>
 

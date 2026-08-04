@@ -17,12 +17,12 @@ export default function Docs() {
           A payment hops through one HTLC per Hydra head along the route. The
           registry coordinates discovery, watches for state changes, and emits
           tx blueprints that callers (typically a bridge operator) assemble
-          and submit to their <strong>own</strong> hydra-node — the registry
+          and submit to their <strong>own</strong> hydra-node - the registry
           never submits transactions. This page is the ground-truth
           reference for what those transactions look like on the wire.
-          Each participant is identified by their <em>OnChainId</em> — the
+          Each participant is identified by their <em>OnChainId</em> - the
           28-byte key hash of their hydra-node's{' '}
-          <code>--cardano-signing-key</code> — which is what the receiver
+          <code>--cardano-signing-key</code> - which is what the receiver
           field in every HTLC datum refers to.
         </p>
       </motion.section>
@@ -102,7 +102,7 @@ export default function Docs() {
           A route is a sequence of heads connected by shared participants
           (the implicit bridges). For <code>E</code> graph edges we have{' '}
           <code>E+1</code> heads in the path and <code>E+1</code> HTLC locks
-          — one per head. Every lock uses the same payment hash and timeout;
+          - one per head. Every lock uses the same payment hash and timeout;
           the receiver claims the final HTLC and the preimage cascades back
           to the sender's head.
         </p>
@@ -188,7 +188,7 @@ export default function Docs() {
         <p className="register-desc">
           Submitted by the locker to their own hydra-node (HTTP{' '}
           <code>POST /transaction</code>, or <code>NewTx</code> over WS).
-          Lives entirely on L2 inside one head — no L1 settlement happens at
+          Lives entirely on L2 inside one head - no L1 settlement happens at
           lock time.
         </p>
         <pre className="code-block">{`tx_inputs:
@@ -277,7 +277,7 @@ required_signers:
         <h2 className="section-title">Helper endpoints</h2>
         <p className="register-desc">
           The registry already stores everything needed to assemble the
-          transactions above — head, bridge address, sender/receiver per hop,
+          transactions above - head, bridge address, sender/receiver per hop,
           payment hash, timeout slot, fees. The endpoints below expose that as{' '}
           <strong>blueprints</strong>: every protocol-specific field is
           pre-computed (datum CBOR, redeemer CBOR, script address, validity
@@ -288,7 +288,7 @@ required_signers:
         <p className="register-desc">
           Prefer full unsigned tx CBOR? The <code>…-tx-cbor</code> variants of
           these endpoints build the complete Conway envelope server-side from
-          agent-pushed protocol parameters — you only sign and submit.
+          agent-pushed protocol parameters - you only sign and submit.
           Blueprints remain for callers who assemble transactions with their
           own tooling.
         </p>
@@ -297,7 +297,7 @@ required_signers:
           <h3>GET /api/v1/htlc/validator</h3>
           <p className="register-desc">
             Returns the HTLC validator bytes (Plutus V3 CBOR), its 28-byte
-            script hash, and the script type. Cache it once per network — the
+            script hash, and the script type. Cache it once per network - the
             same validator is reused on every lock output as a reference
             script.
           </p>
@@ -355,7 +355,7 @@ required_signers:
   "requiredSignerPkh": "<receiver pkh hex>" }`}</pre>
           <p className="register-desc">
             The on-chain validator already knows the datum (it's inline on
-            the HTLC UTxO) — you only need to feed it the redeemer and a
+            the HTLC UTxO) - you only need to feed it the redeemer and a
             tx that satisfies <code>validity.upper &lt; timeout</code> and is
             signed by <code>requiredSignerPkh</code>.
           </p>
@@ -391,14 +391,14 @@ required_signers:
         <h2 className="section-title">End to end: lock an HTLC with cardano-cli</h2>
         <p className="register-desc">
           The complete flow from nothing to a locked HTLC, using only{' '}
-          <code>cardano-cli</code>, <code>curl</code>, and coreutils. Steps 1–2
+          <code>cardano-cli</code>, <code>curl</code>, and coreutils. Steps 1-2
           are the <strong>receiver</strong>; the rest is the{' '}
-          <strong>sender</strong>. Do not skip step 0 — every later call fails
+          <strong>sender</strong>. Do not skip step 0 - every later call fails
           without it.
         </p>
 
         <div className="setup-steps">
-          <h3>0 — Prerequisites: the head must be registered here first</h3>
+          <h3>0 - Prerequisites: the head must be registered here first</h3>
           <pre className="code-block">{`curl -s ${window.location.origin}/api/v1/heads/<your headId>
 
 # {"error":"Head not found"}  → not registered: start the agent on the
@@ -406,7 +406,7 @@ required_signers:
 export HYDRA_NODE_WS_URL=ws://127.0.0.1:4001
 export HYDRA_REGISTRY_URL=${window.location.origin}
 nix run github:v0d1ch/hydra.registry#hydra-registry-agent
-#   the head appears the moment the agent relays its Open Greetings — keep it running
+#   the head appears the moment the agent relays its Open Greetings - keep it running
 
 # {"headId": ..., "utxoCount": ..., "htlcEnabled": ...}  → registered.
 #   "htlcEnabled" must be true before you continue: invoice creation is
@@ -415,22 +415,22 @@ nix run github:v0d1ch/hydra.registry#hydra-registry-agent
 #   using an in-head UTxO of at least ~8.5 ADA`}</pre>
           <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             You also need funds <em>inside</em> the head at an address you can
-            sign for — the lock spends an in-head UTxO of yours.
+            sign for - the lock spends an in-head UTxO of yours.
           </p>
 
-          <h3 style={{ marginTop: '2rem' }}>1 — Receiver: generate the secret and its hash</h3>
+          <h3 style={{ marginTop: '2rem' }}>1 - Receiver: generate the secret and its hash</h3>
           <pre className="code-block">{`openssl rand -hex 32 > preimage.hex          # keep this private until claim time
 PAYMENT_HASH=$(xxd -r -p preimage.hex | b2sum -l 256 | cut -d' ' -f1)
 echo $PAYMENT_HASH`}</pre>
           <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             The validator checks <code>blake2b_256(preimage) == datum.hash</code> over
-            the raw 32 bytes — hence the <code>xxd -r -p</code> before hashing.
+            the raw 32 bytes - hence the <code>xxd -r -p</code> before hashing.
             <code> b2sum -l 256</code> (GNU coreutils) is BLAKE2b with a 256-bit digest.
           </p>
 
-          <h3 style={{ marginTop: '2rem' }}>2 — Receiver: create the invoice</h3>
+          <h3 style={{ marginTop: '2rem' }}>2 - Receiver: create the invoice</h3>
           <p className="register-desc" style={{ marginTop: '0.75rem' }}>
-            You are identified by your <em>OnChainId</em> — the 28-byte key hash
+            You are identified by your <em>OnChainId</em> - the 28-byte key hash
             of your hydra-node's <code>--cardano-signing-key</code>. The head
             must be registered here (agent running), or invoice creation fails.
           </p>
@@ -448,7 +448,7 @@ curl -X POST ${window.location.origin}/api/v1/relay/invoices \\
   }'
 # → note the "invoiceId" in the response`}</pre>
 
-          <h3 style={{ marginTop: '2rem' }}>3 — Sender: find and pick a route</h3>
+          <h3 style={{ marginTop: '2rem' }}>3 - Sender: find and pick a route</h3>
           <pre className="code-block">{`curl -X POST ${window.location.origin}/api/v1/relay/routes \\
   -H 'Content-Type: application/json' \\
   -d '{"invoiceId": "<invoiceId>", "senderOnChainId": "<your 56-hex key hash>", "network": "Preprod"}'
@@ -456,18 +456,18 @@ curl -X POST ${window.location.origin}/api/v1/relay/invoices \\
 
 curl -X POST ${window.location.origin}/api/v1/relay/routes/<routeId>/execute`}</pre>
 
-          <h3 style={{ marginTop: '2rem' }}>4 — Sender: build the hop-0 lock transaction</h3>
+          <h3 style={{ marginTop: '2rem' }}>4 - Sender: build the hop-0 lock transaction</h3>
           <pre className="code-block">{`curl -X POST ${window.location.origin}/api/v1/relay/payments/<routeId>/hops/0/lock-tx-cbor \\
   -H 'Content-Type: application/json' \\
   -d '{"walletAddress": "addr_test1..."}' > tx.raw`}</pre>
           <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             The registry picks an in-head UTxO of yours, computes the datum
             (payment hash, receiver, timeout slot) and fees, and returns an
-            <strong> unsigned</strong> Conway text envelope — <code>tx.raw</code> is
+            <strong> unsigned</strong> Conway text envelope - <code>tx.raw</code> is
             directly usable by cardano-cli. Your keys are never involved server-side.
           </p>
 
-          <h3 style={{ marginTop: '2rem' }}>5 — Sign offline, submit to your own node</h3>
+          <h3 style={{ marginTop: '2rem' }}>5 - Sign offline, submit to your own node</h3>
           <pre className="code-block">{`cardano-cli conway transaction sign \\
   --tx-file tx.raw \\
   --signing-key-file <your-address>.sk \\
@@ -482,12 +482,12 @@ curl -X POST http://127.0.0.1:4001/transaction \\
             never submits anything.
           </p>
 
-          <h3 style={{ marginTop: '2rem' }}>6 — Verify</h3>
+          <h3 style={{ marginTop: '2rem' }}>6 - Verify</h3>
           <pre className="code-block">{`curl -s ${window.location.origin}/api/v1/relay/payments/<routeId> | jq '.hops[0].htlcStatus'
 # → "locked" once the next snapshot confirms`}</pre>
           <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             From here the cascade proceeds hop by hop (bridges re-lock downstream,
-            the receiver claims with the preimage, claims propagate back) — see{' '}
+            the receiver claims with the preimage, claims propagate back) - see{' '}
             <em>The payment cascade</em> above. The Dashboard shows the same
             build/sign/submit steps interactively whenever a hop needs you to act.
           </p>

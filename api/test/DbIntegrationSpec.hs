@@ -1,14 +1,11 @@
 module DbIntegrationSpec (spec) where
 
-import Control.Exception (SomeException, try)
 import Data.Maybe (isJust)
 import Data.Int (Int64)
-import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Time (addUTCTime, getCurrentTime)
 import Db qualified
 import Db.Schema (AgentRegistration (..), ExplorerHead (..), Head (..), Invoice (..))
-import Hasql.Pool (Pool)
 import Hydra.Client (HydraUtxoEntry (..))
 import Test.Hspec
 import TestUtils

@@ -108,7 +108,7 @@ start_postgres() {
   # so it passes even when user table files are missing (stale catalog after
   # a partial /tmp clear). VACUUM fails if any registered relation is missing.
   if ! psql -h "$PGHOST" -d "$DB_NAME" -c "VACUUM" &>/dev/null; then
-    warn "Database $DB_NAME is corrupt or inaccessible — resetting..."
+    warn "Database $DB_NAME is corrupt or inaccessible - resetting..."
     reset_postgres
     createdb -h "$PGHOST" "$DB_NAME"
     createdb -h "$PGHOST" "${DB_NAME}_test" 2>/dev/null || true
@@ -162,7 +162,7 @@ main() {
     sleep 1
     elapsed=$((elapsed + 1))
     if [ "$elapsed" -ge 120 ]; then
-      err "Backend did not become ready within 120s — check api logs above."
+      err "Backend did not become ready within 120s - check api logs above."
       exit 1
     fi
   done

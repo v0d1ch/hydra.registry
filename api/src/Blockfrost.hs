@@ -36,10 +36,10 @@ startBlockfrostPoller logger chainSlotVar projectId network = do
       req <- parseRequest (baseUrl network <> "/blocks/latest")
       let req' = req{requestHeaders = [("project_id", TE.encodeUtf8 projectId)]}
       resp <- httpLbs req' manager
-      case Aeson.decode (responseBody resp) of
-        Just (BlockfrostBlock s) -> do
-          bumpChainSlot chainSlotVar s
-          logInfo logger "Blockfrost slot bumped" [("slot", toJSON s)]
+      case Aeson.decode @BlockfrostBlock (responseBody resp) of
+        Just blk -> do
+          bumpChainSlot chainSlotVar blk.blockSlot
+          logInfo logger "Blockfrost slot bumped" [("slot", toJSON blk.blockSlot)]
         Nothing ->
           logWarn logger "Blockfrost: could not parse block response" []
     case result of

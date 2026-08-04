@@ -15,10 +15,10 @@ import Relay.EventBus (EventBus)
 import Relay.HtlcWatcher qualified as HtlcWatcher
 
 -- | Run the indexer loop that processes events from all Hydra head connections.
--- This function blocks forever — run it in a separate thread.
+-- This function blocks forever - run it in a separate thread.
 --
 -- @latestChainSlot@ is bumped on every Greetings/snapshot event that
--- carries a slot — handlers (e.g. @handleFindRoutes@) read it to derive
+-- carries a slot - handlers (e.g. @handleFindRoutes@) read it to derive
 -- timeouts from chain time rather than the registry's system clock.
 startIndexer :: Logger -> Pool -> TVar Int64 -> EventBus -> Maybe Text -> TQueue HydraEvent -> IO ()
 startIndexer logger pool chainSlotVar bus mHtlcScriptHash eventQueue = forever $ do

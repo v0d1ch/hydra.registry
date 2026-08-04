@@ -135,8 +135,8 @@ data HtlcDatum = HtlcDatum
 
 -- | Decode the HTLC datum CBOR produced by 'mkDatumCbor' (and by any
 -- conforming lock transaction): @Constr 0 [bytes32, int, bytes28, bytes28]@.
--- Anything else — wrong constructor, wrong arity, wrong field sizes,
--- trailing bytes — yields 'Nothing'.
+-- Anything else - wrong constructor, wrong arity, wrong field sizes,
+-- trailing bytes - yields 'Nothing'.
 decodeDatumCbor :: ByteString -> Maybe HtlcDatum
 decodeDatumCbor bs =
   case CBOR.Read.deserialiseFromBytes CBOR.decodeTerm (LBS.fromStrict bs) of

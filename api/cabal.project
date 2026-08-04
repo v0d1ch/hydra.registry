@@ -16,7 +16,7 @@ index-state:
 packages:
   .
 
--- Hydra libraries pinned to a hydra master rev (2026-08-03) — the same
+-- Hydra libraries pinned to a hydra master rev (2026-08-03) - the same
 -- rev the flake's hydra input locks. Never a local checkout. Bump the
 -- rev together with `nix flake update hydra`, and keep index-state,
 -- allow-newer and constraints below mirroring hydra's cabal.project at

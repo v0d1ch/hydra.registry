@@ -149,4 +149,3 @@ lookupEnvReadMaybe :: (Read a) => String -> IO (Maybe a)
 lookupEnvReadMaybe key = do
   mVal <- lookupEnv key
   pure $ mVal >>= readMaybe
-

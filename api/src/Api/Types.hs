@@ -401,7 +401,7 @@ data MessageResponse = MessageResponse
 
 -- ─── HTLC tx blueprints ───
 --
--- The registry doesn't assemble full Conway-era L2 transactions — that
+-- The registry doesn't assemble full Conway-era L2 transactions - that
 -- requires the head's protocol parameters (cost models, exec units),
 -- which the registry doesn't track. Instead it returns a /blueprint/
 -- with every protocol-specific field already computed: the validator
@@ -410,7 +410,7 @@ data MessageResponse = MessageResponse
 -- client) plug those into a tx body skeleton built by their own
 -- hydra-node helpers, then sign and submit via @NewTx@.
 
--- | The HTLC validator script — same content for every network.
+-- | The HTLC validator script - same content for every network.
 data HtlcValidatorResponse = HtlcValidatorResponse
   { scriptHash :: Text -- ^ 28-byte hex
   , scriptCborHex :: Text -- ^ Plutus V3 validator bytes, hex-encoded
@@ -440,7 +440,7 @@ data HtlcDatumView = HtlcDatumView
 -- refund tx spends the script via @--spending-tx-in-reference@. When
 -- unset (the bridge agent hasn't published one yet), the consumer must
 -- inline the validator on the lock output and source it again at claim
--- time — which the @lockAmountLovelace@ floor is sized for.
+-- time - which the @lockAmountLovelace@ floor is sized for.
 data LockTxBlueprint = LockTxBlueprint
   { headId :: Text
   , scriptAddress :: Text -- ^ HTLC validator address (bech32) for the route's network
@@ -473,7 +473,7 @@ data ClaimTxRequest = ClaimTxRequest
 -- much pure-ADA value the caller must pledge as collateral
 -- (@--tx-in-collateral@ + @--tx-out-return-collateral@ +
 -- @--tx-total-collateral@). The exact ledger requirement is
--- @ceil(fee * collateralPercentage / 100)@ — we round up to spare the
+-- @ceil(fee * collateralPercentage / 100)@ - we round up to spare the
 -- caller from estimating execution-cost-driven fee jitter.
 data ClaimTxBlueprint = ClaimTxBlueprint
   { headId :: Text
@@ -519,7 +519,7 @@ data SetRefScriptRequest = SetRefScriptRequest
 -- server picks a suitable input from the head's indexed UTxO set.
 --
 -- Per the project's hard custody rule, we never ask for or
--- reference signing keys — the user signs offline.
+-- reference signing keys - the user signs offline.
 data BuildTxFromWalletRequest = BuildTxFromWalletRequest
   { walletAddress :: Text -- ^ bech32 address that owns the input UTxO
   }
@@ -549,7 +549,7 @@ data SetKeyHashRequest = SetKeyHashRequest
   deriving anyclass (FromJSON, ToJSON)
 
 -- | A single thing a participant can do *right now* on a specific
--- hop — surfaced in the dashboard so the UI knows which buttons to
+-- hop - surfaced in the dashboard so the UI knows which buttons to
 -- show and which to grey out.
 --
 -- @kind@ is one of:
@@ -582,7 +582,7 @@ data ParticipantAction = ParticipantAction
 -- (possibly empty) list of actions they can take right now.
 data ParticipantRouteSummary = ParticipantRouteSummary
   { route :: PaymentStatusResponse
-  , roles :: [Text] -- ^ @sender@ | @bridge@ | @receiver@ — usually one
+  , roles :: [Text] -- ^ @sender@ | @bridge@ | @receiver@ - usually one
   , actions :: [ParticipantAction] -- ^ empty when there's nothing to do
   }
   deriving stock (Eq, Show, Generic)

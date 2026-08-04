@@ -38,6 +38,7 @@ mkHop idx senderPkh receiverPkh status mPreimage timeoutSlot =
     , hopFeeLovelace = 0
     , hopLockedAt = Nothing
     , hopClaimedAt = Nothing
+    , hopHtlcLastSeenSlot = Nothing
     }
 
 showT :: Show a => a -> Text
@@ -153,7 +154,7 @@ spec = describe "Api" $ do
             ]
       -- I am receiver of hop 0 → Claim. The pending hop 1 (where
       -- I am sender) is *not* lockable because the locker is me
-      -- and the upstream condition is satisfied — wait, that means
+      -- and the upstream condition is satisfied - wait, that means
       -- this fixture also yields a "lock" action. Make sure both
       -- are surfaced.
       map (.kind) (participantActionsFor chainSlot me hops) `shouldMatchList` ["claim", "lock"]

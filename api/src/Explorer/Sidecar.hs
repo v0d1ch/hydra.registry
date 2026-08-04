@@ -34,22 +34,22 @@ data SidecarConfig = SidecarConfig
   , l1Sockets :: [(Text, FilePath)]
   -- ^ Per-network local cardano-node sockets for the L1 head scan.
   , eventBus :: EventBus
-  -- ^ Relay event fan-out — the L1 HTLC scan publishes hop settlements.
+  -- ^ Relay event fan-out - the L1 HTLC scan publishes hop settlements.
   , htlcScriptHash :: Maybe Text
   -- ^ HTLC validator hash; when set, the sidecar also scans the HTLC
   -- script address on L1 to settle hops after a head closes.
   }
 
 -- | Start the explorer sidecar polling loop.
--- This function blocks forever — run it in a separate thread.
+-- This function blocks forever - run it in a separate thread.
 startSidecar :: Logger -> Pool -> SidecarConfig -> IO ()
 startSidecar logger pool config = do
   manager <- HTTP.newTlsManager
   logInfo logger "Explorer sidecar started" [("url", toJSON config.explorerUrl), ("interval_s", toJSON config.pollIntervalSeconds)]
   forever $ do
     -- Polling the public hydra-explorer can fail (DNS, TLS, parse, ...)
-    -- but graph rebuild only depends on local DB state — heads,
-    -- participants, bridges — so it must run every tick regardless of
+    -- but graph rebuild only depends on local DB state - heads,
+    -- participants, bridges - so it must run every tick regardless of
     -- whether the explorer was reachable. Otherwise locally-registered
     -- heads never get an entry in the precomputed graph and findRoutes
     -- keeps returning empty.
@@ -69,7 +69,7 @@ startSidecar logger pool config = do
         logError logger "L1 head scan failed" [("error", toJSON (show err))]
       Right () -> pure ()
     -- L1 HTLC settlement scan: resolve hops whose HTLCs settled on L1
-    -- after a head closed. A failed scan yields Nothing and is skipped —
+    -- after a head closed. A failed scan yields Nothing and is skipped -
     -- it must never be conflated with "no UTxOs at the address".
     case config.htlcScriptHash of
       Nothing -> pure ()

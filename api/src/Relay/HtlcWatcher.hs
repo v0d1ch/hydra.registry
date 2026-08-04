@@ -54,7 +54,7 @@ classifySettlement tipSlot lastSeenSlot timeoutSlot
 --
 -- Settlement: a previously locked hop's HTLC tx hash is no longer in
 --       the UTxO set (spent). Classified by timing against the hop
---       timeout — spends before it are claims, after it refunds; a
+--       timeout - spends before it are claims, after it refunds; a
 --       window straddling the timeout stays locked with a warning.
 --
 -- Snapshots carry no chain slot, so "now" is derived from wall clock
@@ -73,7 +73,7 @@ processUtxoSnapshot logger pool bus headId htlcScriptHash utxos = do
 
   -- Detect locks: UTxOs at HTLC script address with matching payment hash.
   -- The address comparison is against the bech32-encoded script address
-  -- for every supported network — we don't know the head's network at
+  -- for every supported network - we don't know the head's network at
   -- watcher time, but the script hash is fixed so the candidate set is
   -- small.
   let scriptAddrs = htlcScriptAddresses htlcScriptHash
@@ -159,7 +159,7 @@ recordLock logger pool bus headId entry now h = do
       , at = now
       }
 
--- | A locked hop's HTLC UTxO is gone from the snapshot — it was spent.
+-- | A locked hop's HTLC UTxO is gone from the snapshot - it was spent.
 -- Classify the spend by timing and settle the hop accordingly.
 detectSettlement :: Logger -> Pool -> EventBus -> [Text] -> UTCTime -> (RouteHop Identity, Text) -> IO ()
 detectSettlement logger pool bus utxoTxHashes now (hop, network) =
@@ -171,7 +171,7 @@ detectSettlement logger pool bus utxoTxHashes now (hop, network) =
             Nothing ->
               logWarn
                 logger
-                "HTLC spend detected but network has no slot conversion — leaving hop locked"
+                "HTLC spend detected but network has no slot conversion - leaving hop locked"
                 [("hopId", Aeson.toJSON hop.hopId), ("network", Aeson.toJSON network)]
             Just slotNow -> do
               -- Last slot at which we knew the UTxO was unspent: the
@@ -210,7 +210,7 @@ detectSettlement logger pool bus utxoTxHashes now (hop, network) =
                 SettlementAmbiguous ->
                   logWarn
                     logger
-                    "HTLC spend window straddles the timeout — leaving hop locked"
+                    "HTLC spend window straddles the timeout - leaving hop locked"
                     [ ("hopId", Aeson.toJSON hop.hopId)
                     , ("lastSeen", Aeson.toJSON lastSeen)
                     , ("now", Aeson.toJSON slotNow)
@@ -247,7 +247,7 @@ checkRouteCompletion logger pool bus rid = do
   let allClaimed = all (\h -> h.hopHtlcStatus == "claimed") hops
   if allClaimed && not (null hops)
     then do
-      logInfo logger "All hops claimed — payment complete" [("routeId", Aeson.toJSON rid)]
+      logInfo logger "All hops claimed - payment complete" [("routeId", Aeson.toJSON rid)]
       Db.updateRouteStatus pool rid "completed"
       -- Mark the invoice as paid
       mRoute <- Db.getPaymentRoute pool rid

@@ -6,7 +6,7 @@ name: release-agent
 # before running them.
 #
 # workflow_dispatch builds and pushes ONLY the docker images (no
-# release assets) — use it to produce images for an existing release
+# release assets) - use it to produce images for an existing release
 # without re-tagging.
 on:
   push:

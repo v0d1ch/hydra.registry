@@ -23,6 +23,7 @@ common shared
     OverloadedStrings
   ghc-options:
     -Wall
+    -Werror
 
 library
   import: shared

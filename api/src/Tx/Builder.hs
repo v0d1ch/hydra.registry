@@ -5,7 +5,7 @@
 -- The builders are pure: given fully-resolved arguments they either
 -- return the unsigned transaction (CBOR + txId + text envelope) or a
 -- descriptive error. Fees and execution units are explicit, exactly as
--- they were with @build-raw@ — nothing is balanced or estimated here.
+-- they were with @build-raw@ - nothing is balanced or estimated here.
 module Tx.Builder
   ( BuildResult (..)
   , LockArgs (..)
@@ -40,7 +40,7 @@ import Text.Read (readMaybe)
 -- | Result of a successful tx build.
 --
 -- Serialises as a flat cardano-cli text-envelope JSON
--- (@type@, @description@, @cborHex@) with @txId@ added alongside —
+-- (@type@, @description@, @cborHex@) with @txId@ added alongside -
 -- cardano-cli ignores unknown keys, so the file can be passed directly
 -- to @cardano-cli conway transaction sign --tx-file@.
 data BuildResult = BuildResult
@@ -59,7 +59,7 @@ instance Aeson.ToJSON BuildResult where
 
 -- ─── argument records ──────────────────────────────────────────────────
 
--- | Inputs required to build an HTLC lock tx — the locker spends
+-- | Inputs required to build an HTLC lock tx - the locker spends
 -- one wallet UTxO into a script-address output that carries the
 -- HTLC datum (and, when no shared ref-script is published, the
 -- inline ref script).
@@ -96,7 +96,7 @@ data LockArgs = LockArgs
     plutusEnvelope :: Maybe Aeson.Value
   }
 
--- | Inputs required to build an HTLC claim tx — the claimer spends
+-- | Inputs required to build an HTLC claim tx - the claimer spends
 -- the locked HTLC UTxO using a 'Claim(preimage)' redeemer.
 data ClaimArgs = ClaimArgs
   { -- | @"<txhash>"@ of the lock tx.
@@ -110,7 +110,7 @@ data ClaimArgs = ClaimArgs
     refScriptUtxo :: Text
   , -- | Plutus Data CBOR for @Claim(preimage)@, hex-encoded.
     redeemerCborHex :: Text
-  , -- | Pure-ADA collateral input — @"<txhash>#<ix>"@.
+  , -- | Pure-ADA collateral input - @"<txhash>#<ix>"@.
     collateralUtxo :: Text
   , -- | Lovelace value of the collateral input.
     collateralLovelace :: Int64
@@ -173,7 +173,7 @@ data PublishRefArgs = PublishRefArgs
 -- claim or refund. Measured against the actual validator on
 -- Preview during the manual e2e (2026-04-30) and rounded up to give
 -- headroom against future param shifts. Sized once here, not
--- estimated per-tx — our validator is small and shape-stable.
+-- estimated per-tx - our validator is small and shape-stable.
 htlcExecUnits :: (Integer, Integer)
 htlcExecUnits = (10_000_000_000, 4_000_000)
 
@@ -188,7 +188,7 @@ htlcExecutionUnits =
 -- | Extract the 28-byte payment key hash from a bech32 Cardano address.
 -- Works for enterprise addresses (addr1/addr_test1) where byte[0] is the
 -- header and bytes[1..28] are the payment pkh. Does not validate the
--- header byte — callers should ensure the address is an enterprise address.
+-- header byte - callers should ensure the address is an enterprise address.
 extractPkhFromAddress :: Text -> Either Text Text
 extractPkhFromAddress addr =
   case Bech32.decode addr of
@@ -259,7 +259,7 @@ buildClaimTx args =
       , validityUpper = TxValidityUpperBound (SlotNo (fromIntegral args.validityUpperSlot))
       }
 
--- | Build a refund tx — mirror of claim, but with the @Refund@
+-- | Build a refund tx - mirror of claim, but with the @Refund@
 -- redeemer and a lower validity bound (refund must happen *after*
 -- the timeout).
 buildRefundTx :: RefundArgs -> Either Text BuildResult

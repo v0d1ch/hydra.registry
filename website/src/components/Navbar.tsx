@@ -113,7 +113,7 @@ export default function Navbar() {
 
       {/* Right side: wallet button (always rendered once) + desktop dropdown + mobile hamburger */}
       <div className="navbar-right">
-        {/* Wallet button — single instance, always visible */}
+        {/* Wallet button - single instance, always visible */}
         <div className="nav-dropdown-wrap" ref={walletRef}>
           {address ? (
             <button className="btn-wallet btn-wallet-connected" onClick={disconnect}>{shortAddress}</button>

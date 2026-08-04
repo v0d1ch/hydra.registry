@@ -10,8 +10,8 @@
 -- Polling a node's UTxO set can never see the /spending/ transaction
 -- (and therefore neither the redeemer nor a claim's preimage), so
 -- claim-vs-refund is classified by timing: the validator's validity
--- windows are disjoint around the datum timeout — claims must complete
--- strictly before it, refunds strictly after — so the spend window
+-- windows are disjoint around the datum timeout - claims must complete
+-- strictly before it, refunds strictly after - so the spend window
 -- @(lastSeenSlot, tipSlot]@ decides the outcome whenever it does not
 -- straddle the timeout. Straddling windows stay @locked@ and warn;
 -- redeemer-level resolution (and preimage recovery) needs a chain-sync
@@ -19,10 +19,8 @@
 module L1.HtlcScan where
 
 import Control.Exception (SomeException, try)
-import Data.Aeson (toJSON)
 import Data.Int (Int64)
 import Data.Maybe (mapMaybe)
-import Data.Text (Text)
 import Data.Time (getCurrentTime)
 import Db qualified
 import Db.Schema (RouteHop (..))
@@ -38,7 +36,7 @@ import Relay.EventBus qualified as Bus
 import Relay.HtlcWatcher (Settlement (..), checkRouteCompletion, classifySettlement)
 
 -- | One HTLC UTxO sitting at the script address, identified by its
--- decoded datum. Hops are matched on secret hash /and/ receiver — every
+-- decoded datum. Hops are matched on secret hash /and/ receiver - every
 -- hop of a route shares the hash, and fanout re-creates outputs under
 -- the fanout txid, so the datum is the only stable key.
 data HtlcObservation = HtlcObservation
@@ -62,7 +60,7 @@ observationOf (TxOut _ _ datum _) = case datum of
   _ -> Nothing
 
 -- | Poll one network's HTLC script address. Returns 'Nothing' on any
--- failure — the caller must NOT treat a failed scan as an empty
+-- failure - the caller must NOT treat a failed scan as an empty
 -- observation set, or every in-flight hop would look spent.
 scanNetwork :: Logger -> Text -> Text -> FilePath -> IO (Maybe (Int64, [HtlcObservation]))
 scanNetwork logger htlcHash network socketPath =
@@ -74,7 +72,7 @@ scanNetwork logger htlcHash network socketPath =
       logWarn logger "L1 HTLC scan: bad script address" [("error", toJSON err)]
       pure Nothing
     (Just networkId, Right addrText) ->
-      case deserialiseAddress AsShelleyAddress addrText of
+      case deserialiseAddress (AsAddress AsShelleyAddr) addrText of
         Nothing -> do
           logWarn logger "L1 HTLC scan: address deserialisation failed" [("address", toJSON addrText)]
           pure Nothing
@@ -136,7 +134,7 @@ applyHtlcScan logger pool bus tipSlot observations = do
     SettlementAmbiguous ->
       logWarn
         logger
-        "L1 HTLC spend window straddles the timeout — leaving hop locked"
+        "L1 HTLC spend window straddles the timeout - leaving hop locked"
         [ ("hopId", toJSON h.hopId)
         , ("lastSeen", toJSON lastSeen)
         , ("tip", toJSON tipSlot)

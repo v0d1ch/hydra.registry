@@ -21,7 +21,7 @@ import Relay.HtlcWatcher qualified as HtlcWatcher
 import Test.Hspec
 import TestUtils
 
--- | The HTLC script hash used in tests — same as the production constant
+-- | The HTLC script hash used in tests - same as the production constant
 -- so the bech32 derivation in the watcher round-trips.
 testScriptHash :: Text
 testScriptHash = Htlc.htlcScriptHashHex
@@ -38,7 +38,7 @@ testScriptAddress = case Htlc.htlcScriptAddress "Preview" of
 testPaymentHash :: Text
 testPaymentHash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 
--- | Timeout slot far in the future on every network — spends detected
+-- | Timeout slot far in the future on every network - spends detected
 -- while the clock is before this slot classify as claims.
 futureTimeout :: Int64
 futureTimeout = 9_999_999_999
@@ -77,7 +77,7 @@ mkHtlcDatum payHash =
       ]
 
 -- | Drop-in wrapper so existing tests can keep their old signature
--- (no explicit bus). A throwaway 'EventBus' is created per call —
+-- (no explicit bus). A throwaway 'EventBus' is created per call -
 -- callers don't read from it.
 runWatcher :: Pool -> Text -> Text -> [HydraUtxoEntry] -> IO ()
 runWatcher pool headId scriptHash utxos = do
@@ -86,10 +86,7 @@ runWatcher pool headId scriptHash utxos = do
 
 spec :: Spec
 spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
-  let logger = newLogger Info
-      _ = logger -- silence -Wunused-local-binds in case some tests stop using it
-
-  describe "processUtxoSnapshot — lock detection" $ do
+  describe "processUtxoSnapshot - lock detection" $ do
     it "detects a new HTLC lock and updates hop status" $ \pool -> do
       setupTestPayment pool "head-A" "addr_alice" "addr_bob"
 
@@ -209,7 +206,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
 
   describe "EventBus fan-out" $ do
     -- These tests pin the contract that "the watcher updates the
-    -- DB *and* publishes a corresponding RouteEvent" — they're what
+    -- DB *and* publishes a corresponding RouteEvent" - they're what
     -- the SSE endpoint relies on to push pushes to subscribers.
     it "publishes HopLocked when a lock is detected" $ \pool -> do
       setupTestPayment pool "head-A" "addr_alice" "addr_bob"
@@ -318,7 +315,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       empty <- atomically (isEmptyTChan sub)
       empty `shouldBe` True
 
-  describe "processUtxoSnapshot — claim detection" $ do
+  describe "processUtxoSnapshot - claim detection" $ do
     it "detects a claim when locked HTLC UTxO disappears" $ \pool -> do
       setupTestPayment pool "head-A" "addr_alice" "addr_bob"
 
@@ -326,7 +323,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       now <- getCurrentTime
       Db.updateHopLocked pool "hop-1" "lock-tx-001" now
 
-      -- Snapshot without the locked UTxO — it was spent (claimed)
+      -- Snapshot without the locked UTxO - it was spent (claimed)
       runWatcher pool "head-A" testScriptHash []
 
       hops <- Db.getRouteHops pool "route-1"
@@ -338,7 +335,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       -- After the timeout passes only the sender's Refund tx can spend
       -- the HTLC (the validator's validity windows are disjoint around
       -- the timeout). A spend observed while the clock is already past
-      -- the timeout must therefore be a refund — marking it claimed
+      -- the timeout must therefore be a refund - marking it claimed
       -- would complete routes and pay invoices that actually failed.
       now <- getCurrentTime
       let expiresAt = addUTCTime 3600 now
@@ -349,7 +346,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
         -- timeout slot 1_000_000 is long past on Preview
         [("hop-r", "route-r", 0, "head-R", "addr_bridge", "addr_alice", "addr_bob", "pending", testPaymentHash, 1000000, 0)]
       Db.updateHopLocked pool "hop-r" "lock-tx-refund" now
-      -- Empty snapshot: the HTLC UTxO was spent — necessarily by Refund
+      -- Empty snapshot: the HTLC UTxO was spent - necessarily by Refund
       runWatcher pool "head-R" testScriptHash []
       hops <- Db.getRouteHops pool "route-r"
       map (.hopHtlcStatus) hops `shouldBe` ["refunded"]
@@ -381,7 +378,7 @@ spec = describe "Relay.HtlcWatcher" $ around withTestPool $ do
       let hop1 = head $ filter (\h -> h.hopId == "hop-1") hops
       hop1.hopHtlcStatus `shouldBe` "locked"
 
-  describe "processUtxoSnapshot — payment completion" $ do
+  describe "processUtxoSnapshot - payment completion" $ do
     it "marks route completed and invoice paid when all hops claimed" $ \pool -> do
       setupTestPayment pool "head-A" "addr_alice" "addr_bob"
 

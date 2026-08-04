@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Deploy hydra.registry: frontend (static files) + backend (server-side
 # incremental cabal build + service restart). Observers/explorer are NOT
-# touched — see the deployment wiki for those.
+# touched - see the deployment wiki for those.
 #
 # Usage:
 #   ./deploy.sh            # frontend + backend
 #   ./deploy.sh frontend   # SPA only (rsync dist/ to the web root)
 #   ./deploy.sh backend    # registry only (rsync repo, build, restart)
 #
-# Connection settings come from .deploy.env (gitignored — the repo is
+# Connection settings come from .deploy.env (gitignored - the repo is
 # public, the origin address is not):
 #   DEPLOY_SSH=user@host            # repo rsync target, build + systemctl
 #   DEPLOY_WEB_SSH=user@host        # web-root rsync target (default: DEPLOY_SSH)
@@ -46,7 +46,7 @@ if [ "$MODE" != "frontend" ]; then
 
   log "Building backend on the server (incremental; first build after a
   hydra-rev bump recompiles the pinned hydra packages once)"
-  # Streamed directly — no pipes, so a build failure stops the script here.
+  # Streamed directly - no pipes, so a build failure stops the script here.
   ssh "$DEPLOY_SSH" 'cd ~/code/hydra.registry && nix develop --command bash -c "cd api && cabal build exe:hydra-registry-api"'
 
   log "Restarting hydra-registry"

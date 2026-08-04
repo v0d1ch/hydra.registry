@@ -8,7 +8,6 @@ import Control.Concurrent.STM
 import Data.Aeson (encode)
 import Data.Aeson qualified as Aeson
 import Data.Aeson.KeyMap qualified as KM
-import Data.ByteString.Lazy qualified as BSL
 import Data.Text qualified as T
 import Data.Text.Encoding (encodeUtf8)
 import Data.Time (addUTCTime, getCurrentTime)
@@ -144,7 +143,7 @@ mainSpec = with makeTestApp $ describe "API (integration)" $ do
     -- The agent is one-way: there is no command channel for the
     -- registry to push work back to a node. The old poll endpoint
     -- must be gone entirely. (Unmatched POSTs fall through to the
-    -- static-site catch-all, which only serves GET — hence 405.)
+    -- static-site catch-all, which only serves GET - hence 405.)
     it "has no command poll endpoint" $ do
       request methodPost "/api/v1/agent/commands/poll" [("Content-Type", "application/json")] ""
         `shouldRespondWith` 405
@@ -227,7 +226,7 @@ mainSpec = with makeTestApp $ describe "API (integration)" $ do
           KM.member "secretKey" o `shouldBe` True
         Just other -> expectationFailure $ "Expected object, got: " <> show other
 
-    it "does NOT create a head row immediately — head only appears after an Open Greetings is pushed" $ do
+    it "does NOT create a head row immediately - head only appears after an Open Greetings is pushed" $ do
       let regBody = encode $ Aeson.object
             [ "headId"    Aeson..= ("agent-lazy-head" :: String)
             , "binaryHash" Aeson..= ("sha256:deadbeef" :: String)
@@ -392,7 +391,7 @@ mainSpec = with makeTestApp $ describe "API (integration)" $ do
         Just invs -> length invs `shouldBe` 1
 
 -- | Create a test Application backed by a test DB
--- | Secure-mode tests: HYDRA_DIRECT_WS off (the production default) —
+-- | Secure-mode tests: HYDRA_DIRECT_WS off (the production default) -
 -- every path that would dial a user's hydra-node must refuse instead.
 secureModeSpec :: Spec
 secureModeSpec = with (makeTestAppWith False) $ describe "API (secure mode, direct WS disabled)" $ do
@@ -411,8 +410,8 @@ secureModeSpec = with (makeTestAppWith False) $ describe "API (secure mode, dire
     -- (POST /transaction on the node API); the registry has no
     -- submission path to any node, in any mode. (Unmatched POSTs
     -- fall through to the static-site catch-all, which only serves
-    -- GET — hence 405.)
-    it "does not exist — users submit to their own node" $ do
+    -- GET - hence 405.)
+    it "does not exist - users submit to their own node" $ do
       liftIO $ do
         pool <- rawTestPool
         Db.upsertHead pool "head-no-agent" "127.0.0.1" 4001 "Open" Nothing

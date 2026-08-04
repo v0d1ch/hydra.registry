@@ -45,7 +45,7 @@ emptyGraph =
 
 -- | A route found by pathfinding.
 --
--- @routeSrcHead@ is the head where the dijkstra started — i.e. the
+-- @routeSrcHead@ is the head where the dijkstra started - i.e. the
 -- sender's source head. @routeHops@ are the graph edges (each pointing
 -- to a destination head + bridging participant). Together they describe
 -- the head sequence as @routeSrcHead : map hopHeadId routeHops@. That
@@ -114,14 +114,14 @@ expandRouteToHtlcs senderAddr receiverAddr route =
 -- | Build a relay graph from the component data.
 --
 -- Parameters:
---   - heads: [(headId, network)] — all explorer + locally-registered heads
---   - participants: [(headId, address)] — address→head membership
+--   - heads: [(headId, network)] - all explorer + locally-registered heads
+--   - participants: [(headId, address)] - address→head membership
 --
 -- Any participant present in two or more heads of the same network forms
--- an edge between every pair of those heads — that participant is the
+-- an edge between every pair of those heads - that participant is the
 -- implicit bridge. We no longer require an explicit \"is bridge\"
 -- declaration at registration time; running a node in two heads is the
--- declaration. Fees are not encoded in the graph anymore — they belong
+-- declaration. Fees are not encoded in the graph anymore - they belong
 -- to a per-payment quote between sender and bridge agent (TBD).
 buildGraph ::
   [(Text, Text)] ->
@@ -164,7 +164,7 @@ buildGraph heads participants =
       -- between every pair of those heads creates a combinatorial
       -- explosion (millions of edges, Dijkstra hangs). We cap at 10
       -- to discard "everyone has this test key" noise while keeping
-      -- real bridges (typically 2–4 head overlap).
+      -- real bridges (typically 2-4 head overlap).
       bridgeAddrToHeads =
         Map.filter (\s -> let n = Set.size s in n >= 2 && n <= 10) addrToHeads
 

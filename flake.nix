@@ -1,5 +1,5 @@
 {
-  description = "Hydra Registry API — REST service for querying Hydra L2 UTxO state";
+  description = "Hydra Registry API - REST service for querying Hydra L2 UTxO state";
 
   inputs = {
     # Follow hydra's nixpkgs so every package in the dev shell shares one
@@ -40,7 +40,7 @@
         pkgs2411 = import hydra.inputs.nixpkgs-2411 { inherit system; };
       in
       {
-        # Standalone agent — Hackage deps only, so it builds with the
+        # Standalone agent - Hackage deps only, so it builds with the
         # stock nixpkgs Haskell set: no haskell.nix, no IOG caches, no
         # Cardano dependency tree. Operators install it with
         #   nix run github:v0d1ch/hydra.registry#hydra-registry-agent
@@ -57,7 +57,7 @@
         # enumerate them ourselves.
         devShells.default = hydra.devShells.${system}.cabalOnly.overrideAttrs (old: {
           buildInputs = (old.buildInputs or []) ++ [
-            # Database — from nixpkgs-2411 so libpq matches the glibc of
+            # Database - from nixpkgs-2411 so libpq matches the glibc of
             # the GHC toolchain (see pkgs2411 above). postgresql_17 keeps
             # dev data dirs initialized under postgres 17 compatible.
             pkgs2411.postgresql_17

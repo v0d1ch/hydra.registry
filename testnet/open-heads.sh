@@ -40,7 +40,7 @@ IDA_DIR="$DATA_DIR/ida"
 BOB_DIR="$DATA_DIR/bob"
 
 if [ ! -S "$NODE_SOCKET" ]; then
-  echo "ERROR: cardano-node socket not found at $NODE_SOCKET — run ./testnet/run.sh first"
+  echo "ERROR: cardano-node socket not found at $NODE_SOCKET - run ./testnet/run.sh first"
   exit 1
 fi
 export CARDANO_NODE_SOCKET_PATH="$NODE_SOCKET"
@@ -119,14 +119,14 @@ init_head() {
       return 0
       ;;
     Initial|Initializing)
-      log "$label already initialized but not Open — waiting for HeadIsOpen"
+      log "$label already initialized but not Open - waiting for HeadIsOpen"
       ;;
     Idle)
       log "Sending Init to $label (port $init_port)"
       send_ws "$init_port" '{"tag":"Init"}'
       ;;
     *)
-      warn "$label in unexpected state ($state) — attempting Init anyway"
+      warn "$label in unexpected state ($state) - attempting Init anyway"
       send_ws "$init_port" '{"tag":"Init"}'
       ;;
   esac
@@ -176,7 +176,7 @@ deposit_one_utxo() {
       .key] | sort | first // ""' "$utxo_file")
 
   if [ -z "$utxo_ref" ]; then
-    err "No suitable UTxO at $funds_addr — cannot deposit"
+    err "No suitable UTxO at $funds_addr - cannot deposit"
     return 1
   fi
 
@@ -227,7 +227,7 @@ EOF
     --tx-file "$signed_file" \
     --testnet-magic "$MAGIC"
 
-  log "$label deposit submitted — hydra-node will observe and finalize"
+  log "$label deposit submitted - hydra-node will observe and finalize"
 }
 
 # ── Open both heads ──
@@ -252,7 +252,7 @@ echo ""
 
 # Head 1: deposit from both Alice and Ida (whichever has funds) so the head
 # has L2 UTxOs at both participant addresses. Each deposit_one_utxo failure
-# is non-fatal — empty wallets simply skip.
+# is non-fatal - empty wallets simply skip.
 deposit_one_utxo "Head 1 / Alice" "$ALICE_API_PORT" \
   "$ALICE_DIR/cardano-funds.sk" "$ALICE_DIR/cardano-funds.addr" || true
 

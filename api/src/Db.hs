@@ -187,7 +187,7 @@ initDb pool =
 --
 -- Bridge status used to be captured here as a per-head flag, but the
 -- relay graph now treats every shared-participant pair as a potential
--- bridge automatically — there's no longer a registration-time bridge
+-- bridge automatically - there's no longer a registration-time bridge
 -- declaration. The columns @is_bridge@ and @bridge_fee_lovelace@ stay in
 -- the schema so older rows aren't disturbed; new inserts always write
 -- the defaults.
@@ -1092,7 +1092,7 @@ findUtxoByRef pool hid txh ix = do
 -- or script-bearing outputs.
 --
 -- "Pure-ADA" here means: no inline datum, no datum hash, no
--- reference script, and no native tokens — i.e. spending it doesn't
+-- reference script, and no native tokens - i.e. spending it doesn't
 -- run a script and doesn't have to balance multi-asset values.
 findWalletPureAdaUtxos
   :: Pool
@@ -1127,7 +1127,7 @@ findWalletPureAdaUtxos pool hid walletAddr = do
     _ -> True
 
 -- | Routes the given participant pkh is involved in (as overall
--- sender, overall receiver, or any hop's sender/receiver — i.e. as
+-- sender, overall receiver, or any hop's sender/receiver - i.e. as
 -- a bridge). Returns each route paired with its hops, ordered by
 -- @createdAt@ descending so the dashboard naturally shows recent
 -- payments first. Used by @GET /relay/participants/{pkh}/routes@.
@@ -1140,7 +1140,7 @@ getRoutesByParticipantPkh pool pkh = do
   -- top level. A second pass picks up bridge-only routes (pkh
   -- shows up only inside hops). Composing the two SQL-side via
   -- @exists@ would be cleaner but Rel8's quantification helpers
-  -- are awkward across multi-clause @where_@ — two queries +
+  -- are awkward across multi-clause @where_@ - two queries +
   -- merge in Haskell is small data and easy to read.
   topLevel <-
     runSession pool $
@@ -1204,7 +1204,7 @@ updateHopClaimed pool hopId claimedTime =
             , returning = NoReturning
             }
 
--- | Mark a hop as refunded — its HTLC was spent via the timeout path.
+-- | Mark a hop as refunded - its HTLC was spent via the timeout path.
 updateHopRefunded :: Pool -> Text -> IO ()
 updateHopRefunded pool hopId =
   runSession pool $
@@ -1235,7 +1235,7 @@ updateHopHtlcLastSeen pool hopId slot =
             , returning = NoReturning
             }
 
--- | All hops currently in @locked@ status, across every route and head —
+-- | All hops currently in @locked@ status, across every route and head -
 -- the working set of the L1 settlement scan.
 getLockedHops :: Pool -> IO [RouteHop Identity]
 getLockedHops pool =
@@ -1248,7 +1248,7 @@ getLockedHops pool =
           pure row
 
 -- | Active (pending or locked) hops for a head, each paired with its
--- route's network — needed to convert wall-clock time to that network's
+-- route's network - needed to convert wall-clock time to that network's
 -- slot when classifying spends.
 getActiveHopsWithNetworkByHead :: Pool -> Text -> IO [(RouteHop Identity, Text)]
 getActiveHopsWithNetworkByHead pool headId =
@@ -1317,7 +1317,7 @@ expireStaleRoutes pool now =
 
 -- ─── Head ownership ───
 
--- | Set registered_by on an existing head (targeted update — does not touch other columns).
+-- | Set registered_by on an existing head (targeted update - does not touch other columns).
 setHeadRegisteredBy :: Pool -> Text -> Text -> IO ()
 setHeadRegisteredBy pool hid walletAddr = do
   now <- getCurrentTime
@@ -1427,7 +1427,7 @@ lookupAgentBySecretHash pool secretHash = do
 
 -- | Update the last_seen_at timestamp for an agent.
 -- | Record the binary hash an agent most recently reported. The hash is
--- telemetry (fleet visibility), not an access-control input — it changes
+-- telemetry (fleet visibility), not an access-control input - it changes
 -- legitimately whenever the operator upgrades the agent binary.
 updateAgentBinaryHash :: Pool -> Text -> Text -> IO ()
 updateAgentBinaryHash pool aid newHash =

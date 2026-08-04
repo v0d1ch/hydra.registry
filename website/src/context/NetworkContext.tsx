@@ -20,7 +20,7 @@ function loadStoredNetwork(): Network {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored && VALID_NETWORKS.includes(stored as Network)) return stored as Network
   } catch {
-    // localStorage unavailable (private mode, SSR) — fall through
+    // localStorage unavailable (private mode, SSR) - fall through
   }
   return 'All'
 }
@@ -33,7 +33,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(STORAGE_KEY, n)
     } catch {
-      // best effort — selection still works for this session
+      // best effort - selection still works for this session
     }
   }
 

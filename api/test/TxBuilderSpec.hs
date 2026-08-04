@@ -1,9 +1,15 @@
 -- | Tests for the native (cardano-api based) HTLC transaction builder.
 --
 -- Every test decodes the produced CBOR back into a 'Tx' and asserts on
--- the actual transaction body — inputs, outputs, datums, fees, validity
--- bounds, collateral and redeemer budgets — rather than on any
+-- the actual transaction body - inputs, outputs, datums, fees, validity
+-- bounds, collateral and redeemer budgets - rather than on any
 -- intermediate representation.
+-- Record UPDATES on fields shared across the *Args records rely on
+-- type-directed disambiguation, which GHC deprecates under
+-- -Wambiguous-fields with no annotation-based escape hatch. Scoped
+-- opt-out for this spec only; the alternative is renaming fields in
+-- Tx.Builder's argument records.
+{-# OPTIONS_GHC -Wno-ambiguous-fields #-}
 module TxBuilderSpec (spec) where
 
 import Cardano.Ledger.Alonzo.Scripts qualified as Ledger (ExUnits (..))
@@ -16,8 +22,6 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as Base16
 import Data.Map.Strict qualified as Map
-import Data.Proxy (Proxy (..))
-import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
@@ -46,7 +50,7 @@ import Prelude
 -- byte and 28-byte payload.
 mkBech32Addr :: Word8 -> ByteString -> Text
 mkBech32Addr header payload =
-  let Right hrp = Bech32.humanReadablePartFromText "addr_test"
+  let hrp = either (error . show) id (Bech32.humanReadablePartFromText "addr_test")
    in Bech32.encodeLenient hrp (Bech32.dataPartFromBytes (BS.cons header payload))
 
 -- 0x60 = testnet enterprise address, payment credential is a key hash.
@@ -407,7 +411,7 @@ spec = do
 
     it "rejects an address whose decoded payload is too short" $ do
       let shortBytes = BS.replicate 10 0x00
-          Right hrp = Bech32.humanReadablePartFromText "addr_test"
+          hrp = either (error . show) id (Bech32.humanReadablePartFromText "addr_test")
           dp = Bech32.dataPartFromBytes shortBytes
           addr = Bech32.encodeLenient hrp dp
       extractPkhFromAddress addr `shouldBe` Left "address too short"

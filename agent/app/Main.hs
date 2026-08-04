@@ -33,7 +33,7 @@ main = do
     firstMsg <- receive conn
     headId' <- case decode @AgentGreeting firstMsg of
       Just g -> pure g.hydraHeadId
-      Nothing -> fail "First message is not Greetings — cannot determine head ID"
+      Nothing -> fail "First message is not Greetings - cannot determine head ID"
 
     TIO.hPutStrLn stderr $ "Head ID: " <> headId'
     st <- loadOrRegister mgr stateFile registryUrl headId' (T.pack wsUrl) binaryHash
@@ -48,7 +48,7 @@ main = do
       Nothing -> pure ()
 
     -- The agent is strictly one-way: it reads events from the local
-    -- node and pushes them to the registry. There is no channel back —
+    -- node and pushes them to the registry. There is no channel back -
     -- transactions reach the head only when the operator submits them
     -- to their own node. If the node WS drops the agent exits and
     -- systemd (or the operator) restarts it.

@@ -33,7 +33,7 @@ spec = describe "Relay.Graph" $ do
       -- between every pair. The cap keeps the graph workable.
       let mkH i = "h" <> T.pack (show i)
           heads = [(mkH i, "Preview" :: Text) | i <- [0 .. 10 :: Int]]
-          participants = [(mkH i, "addr_dust" :: Text) | i <- [0 .. 10]]
+          participants = [(mkH i, "addr_dust" :: Text) | i <- [0 .. 10 :: Int]]
           graph = buildGraph heads participants
       graph.graphEdges `shouldBe` []
 

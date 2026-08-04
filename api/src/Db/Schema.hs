@@ -241,7 +241,7 @@ data RouteHop f = RouteHop
   , hopLockedAt :: Column f (Maybe UTCTime)
   , hopClaimedAt :: Column f (Maybe UTCTime)
   , hopHtlcLastSeenSlot :: Column f (Maybe Int64)
-  -- ^ Chain slot at which the hop's HTLC UTxO was last known unspent —
+  -- ^ Chain slot at which the hop's HTLC UTxO was last known unspent -
   -- stamped by the L2 watcher (snapshot sightings) and the L1 scan
   -- (post-fanout sightings). Bounds the spend window when the UTxO
   -- later disappears, which is what classifies claim vs refund.

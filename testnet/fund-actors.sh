@@ -5,11 +5,11 @@ set -euo pipefail
 #
 # Two kinds of funding are managed:
 #
-#   1. cardano-funds.addr  — large balance used for L2 deposits into heads.
+#   1. cardano-funds.addr  - large balance used for L2 deposits into heads.
 #      Ida and Bob are topped up from Alice (3000 ADA each). Alice must be
 #      seeded from the faucet first if empty.
 #
-#   2. cardano.addr        — hydra-node key address; needs a small balance
+#   2. cardano.addr        - hydra-node key address; needs a small balance
 #      (fuel) so the node can pay L1 tx fees when building deposit txs.
 #      Each actor self-funds their own cardano.addr from their cardano-funds.addr.
 #
@@ -35,7 +35,7 @@ IDA_DIR="$DATA_DIR/ida"
 BOB_DIR="$DATA_DIR/bob"
 
 if [ ! -S "$NODE_SOCKET" ]; then
-  echo "ERROR: cardano-node socket not found at $NODE_SOCKET — run ./testnet/run.sh first"
+  echo "ERROR: cardano-node socket not found at $NODE_SOCKET - run ./testnet/run.sh first"
   exit 1
 fi
 export CARDANO_NODE_SOCKET_PATH="$NODE_SOCKET"
@@ -50,10 +50,10 @@ warn() { echo -e "${YELLOW}==>${NC} $1"; }
 err()  { echo -e "${RED}==>${NC} $1"; }
 
 # Thresholds and top-up amounts.
-MIN_FUNDS_LOVELACE=1000000000   # 1000 ADA — minimum for L2 deposits
-TOP_UP_FUNDS_LOVELACE=3000000000  # 3000 ADA — top-up amount
-MIN_FUEL_LOVELACE=50000000      # 50 ADA  — minimum fuel for hydra-node fees
-TOP_UP_FUEL_LOVELACE=100000000  # 100 ADA — fuel top-up amount
+MIN_FUNDS_LOVELACE=1000000000   # 1000 ADA - minimum for L2 deposits
+TOP_UP_FUNDS_LOVELACE=3000000000  # 3000 ADA - top-up amount
+MIN_FUEL_LOVELACE=50000000      # 50 ADA  - minimum fuel for hydra-node fees
+TOP_UP_FUEL_LOVELACE=100000000  # 100 ADA - fuel top-up amount
 
 # ── Helpers ──
 lovelace_at() {
@@ -115,7 +115,7 @@ IDA_ADDR=$(cat "$IDA_DIR/cardano.addr")
 BOB_ADDR=$(cat "$BOB_DIR/cardano.addr")
 
 # ────────────────────────────────────────────────────────────────
-# Part 1 — L2 deposit funds (cardano-funds.addr)
+# Part 1 - L2 deposit funds (cardano-funds.addr)
 # ────────────────────────────────────────────────────────────────
 echo ""
 log "── Part 1: L2 deposit funds (cardano-funds.addr) ──"
@@ -153,7 +153,7 @@ if [ "${#NEED_TOPUP[@]}" -gt 0 ]; then
   UTXO=$(pick_utxo "$ALICE_FUNDS_ADDR" "$REQUIRED")
   if [ -z "$UTXO" ]; then
     err "No single UTxO at Alice's funds address large enough to cover $(ada "$REQUIRED")."
-    warn "Alice's UTxOs may be fragmented — send a consolidation tx first."
+    warn "Alice's UTxOs may be fragmented - send a consolidation tx first."
     exit 1
   fi
 
@@ -179,7 +179,7 @@ else
 fi
 
 # ────────────────────────────────────────────────────────────────
-# Part 2 — Hydra-node fuel (cardano.addr)
+# Part 2 - Hydra-node fuel (cardano.addr)
 # Each actor self-funds from their own cardano-funds.addr.
 # ────────────────────────────────────────────────────────────────
 echo ""
@@ -202,7 +202,7 @@ fuel_actor() {
   local current_lv="$5"
 
   if [ "$current_lv" -ge "$MIN_FUEL_LOVELACE" ]; then
-    log "$name fuel is sufficient — skipping."
+    log "$name fuel is sufficient - skipping."
     return 0
   fi
 
@@ -210,7 +210,7 @@ fuel_actor() {
   source_lv=$(lovelace_at "$funds_addr")
   local needed=$(( TOP_UP_FUEL_LOVELACE + 200000 ))  # buffer for fees
   if [ "$source_lv" -lt "$needed" ]; then
-    warn "$name: funds address only has $(ada "$source_lv") — cannot self-fuel. Top up funds address first."
+    warn "$name: funds address only has $(ada "$source_lv") - cannot self-fuel. Top up funds address first."
     return 0
   fi
 

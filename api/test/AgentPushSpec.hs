@@ -13,7 +13,7 @@ spec = describe "Agent push model" $ do
     -- The agent conveys information to the registry and nothing else:
     -- there is no command channel back to the node, so the old queue
     -- table must not exist in a fresh schema.
-    it "has no agent_commands table — the registry cannot queue node writes" $ \pool -> do
+    it "has no agent_commands table - the registry cannot queue node writes" $ \pool -> do
       result <-
         try @SomeException $
           Db.runSession pool $
@@ -22,7 +22,7 @@ spec = describe "Agent push model" $ do
         Left _ -> pure ()
         Right _ ->
           expectationFailure
-            "agent_commands table still exists — the registry can still queue tx submissions"
+            "agent_commands table still exists - the registry can still queue tx submissions"
 
   describe "head_protocol_params (integration)" $ around withTestPool $ do
     it "stores and retrieves protocol parameters per head" $ \pool -> do

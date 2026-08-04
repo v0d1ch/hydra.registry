@@ -47,7 +47,7 @@ withTestPool action = do
   cleanTestData pool
   action pool
 
--- | A pool on the test database WITHOUT wiping it — for seeding rows
+-- | A pool on the test database WITHOUT wiping it - for seeding rows
 -- mid-test next to an already-initialized application pool.
 rawTestPool :: IO Pool
 rawTestPool = do

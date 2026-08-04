@@ -202,7 +202,7 @@ readMaybe' s = case reads s of
 
 -- | Force IPv4 for the @localhost@ pseudo-name. Linux glibc resolves
 -- @localhost@ to @::1@ first, but our hydra-node listens on
--- @0.0.0.0@ — IPv4 only — so the IPv6 connect attempt fails with a
+-- @0.0.0.0@ - IPv4 only - so the IPv6 connect attempt fails with a
 -- bewildering "does not exist" before the resolver retries IPv4.
 -- Other hostnames are passed through unchanged.
 normalizeHost :: Text -> Text

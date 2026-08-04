@@ -101,7 +101,7 @@ export default function Balance() {
 
     try {
       if (isHeadId(input)) {
-        // Head ID lookup — show head info + participants
+        // Head ID lookup - show head info + participants
         const [found, participants] = await Promise.all([
           getExplorerHead(input).catch(() => null),
           getHeadParticipants(input).catch(() => [] as ParticipantHeadInfo[]),

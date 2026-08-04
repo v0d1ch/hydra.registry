@@ -13,9 +13,9 @@ It also provides a **payment relay** that routes cross-head payments via HTLC (H
 The registry is deliberately powerless:
 
 - **It never connects to your hydra-node.** Head state reaches the registry through `hydra-registry-agent`, a small one-way telemetry binary you run next to your node. Every connection is outbound from your machine; your node's (unauthenticated) API is never exposed.
-- **The agent physically cannot write to your node.** Its node connection is a read-only WebSocket enforced at the type level, and there is no command channel back — the registry cannot queue, relay, or submit anything.
+- **The agent physically cannot write to your node.** Its node connection is a read-only WebSocket enforced at the type level, and there is no command channel back - the registry cannot queue, relay, or submit anything.
 - **Your keys never leave your machine.** The registry builds unsigned transaction envelopes; you sign offline with your own tooling and submit to your **own** node's `POST /transaction`. There is no submission endpoint on the registry, in any mode.
-- **The agent is auditable.** It is a standalone package (`agent/`) with plain Hackage dependencies — no Cardano toolchain required to read or build it. Agents authenticate with per-agent secrets (the registry stores only their hashes); each agent's self-reported binary hash is recorded for fleet visibility.
+- **The agent is auditable.** It is a standalone package (`agent/`) with plain Hackage dependencies - no Cardano toolchain required to read or build it. Agents authenticate with per-agent secrets (the registry stores only their hashes); each agent's self-reported binary hash is recorded for fleet visibility.
 
 ## What it does
 
@@ -62,8 +62,8 @@ Full endpoint reference: [ARCHITECTURE.md](ARCHITECTURE.md) and the live [/docs]
 
 ## Wallet integration (TODO)
 
-The registry serves standard wallet-backend wire formats — a Blockfrost-style
-UTxO query and a legacy `utxoForAddresses` query — and both are covered by
+The registry serves standard wallet-backend wire formats - a Blockfrost-style
+UTxO query and a legacy `utxoForAddresses` query - and both are covered by
 tests. Pointing a real wallet at the registry end-to-end has **not** been done
 yet and still takes real effort (custom backend URLs, network/era quirks,
 per-wallet testing). Until then, treat wallet support as roadmap, not a
@@ -72,11 +72,11 @@ feature.
 ## Project structure
 
 ```
-agent/      hydra-registry-agent — standalone one-way telemetry agent
+agent/      hydra-registry-agent - standalone one-way telemetry agent
             (Hackage deps only; builds with plain GHC + cabal)
 api/        Haskell backend (Servant + rel8 + PostgreSQL); hydra libraries
             pinned to a hydra master rev via source-repository-package
-website/    React SPA (Vite + TypeScript) — explorer, setup, dashboard,
+website/    React SPA (Vite + TypeScript) - explorer, setup, dashboard,
             invoices, routes, payment tracker, docs
 testnet/    cardano-node + hydra-node harness for end-to-end relay testing
 tools/      standalone browser HTLC wallet helpers (dev)

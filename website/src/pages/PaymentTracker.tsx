@@ -132,7 +132,7 @@ export default function PaymentTracker() {
               </>
             ) : (
               <p style={{ color: 'var(--success)', margin: 0 }}>
-                Secret revealed — bridge operators have been notified.
+                Secret revealed - bridge operators have been notified.
               </p>
             )}
           </div>

@@ -48,15 +48,12 @@ import Relay.EventBus (EventBus, RouteEvent (..))
 import Relay.EventBus qualified as Bus
 import Relay.Graph qualified as Graph
 import Relay.Slot qualified as Slot
-import Servant
+import Servant hiding (respond, route)
 import Data.ByteString.Builder qualified as BB
-import Data.ByteString.Lazy qualified as BSL
-import Network.Wai (Application)
 import Network.Wai.EventSource (ServerEvent (..), eventSourceAppIO)
 import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types.Status (statusCode)
 import Tx.Builder qualified as Tx
-import Control.Exception (SomeException, try)
 import Crypto.Hash (Digest, SHA256, hash)
 import Tx.Builder (extractPkhFromAddress)
 
@@ -112,15 +109,15 @@ type ApiV1Routes =
 
 -- | Full API type
 type API =
-  -- GET / — root endpoint with version and docs link
+  -- GET / - root endpoint with version and docs link
   Get '[JSON] RootResponse
-    -- /api/v1/* — our API endpoints
+    -- /api/v1/* - our API endpoints
     :<|> "api" :> "v1" :> ApiV1Routes
-    -- /addresses/:address/utxos — Blockfrost-compatible (wallet compat, root level)
+    -- /addresses/:address/utxos - Blockfrost-compatible (wallet compat, root level)
     :<|> "addresses" :> Capture "address" Text :> "utxos"
           :> QueryParam "count" Int :> QueryParam "page" Int :> QueryParam "order" Text
           :> Get '[JSON] [UtxoResponse]
-    -- /api/txs/utxoForAddresses — Yoroi-compatible (wallet compat, current path)
+    -- /api/txs/utxoForAddresses - Yoroi-compatible (wallet compat, current path)
     :<|> "api" :> "txs" :> "utxoForAddresses" :> ReqBody '[JSON] YoroiUtxoRequest :> Post '[JSON] [YoroiUtxoResponse]
     -- Static file serving (catch-all for website)
     :<|> Raw
@@ -232,7 +229,7 @@ handleRoot =
   pure
     RootResponse
       { apiVersion = "0.1.0"
-      , description = "Hydra Registry API — query L2 UTxO state across Hydra heads"
+      , description = "Hydra Registry API - query L2 UTxO state across Hydra heads"
       }
 
 -- | GET /api/v1/health
@@ -692,7 +689,7 @@ enrichParticipant pool p = do
 -- | GET /api/v1/relay/graph?network=...
 -- Returns all Open heads on the requested network (explorer-observed or
 -- locally registered), with edges between heads sharing a participant.
--- Heads without participants appear as unconnected nodes — participant
+-- Heads without participants appear as unconnected nodes - participant
 -- data may be missing entirely (e.g. the chain observer can only fully
 -- parse Init txs of its own hydra version). Deduplicates edges and caps
 -- output to keep responses fast.
@@ -705,7 +702,7 @@ handleRelayGraph pool mHtlcHash mNetwork = do
   -- Locally-registered heads with WS status=Open are eligible to participate
   -- in the graph even when the public hydra-explorer hasn't indexed them yet.
   -- We trust the user's network selection (the @network@ query param) for
-  -- these — there's no way to derive the network from a hydra-node WS
+  -- these - there's no way to derive the network from a hydra-node WS
   -- Greetings message.
   registeredHeads <- liftIO $ Db.getAllHeads pool
   let registeredOpenIds = Set.fromList [h.headId | h <- registeredHeads, h.headStatus == "Open"]
@@ -816,7 +813,7 @@ hopUrgency chainSlot timeoutSlot
   | otherwise = "ok"
 
 -- | One role per route. We emit a list because in principle a pkh
--- could play two roles in the same route (e.g. self-pay) — the
+-- could play two roles in the same route (e.g. self-pay) - the
 -- dashboard renders the list.
 routeRolesFor :: Text -> PaymentRoute Identity -> [RouteHop Identity] -> [Text]
 routeRolesFor me route hops =
@@ -988,13 +985,13 @@ handleCreateInvoice pool graphVar req = do
       throwError $ err400{errBody = Aeson.encode $ ErrorResponse "headId does not exist"}
     Just h -> do
       when (h.headStatus /= "Open") $
-        throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Head is not Open — wait for it to be fully connected before creating an invoice"}
+        throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Head is not Open - wait for it to be fully connected before creating an invoice"}
       when (isNothing h.headRefScriptUtxo) $
-        throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Head does not have an HTLC ref script published — publish the validator first (Setup → step 04)"}
+        throwError $ err400{errBody = Aeson.encode $ ErrorResponse "Head does not have an HTLC ref script published - publish the validator first (Setup → step 04)"}
   graph <- liftIO $ readTVarIO graphVar
   let routable = any (\e -> e.edgeFromHead == req.headId || e.edgeToHead == req.headId) graph.graphEdges
   unless routable $
-    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "This head has no routing connections — at least one other head must share a bridge participant before invoices can be created"}
+    throwError $ err400{errBody = Aeson.encode $ ErrorResponse "This head has no routing connections - at least one other head must share a bridge participant before invoices can be created"}
   now <- liftIO getCurrentTime
   iid <- liftIO $ UUID.toText <$> UUID.nextRandom
   let expirySeconds = maybe 3600 id req.expiresInSeconds
@@ -1182,7 +1179,7 @@ buildPaymentStatus pool route = do
 -- the @event:@ name is the constructor tag (e.g. @HopLocked@) and the
 -- @data:@ payload is the JSON-encoded event.
 --
--- The handler 'subscribe's to the bus and filters in-process — there
+-- The handler 'subscribe's to the bus and filters in-process - there
 -- is no DB read on every event. The browser's @EventSource@ handles
 -- reconnect; events 'publish'ed while a client was disconnected are
 -- not replayed (the client reconciles via a fresh @GET /payments/{r}@).
@@ -1208,7 +1205,7 @@ handlePaymentEventStream bus rid = Tagged $ \req respond -> do
 handleSubmitPreimage :: Pool -> EventBus -> Text -> SubmitPreimageRequest -> Handler MessageResponse
 handleSubmitPreimage pool bus paymentHash req = do
   -- Validate: blake2b-256(preimage) must equal the payment hash
-  -- For now, trust the caller — validation requires a blake2b binding.
+  -- For now, trust the caller - validation requires a blake2b binding.
   -- The on-chain script is the ultimate validator anyway.
   liftIO $ Db.setPreimageByHash pool paymentHash req.preimage
   -- Fire one PreimageRevealed event per distinct route this payment
@@ -1217,7 +1214,7 @@ handleSubmitPreimage pool bus paymentHash req = do
   -- bridge's upstream claim button).
   affected <- liftIO $ Db.getRouteIdsByPaymentHash pool paymentHash
   liftIO $ mapM_ (\rid -> Bus.publish bus PreimageRevealed{routeId = rid, paymentHash}) affected
-  pure $ MessageResponse "Preimage stored — bridge operators can now claim their hops"
+  pure $ MessageResponse "Preimage stored - bridge operators can now claim their hops"
 
 -- ─── HTLC tx blueprint handlers ───
 --
@@ -1350,7 +1347,7 @@ handleLockTx pool chainSlotVar rid idx = do
   senderPkh <- decodeAddrPkh "sender" hop.hopSenderAddress
   receiverPkh <- decodeAddrPkh "receiver" hop.hopReceiverAddress
   -- If the head has a published shared ref-script UTxO, the lock output
-  -- doesn't need to inline the validator — that drops the lock's
+  -- doesn't need to inline the validator - that drops the lock's
   -- min-ada from ≈ 5.6 ADA to ≈ 1.5 ADA, which makes small invoices
   -- viable. The bridge agent / operator publishes the UTxO once and
   -- registers it via @POST /heads/{id}/ref-script@.
@@ -1359,7 +1356,7 @@ handleLockTx pool chainSlotVar rid idx = do
       timeoutSlot = hop.hopTimeoutSlot
   -- The HTLC validator compares @datum.timeout@ against the tx's
   -- @validity_range@, which Plutus exposes as a 'POSIXTime' in
-  -- milliseconds. So @datum.timeout@ has to be POSIX-ms too — not the
+  -- milliseconds. So @datum.timeout@ has to be POSIX-ms too - not the
   -- slot we use elsewhere.
   timeoutMs <- case Slot.slotToPosixMs route.routeNetwork timeoutSlot of
     Just ms -> pure ms
@@ -1498,7 +1495,7 @@ pickInputUtxo pool hid walletAddr needed = do
                     <> " lovelace"
           }
 
--- | Pick a pure-ADA UTxO suitable for collateral — at least
+-- | Pick a pure-ADA UTxO suitable for collateral - at least
 -- @needed@ lovelace, and explicitly *different* from the input
 -- UTxO so we don't trip BabbageNonDisjointRefInputs / etc.
 pickCollateralUtxo :: Pool -> Text -> Text -> Int64 -> (Text, Int32) -> Handler (Utxo Identity)
@@ -1529,7 +1526,7 @@ pickCollateralUtxo pool hid walletAddr needed (excludeTx, excludeIx) = do
       u.utxoLovelace >= needed
         && not (u.utxoTxHash == excludeTx && u.utxoOutputIndex == excludeIx)
 
--- | Plutus V3 envelope JSON for an arbitrary script CBOR hex —
+-- | Plutus V3 envelope JSON for an arbitrary script CBOR hex -
 -- shape that @cardano-cli@ expects in @--tx-out-reference-script-file@
 -- and friends.
 plutusEnvelopeJson :: Text -> Aeson.Value
@@ -1890,7 +1887,7 @@ handleAgentEvent pool eventQueue mAuthHeader mBinaryHashHeader req = do
 
 -- | Authenticate an agent request. Identity is the Bearer secret alone.
 -- The binary-hash header is telemetry, not policy: it cannot be trusted
--- (self-reported), so it is recorded for fleet visibility — a changed
+-- (self-reported), so it is recorded for fleet visibility - a changed
 -- hash (operator upgraded the agent) updates the registration row
 -- rather than locking the agent out.
 requireAgent :: Pool -> Maybe Text -> Maybe Text -> Handler (AgentRegistration Identity)

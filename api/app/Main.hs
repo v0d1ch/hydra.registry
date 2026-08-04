@@ -46,7 +46,7 @@ main = do
   -- without trusting the registry's local system clock.
   chainSlotVar <- newTVarIO (0 :: Int64)
 
-  -- Relay event bus — fan-out for HTLC lock/claim/preimage transitions
+  -- Relay event bus - fan-out for HTLC lock/claim/preimage transitions
   -- so SSE subscribers get pushed deltas instead of having to poll.
   bus <- EventBus.newEventBus
 
@@ -54,14 +54,14 @@ main = do
   indexerAsync <- async $ Indexer.startIndexer logger pool chainSlotVar bus config.htlcScriptHash eventQueue
   logInfo logger "Indexer started" []
 
-  -- Reconnect to registered heads — only in direct-WS (dev) mode; in
+  -- Reconnect to registered heads - only in direct-WS (dev) mode; in
   -- production, events arrive exclusively via agent push.
   if config.directWs
     then do
       Indexer.reconnectAllHeads logger pool eventQueue
       logInfo logger "Reconnected to registered heads" []
     else
-      logInfo logger "Direct WS disabled — relying on agent push for head events" []
+      logInfo logger "Direct WS disabled - relying on agent push for head events" []
 
   -- Initialize relay graph
   relayGraphVar <- newTVarIO Graph.emptyGraph
@@ -156,4 +156,3 @@ main = do
       cancel cleanupAsync
       mapM_ cancel mBlockfrostAsync
       logInfo logger "Shutdown complete" []
-

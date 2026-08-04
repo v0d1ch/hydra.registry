@@ -52,13 +52,13 @@ spec = describe "Relay.EventBus" $ do
   it "subscribers do not see events published before they subscribed" $ do
     bus <- newEventBus
     now <- getCurrentTime
-    -- Published with no subscribers — disappears.
+    -- Published with no subscribers - disappears.
     publish bus (HopLocked "older" 0 "tx-old" now)
     sub <- subscribe bus
     publish bus (HopLocked "newer" 0 "tx-new" now)
     delivered <- atomically (readTChan sub)
     delivered `shouldBe` HopLocked "newer" 0 "tx-new" now
-    -- Channel is now empty — the older event was never seen.
+    -- Channel is now empty - the older event was never seen.
     empty <- atomically (isEmptyTChan sub)
     empty `shouldBe` True
 
@@ -66,13 +66,13 @@ spec = describe "Relay.EventBus" $ do
     bus <- newEventBus
     sub1 <- subscribe bus
     sub2 <- subscribe bus
-    now <- getCurrentTime
+    _now <- getCurrentTime
     let ev = RouteCompleted "r"
     publish bus ev
     -- Drain sub1 only.
     _ <- atomically (readTChan sub1)
     -- sub2 still has the event waiting.
-    pending <- atomically (isEmptyTChan sub2)
-    pending `shouldBe` False
+    stillPending <- atomically (isEmptyTChan sub2)
+    stillPending `shouldBe` False
     delivered <- atomically (readTChan sub2)
     delivered `shouldBe` ev

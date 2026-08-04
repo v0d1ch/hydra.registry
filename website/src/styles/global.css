@@ -343,7 +343,7 @@ main {
 .hero-title {
   font-family: 'Press Start 2P', monospace;
   /* Fluid size: the title is one word split into per-char spans, so it
-     must never wrap — scale it down instead of letting the last glyph
+     must never wrap - scale it down instead of letting the last glyph
      drop to a second line. */
   font-size: clamp(1.2rem, 5.5vw, 3.5rem);
   white-space: nowrap;

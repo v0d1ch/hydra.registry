@@ -33,7 +33,7 @@ nix develop
 This provides GHC 9.6.7, cabal, Node.js, PostgreSQL tools, and the hydra
 runtime binaries (hydra-node, hydra-tui) from the flake-locked hydra master
 rev. The backend's hydra library dependencies are fetched by cabal from the
-same pinned rev — no local hydra checkout is needed or used.
+same pinned rev - no local hydra checkout is needed or used.
 
 ### 2. Start PostgreSQL
 
@@ -81,7 +81,7 @@ The Vite dev server proxies `/api` requests to the backend at `localhost:8080`.
 ### 5. The agent (optional, for operators)
 
 `hydra-registry-agent` is a standalone package in `agent/` with Hackage-only
-dependencies — it does **not** need the Cardano toolchain, CHaP, or the local
+dependencies - it does **not** need the Cardano toolchain, CHaP, or the local
 hydra checkout that the server build uses:
 
 ```bash
@@ -215,13 +215,13 @@ TEST_DB_CONN_STR="host=localhost port=5432 dbname=my_test_db" cabal test
 ```
 
 The test suite includes 108 tests:
-- API integration tests — all endpoints including explorer (18 tests)
+- API integration tests - all endpoints including explorer (18 tests)
 - JSON roundtrip tests for all API types (17 tests)
-- Database CRUD — heads, UTxOs, explorer heads, filtering, aggregation (26 tests)
-- Address validation — Bech32, hex, base58, property tests (20 tests)
-- Hydra message parsing — Greetings, SnapshotConfirmed, HeadIsClosed, HeadIsFinalized (15 tests)
-- Explorer client — JSON parsing of on-chain head entries (4 tests)
-- Rate limiter — per-client tracking, cleanup (6 tests)
+- Database CRUD - heads, UTxOs, explorer heads, filtering, aggregation (26 tests)
+- Address validation - Bech32, hex, base58, property tests (20 tests)
+- Hydra message parsing - Greetings, SnapshotConfirmed, HeadIsClosed, HeadIsFinalized (15 tests)
+- Explorer client - JSON parsing of on-chain head entries (4 tests)
+- Rate limiter - per-client tracking, cleanup (6 tests)
 - Config loading (2 tests)
 
 ## Website pages

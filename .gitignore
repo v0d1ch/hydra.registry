@@ -17,7 +17,7 @@ static.out
 pgdata/
 .direnv/
 
-# Secrets — never commit these
+# Secrets - never commit these
 .env
 .env.*
 .deploy.env

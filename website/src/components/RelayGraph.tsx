@@ -61,7 +61,7 @@ export default function RelayGraph({ nodes, edges }: Props) {
 
   // Initialize physics nodes when data changes
   useEffect(() => {
-    // Place in normalized coords [0,1] — will be mapped to actual canvas in render loop
+    // Place in normalized coords [0,1] - will be mapped to actual canvas in render loop
     const pNodes: PhysicsNode[] = nodes.map((node, i) => {
       const angle = (2 * Math.PI * i) / nodes.length
       const r = 0.35
@@ -102,7 +102,7 @@ export default function RelayGraph({ nodes, edges }: Props) {
     hoveredRef.current = null
   }, [nodes, edges])
 
-  // Physics + render loop — reads canvas display size each frame
+  // Physics + render loop - reads canvas display size each frame
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -226,7 +226,7 @@ export default function RelayGraph({ nodes, edges }: Props) {
         pNodes[i].x += pNodes[i].vx
         pNodes[i].y += pNodes[i].vy
 
-        // Circular boundary — push back toward center if outside radius
+        // Circular boundary - push back toward center if outside radius
         const dx = pNodes[i].x - cx
         const dy = pNodes[i].y - cy
         const dist = Math.sqrt(dx * dx + dy * dy)
@@ -361,7 +361,7 @@ export default function RelayGraph({ nodes, edges }: Props) {
         const p = pNodes[hoverIdx]
         const conns = adjRef.current.neighbors.get(p.id)?.size ?? 0
         const label = p.id.slice(0, 20) + '...'
-        const meta = (p.node.isUserHead ? 'My head  ' : '') + (p.node.hasHtlc ? 'HTLC  ' : '') + `${conns} connection${conns !== 1 ? 's' : ''}`
+        const meta = (p.node.isUserHead ? 'Registered  ' : '') + (p.node.hasHtlc ? 'HTLC  ' : '') + `${conns} connection${conns !== 1 ? 's' : ''}`
         const tw = 200
         const th = 44
         const flipX = p.x > w - tw - 20
@@ -528,7 +528,7 @@ export default function RelayGraph({ nodes, edges }: Props) {
             >
               <div className="graph-detail-header">
                 <span className="graph-detail-dot" style={{ background: selectedNode.isUserHead ? USER_HEAD_COLOR : color }} />
-                <h4>{selectedNode.isUserHead ? 'My Head' : 'Head Details'}</h4>
+                <h4>{selectedNode.isUserHead ? 'Registered Head' : 'Head Details'}</h4>
                 <button className="graph-clear-btn" onClick={() => setSelected(null)}>Close</button>
               </div>
               <div className="graph-detail-body">
@@ -543,6 +543,10 @@ export default function RelayGraph({ nodes, edges }: Props) {
                 <div className="graph-detail-row">
                   <span className="graph-detail-label">TVL</span>
                   <span className="graph-detail-value">{(selectedNode.committedLovelace / 1_000_000).toFixed(2)} ADA</span>
+                </div>
+                <div className="graph-detail-row">
+                  <span className="graph-detail-label">Registered</span>
+                  <span className="graph-detail-value">{selectedNode.isUserHead ? 'Yes - live agent feeds this registry' : 'No - discovered on-chain only'}</span>
                 </div>
                 <div className="graph-detail-row">
                   <span className="graph-detail-label">HTLC</span>
@@ -581,7 +585,7 @@ export default function RelayGraph({ nodes, edges }: Props) {
         </span>
         <span className="legend-item">
           <svg width="10" height="10"><circle cx="5" cy="5" r="4" fill="none" stroke={USER_HEAD_COLOR} strokeWidth="1.5" /></svg>
-          My head
+          Registered
         </span>
         <span className="legend-item relay-graph-count">{nodes.length} heads, {edges.length} links</span>
       </div>

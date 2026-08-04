@@ -16,13 +16,11 @@ module L1.HeadScan where
 
 import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)
-import Data.Aeson (toJSON)
 import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as Base16
 import Data.Int (Int64)
 import Data.List (sort)
 import Data.Maybe (mapMaybe)
-import Data.Text (Text)
 import Data.Text.Encoding qualified as TE
 import Db qualified
 import Db.Schema (HeadParticipant (..))
@@ -43,7 +41,7 @@ data HeadScanResult = HeadScanResult
   deriving stock (Eq, Show)
 
 -- | Head validator script hashes of every published hydra version, mirroring
--- hydra-chain-observer's @script-hashes.json@ registry. Data only — no
+-- hydra-chain-observer's @script-hashes.json@ registry. Data only - no
 -- scripts, no datum knowledge.
 headValidatorHashes :: [(Text, Text)]
 headValidatorHashes =
@@ -111,7 +109,7 @@ networkIdFor = \case
   _ -> Nothing
 
 -- | Query all head validator addresses on one network via a local node
--- socket. Failures are logged and yield no results — the caller's loop
+-- socket. Failures are logged and yield no results - the caller's loop
 -- must stay alive regardless of node availability.
 scanNetwork :: Logger -> Text -> FilePath -> IO [HeadScanResult]
 scanNetwork logger network socketPath =
@@ -121,7 +119,7 @@ scanNetwork logger network socketPath =
       pure []
     Just networkId -> do
       let addrTexts = [a | (_v, h) <- headValidatorHashes, Right a <- [scriptAddressFromHash h network]]
-          addrs = mapMaybe (deserialiseAddress AsShelleyAddress) addrTexts
+          addrs = mapMaybe (deserialiseAddress (AsAddress AsShelleyAddr)) addrTexts
           connectInfo = LocalNodeConnectInfo cardanoModeParams networkId (File socketPath)
       result <- try @SomeException $ queryUTxO connectInfo QueryTip addrs
       case result of
