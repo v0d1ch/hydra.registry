@@ -269,16 +269,59 @@ nix run github:v0d1ch/hydra.registry#hydra-registry-agent   # or ./hydra-registr
             Every HTLC lock and claim transaction references the same Plutus validator. Rather than
             embedding the full script in every transaction, it lives as a single
             <strong> reference script UTxO inside the head</strong> that all transactions point to.
-            This is done once per head by whoever operates it.
+            This is done once per head by whoever operates it — two ways to get it in there.
           </p>
-          <p className="register-desc">
-            You need an address that <strong>has funds committed inside the head</strong> — the
-            same address you used when committing UTxOs at head initialisation. The transaction is
-            built and signed locally using the Cardano signing key for that address, then submitted
-            to the head over its WebSocket API.
-          </p>
+
           <div className="setup-steps">
-            <h3>Step-by-step</h3>
+            <h3>Path A — deposit it with your funds (recommended)</h3>
+            <p className="register-desc" style={{ marginTop: '0.75rem' }}>
+              Create the script-carrying UTxO on <strong>L1</strong> and deposit it into the head —
+              the script rides in with your funding, no in-head transaction needed and no
+              requirement to already hold funds inside the head. Costs ~6 ADA min-ADA, parked at
+              your own address and returned at fanout.
+            </p>
+            <pre className="code-block">{`# 1. Save the validator as a cardano-cli script file
+curl -s ${apiBase}/api/v1/htlc/validator \\
+  | jq '{type: "PlutusScriptV3", description: "", cborHex: .scriptCborHex}' > htlc.plutus
+
+# 2. Create an L1 output at YOUR address carrying it as a reference script
+cardano-cli conway transaction build --testnet-magic 1 --socket-path <node.socket> \\
+  --tx-in <an L1 UTxO you own> \\
+  --tx-out "<your-address>+6000000" \\
+  --tx-out-reference-script-file htlc.plutus \\
+  --change-address <your-address> \\
+  --out-file create-ref.raw
+cardano-cli conway transaction sign --tx-file create-ref.raw \\
+  --signing-key-file <your-address>.sk --out-file create-ref.signed
+cardano-cli conway transaction submit --tx-file create-ref.signed \\
+  --testnet-magic 1 --socket-path <node.socket>
+REF_TXID=$(cardano-cli conway transaction txid --tx-file create-ref.signed)
+
+# 3. Deposit that UTxO into the head: your hydra-node drafts the deposit tx
+cardano-cli conway query utxo --tx-in $REF_TXID#0 \\
+  --testnet-magic 1 --socket-path <node.socket> --output-json \\
+  | curl -s -X POST http://127.0.0.1:4001/commit \\
+      -H 'Content-Type: application/json' --data @- > deposit-tx.json
+
+# 4. Sign it with the same key and hand it back to your node for L1 submission
+cardano-cli conway transaction sign --tx-file deposit-tx.json \\
+  --signing-key-file <your-address>.sk --out-file deposit-tx.signed
+curl -X POST http://127.0.0.1:4001/cardano-transaction \\
+  -H 'Content-Type: application/json' --data @deposit-tx.signed
+
+# 5. After the deposit is incremented into the head (deposit period —
+#    your agent's snapshots will show the UTxO arrive; deposited UTxOs
+#    keep their outref), register it:
+curl -X POST ${apiBase}/api/v1/heads/{headId}/ref-script \\
+  -H 'Content-Type: application/json' -d '{"utxo": "'$REF_TXID'#0"}'`}</pre>
+
+            <h3 style={{ marginTop: '2rem' }}>Path B — publish from inside the head</h3>
+            <p className="register-desc" style={{ marginTop: '0.75rem' }}>
+              For heads where you already hold funds <strong>inside</strong>: build an in-head
+              transaction that creates the reference UTxO. You need the address you funded the
+              head from — the transaction is built by the registry, signed locally with that
+              address's key, and submitted to your own node.
+            </p>
             <div className="next-steps">
               <div className="next-step">
                 <span className="next-num">1</span>
