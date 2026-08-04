@@ -42,6 +42,7 @@ library
     Hydra.Htlc
     Indexer
     L1.HeadScan
+    L1.HtlcScan
     Logging
     Metrics
     Middleware.RateLimit
@@ -149,6 +150,7 @@ test-suite hydra-registry-api-test
     ApiTypesSpec
     ConfigSpec
     L1HeadScanSpec
+    L1HtlcScanSpec
     DbIntegrationSpec
     ExplorerClientSpec
     HydraClientSpec

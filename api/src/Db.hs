@@ -146,6 +146,7 @@ initDb pool =
       \);\
       \CREATE INDEX IF NOT EXISTS idx_route_hops_route_id ON route_hops (route_id);\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS sender_address TEXT NOT NULL DEFAULT '';\
+      \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS l1_last_seen_slot BIGINT;\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS receiver_address TEXT NOT NULL DEFAULT '';\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS htlc_status TEXT NOT NULL DEFAULT 'pending';\
       \ALTER TABLE route_hops ADD COLUMN IF NOT EXISTS htlc_tx_hash TEXT;\
@@ -995,6 +996,7 @@ insertRouteHops pool hops =
       , hopFeeLovelace = lit fee
       , hopLockedAt = lit Nothing
       , hopClaimedAt = lit Nothing
+      , hopL1LastSeenSlot = lit Nothing
       }
 
 -- | Get hops for a route
@@ -1201,6 +1203,49 @@ updateHopClaimed pool hopId claimedTime =
             , updateWhere = \_ row -> row.hopId ==. lit hopId
             , returning = NoReturning
             }
+
+-- | Mark a hop as refunded — its HTLC was spent via the timeout path.
+updateHopRefunded :: Pool -> Text -> IO ()
+updateHopRefunded pool hopId =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = routeHopSchema
+            , from = pure ()
+            , set = \_ row -> row{hopHtlcStatus = lit "refunded"}
+            , updateWhere = \_ row -> row.hopId ==. lit hopId
+            , returning = NoReturning
+            }
+
+-- | Record the chain slot at which the L1 scan last saw a hop's HTLC
+-- UTxO at the script address.
+updateHopL1Seen :: Pool -> Text -> Int64 -> IO ()
+updateHopL1Seen pool hopId slot =
+  runSession pool $
+    Session.statement () $
+      Rel8.run_ $
+        Rel8.update
+          Update
+            { target = routeHopSchema
+            , from = pure ()
+            , set = \_ row -> row{hopL1LastSeenSlot = lit (Just slot)}
+            , updateWhere = \_ row -> row.hopId ==. lit hopId
+            , returning = NoReturning
+            }
+
+-- | All hops currently in @locked@ status, across every route and head —
+-- the working set of the L1 settlement scan.
+getLockedHops :: Pool -> IO [RouteHop Identity]
+getLockedHops pool =
+  runSession pool $
+    Session.statement () $
+      Rel8.run $
+        Rel8.select $ do
+          row <- Rel8.each routeHopSchema
+          Rel8.where_ $ row.hopHtlcStatus ==. lit "locked"
+          pure row
 
 -- | Store the revealed preimage on all hops sharing the same secret hash.
 -- Once revealed, every hop in the cascade can use it to claim.

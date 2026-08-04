@@ -391,55 +391,83 @@ required_signers:
         <h2 className="section-title">End to end: lock an HTLC with cardano-cli</h2>
         <p className="register-desc">
           The complete flow from nothing to a locked HTLC, using only{' '}
-          <code>cardano-cli</code>, <code>curl</code>, and coreutils. Prerequisites:
-          you hold funds <em>inside</em> an Open head that is registered here (its
-          agent is running), and the head has its HTLC reference script published
-          (Setup page, one-time). Steps 1–2 are the <strong>receiver</strong>;
-          the rest is the <strong>sender</strong>.
+          <code>cardano-cli</code>, <code>curl</code>, and coreutils. Steps 1–2
+          are the <strong>receiver</strong>; the rest is the{' '}
+          <strong>sender</strong>. Do not skip step 0 — every later call fails
+          without it.
         </p>
 
         <div className="setup-steps">
-          <h3>1 — Receiver: generate the secret and its hash</h3>
+          <h3>0 — Prerequisites: the head must be registered here first</h3>
+          <pre className="code-block">{`curl -s ${window.location.origin}/api/v1/heads/<your headId>
+
+# {"error":"Head not found"}  → not registered: start the agent on the
+#   machine running your hydra-node (see Setup, step 03), then re-check:
+export HYDRA_NODE_WS_URL=ws://127.0.0.1:4001
+export HYDRA_REGISTRY_URL=${window.location.origin}
+nix run github:v0d1ch/hydra.registry#hydra-registry-agent
+#   the head appears the moment the agent relays its Open Greetings — keep it running
+
+# {"headId": ..., "utxoCount": ..., "htlcEnabled": ...}  → registered.
+#   "htlcEnabled" must be true before you continue: invoice creation is
+#   REJECTED for heads without a published HTLC reference script. Publish
+#   it once per head (Setup page, "publish reference script" steps),
+#   using an in-head UTxO of at least ~8.5 ADA`}</pre>
+          <p className="register-desc" style={{ marginTop: '0.75rem' }}>
+            You also need funds <em>inside</em> the head at an address you can
+            sign for — the lock spends an in-head UTxO of yours.
+          </p>
+
+          <h3 style={{ marginTop: '2rem' }}>1 — Receiver: generate the secret and its hash</h3>
           <pre className="code-block">{`openssl rand -hex 32 > preimage.hex          # keep this private until claim time
 PAYMENT_HASH=$(xxd -r -p preimage.hex | b2sum -l 256 | cut -d' ' -f1)
 echo $PAYMENT_HASH`}</pre>
-          <p className="register-desc">
+          <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             The validator checks <code>blake2b_256(preimage) == datum.hash</code> over
             the raw 32 bytes — hence the <code>xxd -r -p</code> before hashing.
             <code> b2sum -l 256</code> (GNU coreutils) is BLAKE2b with a 256-bit digest.
           </p>
 
-          <h3>2 — Receiver: create the invoice</h3>
-          <pre className="code-block">{`curl -X POST ${window.location.origin}/api/v1/relay/invoices \\
+          <h3 style={{ marginTop: '2rem' }}>2 — Receiver: create the invoice</h3>
+          <p className="register-desc" style={{ marginTop: '0.75rem' }}>
+            You are identified by your <em>OnChainId</em> — the 28-byte key hash
+            of your hydra-node's <code>--cardano-signing-key</code>. The head
+            must be registered here (agent running), or invoice creation fails.
+          </p>
+          <pre className="code-block">{`ONCHAIN_ID=$(cardano-cli address key-hash \\
+  --payment-verification-key-file <your-cardano-key>.vk)
+
+curl -X POST ${window.location.origin}/api/v1/relay/invoices \\
   -H 'Content-Type: application/json' \\
   -d '{
-    "receiverAddress": "addr_test1...",
-    "paymentHash":     "'$PAYMENT_HASH'",
-    "amountLovelace":  5000000,
-    "expiresInSeconds": 3600
+    "headId":            "<your headId>",
+    "receiverOnChainId": "'$ONCHAIN_ID'",
+    "paymentHash":       "'$PAYMENT_HASH'",
+    "amountLovelace":    5000000,
+    "expiresInSeconds":  3600
   }'
 # → note the "invoiceId" in the response`}</pre>
 
-          <h3>3 — Sender: find and pick a route</h3>
+          <h3 style={{ marginTop: '2rem' }}>3 — Sender: find and pick a route</h3>
           <pre className="code-block">{`curl -X POST ${window.location.origin}/api/v1/relay/routes \\
   -H 'Content-Type: application/json' \\
-  -d '{"invoiceId": "<invoiceId>", "senderAddress": "addr_test1...", "network": "Preprod"}'
+  -d '{"invoiceId": "<invoiceId>", "senderOnChainId": "<your 56-hex key hash>", "network": "Preprod"}'
 # → up to 3 routes; note the "routeId" of the one you want
 
 curl -X POST ${window.location.origin}/api/v1/relay/routes/<routeId>/execute`}</pre>
 
-          <h3>4 — Sender: build the hop-0 lock transaction</h3>
+          <h3 style={{ marginTop: '2rem' }}>4 — Sender: build the hop-0 lock transaction</h3>
           <pre className="code-block">{`curl -X POST ${window.location.origin}/api/v1/relay/payments/<routeId>/hops/0/lock-tx-cbor \\
   -H 'Content-Type: application/json' \\
   -d '{"walletAddress": "addr_test1..."}' > tx.raw`}</pre>
-          <p className="register-desc">
+          <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             The registry picks an in-head UTxO of yours, computes the datum
             (payment hash, receiver, timeout slot) and fees, and returns an
             <strong> unsigned</strong> Conway text envelope — <code>tx.raw</code> is
             directly usable by cardano-cli. Your keys are never involved server-side.
           </p>
 
-          <h3>5 — Sign offline, submit to your own node</h3>
+          <h3 style={{ marginTop: '2rem' }}>5 — Sign offline, submit to your own node</h3>
           <pre className="code-block">{`cardano-cli conway transaction sign \\
   --tx-file tx.raw \\
   --signing-key-file <your-address>.sk \\
@@ -448,16 +476,16 @@ curl -X POST ${window.location.origin}/api/v1/relay/routes/<routeId>/execute`}</
 curl -X POST http://127.0.0.1:4001/transaction \\
   -H 'Content-Type: application/json' \\
   --data @tx.signed`}</pre>
-          <p className="register-desc">
+          <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             Adjust host/port to your hydra-node's API. The node validates the
             transaction inside the head and answers with the verdict; the registry
             never submits anything.
           </p>
 
-          <h3>6 — Verify</h3>
+          <h3 style={{ marginTop: '2rem' }}>6 — Verify</h3>
           <pre className="code-block">{`curl -s ${window.location.origin}/api/v1/relay/payments/<routeId> | jq '.hops[0].htlcStatus'
 # → "locked" once the next snapshot confirms`}</pre>
-          <p className="register-desc">
+          <p className="register-desc" style={{ marginTop: '0.75rem' }}>
             From here the cascade proceeds hop by hop (bridges re-lock downstream,
             the receiver claims with the preimage, claims propagate back) — see{' '}
             <em>The payment cascade</em> above. The Dashboard shows the same

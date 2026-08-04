@@ -40,6 +40,14 @@ data RouteEvent
       , hopIndex :: Int
       , at :: UTCTime
       }
+  | -- | A locked hop's HTLC was spent after its timeout — the locker
+    --   took the refund path. Observed by the L1 scan after a head
+    --   closed with the hop in flight.
+    HopRefunded
+      { routeId :: Text
+      , hopIndex :: Int
+      , at :: UTCTime
+      }
   | -- | The receiver (or some downstream party) submitted the
     --   preimage to @POST /relay/preimage/{hash}@. Every upstream
     --   bridge sharing that payment hash can now build a Claim.
@@ -59,6 +67,7 @@ routeEventRouteId :: RouteEvent -> Text
 routeEventRouteId = \case
   HopLocked{routeId} -> routeId
   HopClaimed{routeId} -> routeId
+  HopRefunded{routeId} -> routeId
   PreimageRevealed{routeId} -> routeId
   RouteCompleted{routeId} -> routeId
 
@@ -69,6 +78,7 @@ routeEventTag :: RouteEvent -> Text
 routeEventTag = \case
   HopLocked{} -> "HopLocked"
   HopClaimed{} -> "HopClaimed"
+  HopRefunded{} -> "HopRefunded"
   PreimageRevealed{} -> "PreimageRevealed"
   RouteCompleted{} -> "RouteCompleted"
 

@@ -212,6 +212,7 @@ export default function Setup() {
               the registry, which records it for fleet visibility.
             </p>
             <pre className="code-block">{`# with nix (recommended — you already use it for hydra-node)
+# (vanilla nix: add --extra-experimental-features 'nix-command flakes')
 nix run github:v0d1ch/hydra.registry#hydra-registry-agent
 
 # or download the latest release binary and verify it

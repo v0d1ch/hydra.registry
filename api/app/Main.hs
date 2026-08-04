@@ -74,6 +74,8 @@ main = do
           , relayGraphVar = relayGraphVar
           , defaultNetwork = config.defaultNetwork
           , l1Sockets = config.l1Sockets
+          , eventBus = bus
+          , htlcScriptHash = config.htlcScriptHash
           }
   sidecarAsync <- async $ Sidecar.startSidecar logger pool sidecarConfig
   logInfo logger "Explorer sidecar started" [("url", toJSON config.explorerUrl), ("interval_s", toJSON config.explorerPollIntervalSeconds)]

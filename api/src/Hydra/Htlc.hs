@@ -1,6 +1,7 @@
 module Hydra.Htlc where
 
 import Codec.Binary.Bech32 qualified as Bech32
+import Codec.CBOR.Read qualified as CBOR.Read
 import Codec.CBOR.Term qualified as CBOR
 import Codec.CBOR.Write qualified as CBOR
 import Data.Bits (shiftR, (.&.))
@@ -121,3 +122,40 @@ refundRedeemerCbor =
 
 encodeTerm :: CBOR.Term -> ByteString
 encodeTerm = LBS.toStrict . CBOR.toLazyByteString . CBOR.encodeTerm
+
+-- | A decoded HTLC datum, fields hex-encoded to match how the registry
+-- stores hop data (@hopSecretHash@ etc.).
+data HtlcDatum = HtlcDatum
+  { datumHashHex :: Text
+  , datumTimeout :: Int64
+  , datumSenderHex :: Text
+  , datumReceiverHex :: Text
+  }
+  deriving stock (Eq, Show)
+
+-- | Decode the HTLC datum CBOR produced by 'mkDatumCbor' (and by any
+-- conforming lock transaction): @Constr 0 [bytes32, int, bytes28, bytes28]@.
+-- Anything else — wrong constructor, wrong arity, wrong field sizes,
+-- trailing bytes — yields 'Nothing'.
+decodeDatumCbor :: ByteString -> Maybe HtlcDatum
+decodeDatumCbor bs =
+  case CBOR.Read.deserialiseFromBytes CBOR.decodeTerm (LBS.fromStrict bs) of
+    Right (rest, CBOR.TTagged 121 (CBOR.TList [CBOR.TBytes h, tInt, CBOR.TBytes s, CBOR.TBytes r]))
+      | LBS.null rest
+      , BS.length h == 32
+      , BS.length s == 28
+      , BS.length r == 28
+      , Just t <- intFromTerm tInt ->
+          Just
+            HtlcDatum
+              { datumHashHex = hexEncode h
+              , datumTimeout = t
+              , datumSenderHex = hexEncode s
+              , datumReceiverHex = hexEncode r
+              }
+    _ -> Nothing
+ where
+  intFromTerm = \case
+    CBOR.TInt i -> Just (fromIntegral i)
+    CBOR.TInteger i -> Just (fromIntegral i)
+    _ -> Nothing

@@ -1,6 +1,7 @@
 module Relay.HtlcWatcher
   ( processUtxoSnapshot
   , htlcScriptAddresses
+  , checkRouteCompletion
   )
 where
 

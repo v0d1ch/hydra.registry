@@ -45,6 +45,43 @@ spec = do
       -- D8 7A (tag 122) 80 (empty array)
       hexEncode refundRedeemerCbor `shouldBe` "d87a80"
 
+  describe "decodeDatumCbor" $ do
+    it "roundtrips mkDatumCbor" $ do
+      let hashB = BS.replicate 32 7
+          senderB = BS.replicate 28 1
+          receiverB = BS.replicate 28 2
+          encoded = mkDatumCbor hashB 123456789 senderB receiverB
+      decodeDatumCbor encoded
+        `shouldBe` Just
+          HtlcDatum
+            { datumHashHex = hexEncode hashB
+            , datumTimeout = 123456789
+            , datumSenderHex = hexEncode senderB
+            , datumReceiverHex = hexEncode receiverB
+            }
+
+    it "decodes the golden vector from the encoder test" $ do
+      let golden = decodeHex $ "d87984" <> "5820" <> hex32Zeros <> "1864" <> "581c" <> hex28Zeros <> "581c" <> hex28Zeros
+      decodeDatumCbor golden
+        `shouldBe` Just
+          HtlcDatum
+            { datumHashHex = hex32Zeros
+            , datumTimeout = 100
+            , datumSenderHex = hex28Zeros
+            , datumReceiverHex = hex28Zeros
+            }
+
+    it "rejects a Claim redeemer (wrong shape)" $ do
+      decodeDatumCbor (mkClaimRedeemerCbor (decodeHex "deadbeef")) `shouldBe` Nothing
+
+    it "rejects wrong field sizes" $ do
+      -- 4-byte hash instead of 32
+      decodeDatumCbor (mkDatumCbor (BS.replicate 4 0) 1 (BS.replicate 28 0) (BS.replicate 28 0))
+        `shouldBe` Nothing
+
+    it "rejects garbage bytes" $ do
+      decodeDatumCbor (decodeHex "deadbeef") `shouldBe` Nothing
+
   describe "addressOrPkhToBytes" $ do
     it "accepts a 56-char hex pkh and returns 28 bytes" $ do
       let pkhHex = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c" :: Text

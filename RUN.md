@@ -130,7 +130,8 @@ The receiver creates an invoice with a BLAKE2b-256 hash of their secret:
 curl -X POST http://localhost:8080/api/v1/relay/invoices \
   -H "Content-Type: application/json" \
   -d '{
-    "receiverAddress": "addr1q...",
+    "headId": "your-head-id",
+    "receiverOnChainId": "56-hex vkey hash",
     "paymentHash": "a1b2c3...64hex",
     "amountLovelace": 50000000,
     "memo": "Payment for service",
@@ -148,7 +149,7 @@ curl -X POST http://localhost:8080/api/v1/relay/routes \
   -H "Content-Type: application/json" \
   -d '{
     "invoiceId": "inv-abc123",
-    "senderAddress": "addr1q...",
+    "senderOnChainId": "56-hex vkey hash",
     "network": "Mainnet"
   }'
 

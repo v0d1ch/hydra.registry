@@ -107,7 +107,8 @@ hydra.registry/
 │   │   │   ├── Client.hs      # WS listener + HydraEvent ADT
 │   │   │   └── Htlc.hs        # CBOR encoding for datum/redeemer
 │   │   ├── L1/
-│   │   │   └── HeadScan.hs    # participants + TVL from head UTxOs via local nodes
+│   │   │   ├── HeadScan.hs    # participants + TVL from head UTxOs via local nodes
+│   │   │   └── HtlcScan.hs    # post-close HTLC settlements at the L1 script address
 │   │   ├── Tx/
 │   │   │   └── Builder.hs     # native cardano-api tx building: lock/claim/refund/publish
 │   │   ├── Indexer.hs         # event loop + reconnectAllHeads
@@ -213,7 +214,7 @@ The order is deliberate; each step depends on the state set up by the previous o
    - rate-limit map, address cache, metrics handles
 4. **Spawn indexer thread** (`Indexer.startIndexer`). Reads `eventQueue` forever; on each event updates DB rows for the head, runs `HtlcWatcher.processUtxoSnapshot` if the HTLC script hash is configured, and bumps `chainSlotVar` from any `currentSlot` carried in a Greetings event.
 5. **Reconnect to all registered heads** (`Indexer.reconnectAllHeads`). For each row in `heads`, open a WebSocket to `host:port` and push parsed events into `eventQueue`.
-6. **Spawn explorer sidecar** (`Explorer.Sidecar.runSidecar`). Polls `hydra-explorer` every N seconds, syncs `explorer_heads` and `head_participants`, then atomically rebuilds the relay graph into `relayGraphVar`. The graph rebuild is independent of the explorer poll — sidecar swallows poll failures so the graph stays current even when explorer is unreachable.
+6. **Spawn explorer sidecar** (`Explorer.Sidecar.runSidecar`). Polls `hydra-explorer` every N seconds, syncs `explorer_heads` and `head_participants`, runs the L1 scans through the local node sockets — `L1.HeadScan` (participants + TVL from head UTxOs) and `L1.HtlcScan` (post-close HTLC settlements at the script address: presence stamps `route_hops.l1_last_seen_slot`, disappearance classifies claim vs refund by spend-window timing and publishes `HopClaimed`/`HopRefunded`; a failed scan is skipped, never treated as an empty UTxO set) — then atomically rebuilds the relay graph into `relayGraphVar`. The graph rebuild is independent of the explorer poll — sidecar swallows poll failures so the graph stays current even when explorer is unreachable.
 7. **Spawn expiry sweep** (`Relay.ExpirySweep.runSweep`, every 60 s).
 8. **Spawn rate-limit cleanup** (every 60 s).
 9. **Build `AppEnv`** bundling all the above.
@@ -323,6 +324,7 @@ erDiagram
     bigint fee_lovelace
     timestamp locked_at
     timestamp claimed_at
+    bigint l1_last_seen_slot
   }
 ```
 
@@ -570,6 +572,8 @@ constraints if hydra's own `cabal.project` changed them.
 These are tracked outside this doc (in conversation tasks and memory). At a glance:
 
 - **Bridge-operator automation** — auto-relay HTLCs for a third-party bridge operator (planned, not built). Must run operator-side and submit only to the operator's own node: the registry-side agent is deliberately one-way and must stay that way.
+- **L2 watcher misclassifies refunds as claims** — `Relay.HtlcWatcher.detectClaim` treats *any* spend of a locked hop as a claim, so an in-head refund marks the hop claimed and can complete the route/mark the invoice paid. Fix: reuse `L1.HtlcScan.classifySettlement` with the indexer's `latestChainSlot` as the tip bound.
+- **L1 HTLC preimage recovery** — the L1 scan classifies settlements but polling cannot see redeemers; recovering the preimage from an L1 claim (restoring cross-closure claim continuity for upstream bridges) needs a chain-sync follower on the same node sockets.
 - **Smoother manual UX** — eventually folding tools/ into a proper signed-flow inside the SPA.
 - **Per-head shared HTLC reference script** — schema + endpoint landed; clients still need to actually publish a UTxO and POST it.
 
