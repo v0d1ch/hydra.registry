@@ -190,6 +190,14 @@ export default function Setup() {
                 ⬇ Linux ARM64
               </a>
               <a
+                className="btn btn-primary"
+                href="https://github.com/v0d1ch/hydra.registry/pkgs/container/hydra-registry-agent"
+                target="_blank"
+                rel="noreferrer"
+              >
+                🐳 Docker image
+              </a>
+              <a
                 className="btn btn-secondary"
                 href="https://github.com/v0d1ch/hydra.registry/releases/latest"
                 target="_blank"

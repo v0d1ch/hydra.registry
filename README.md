@@ -96,7 +96,7 @@ export HYDRA_AGENT_STATE_FILE=$HOME/.hydra-agent-state.json
 nix run github:v0d1ch/hydra.registry#hydra-registry-agent
 ```
 
-Or download a release binary + sha256 from [GitHub Releases](https://github.com/v0d1ch/hydra.registry/releases), run the docker image (`docker run --network host -v hydra-agent-state:/data -e … ghcr.io/v0d1ch/hydra-registry-agent:latest`), or `cd agent && cabal build` with plain GHC.
+Or download a release binary + sha256 from [GitHub Releases](https://github.com/v0d1ch/hydra.registry/releases), run the [docker image](https://github.com/v0d1ch/hydra.registry/pkgs/container/hydra-registry-agent) (`docker run --network host -v hydra-agent-state:/data -e … ghcr.io/v0d1ch/hydra-registry-agent:latest`), or `cd agent && cabal build` with plain GHC.
 
 ### Run the registry (development)
 

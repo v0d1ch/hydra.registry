@@ -2,3 +2,7 @@
 -- no Cardano dependency tree, no local hydra checkout. This file also
 -- stops cabal from walking up to the repo-root cabal.project.
 packages: .
+
+-- Pin the Hackage index so local, CI, and docker builds solve to the
+-- same dependency versions.
+index-state: hackage.haskell.org 2026-08-04T06:03:59Z
